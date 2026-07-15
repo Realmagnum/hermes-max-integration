@@ -27,6 +27,7 @@ import logging
 import mimetypes
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
@@ -193,6 +194,11 @@ class MaxAdapter(BasePlatformAdapter):
         self._seen_msgs: Dict[str, float] = {}
         # DM routing: chat_id → user_id
         self._dm_user_ids: Dict[str, str] = {}
+
+        # Interactive button state tracking
+        self._exec_approval_state: Dict[str, str] = {}   # approval_id → session_key
+        self._slash_confirm_state: Dict[str, str] = {}   # confirm_id → session_key
+        self._clarify_state: Dict[str, str] = {}          # clarify_id → session_key
 
     # ═════════════════════════════════════════════════════════════════════
     # Connection lifecycle
@@ -363,7 +369,7 @@ class MaxAdapter(BasePlatformAdapter):
             try:
                 body: Dict[str, Any] = {
                     "url": self._webhook_url,
-                    "update_types": ["message_created", "bot_started", "bot_added"],
+                    "update_types": ["message_created", "message_callback", "bot_started", "bot_added"],
                 }
                 if secret:
                     body["secret"] = secret
@@ -449,6 +455,9 @@ class MaxAdapter(BasePlatformAdapter):
 
         if update_type in ("message_created", "message_edited", "message_updated"):
             return await self._on_message_created(payload)
+
+        if update_type == "message_callback":
+            return await self._on_callback(payload)
 
         return None
 
@@ -1204,6 +1213,339 @@ class MaxAdapter(BasePlatformAdapter):
         except Exception:
             pass
         return {"name": chat_id, "type": "dm", "chat_id": chat_id}
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Interactive buttons (approval, slash-confirm, clarify)
+    # ═════════════════════════════════════════════════════════════════════
+
+    async def _post_interactive(
+        self, chat_id: str, text: str, buttons: List[List[Dict[str, str]]],
+        reply_to: Optional[str] = None,
+    ) -> SendResult:
+        """Send a message with inline keyboard buttons.
+
+        MAX inline_keyboard format:
+          attachments: [{
+            type: "inline_keyboard",
+            payload: { buttons: [[{type: "callback", text: "...", payload: "..."}]] }
+          }]
+        """
+        if not self._http_client:
+            return SendResult(success=False, error="Not connected")
+
+        parts = chat_id.split(":", 1)
+        target_type = parts[0] if len(parts) > 1 else "user"
+        target_id = parts[1] if len(parts) > 1 else chat_id
+        params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+
+        body: Dict[str, Any] = {
+            "text": text[:MAX_MESSAGE_LENGTH],
+            "format": "markdown",
+            "attachments": [{
+                "type": "inline_keyboard",
+                "payload": {"buttons": buttons},
+            }],
+        }
+        if reply_to:
+            body["link"] = {"type": "REPLY", "mid": reply_to}
+
+        try:
+            resp = await self._http_client.post(
+                f"{MAX_API_BASE}/messages", params=params, json=body,
+            )
+            resp.raise_for_status()
+            d = resp.json()
+            mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
+            return SendResult(success=True, message_id=mid, raw_response=d)
+        except Exception as e:
+            logger.error("MAX: interactive send failed: %s", e)
+            return SendResult(success=False, error=str(e))
+
+    async def send_exec_approval(
+        self,
+        chat_id: str,
+        command: str,
+        session_key: str,
+        description: str = "dangerous command",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Render a dangerous-command approval prompt with native buttons.
+
+        Four buttons: Approve Once / Approve Session / Approve Always / Deny.
+        Button callbacks route through _on_callback → resolve_gateway_approval.
+        """
+        if not self._http_client:
+            return SendResult(success=False, error="Not connected")
+
+        approval_id = uuid.uuid4().hex[:12]
+        cmd_preview = (command or "")[:300] + "..." if len(command or "") > 300 else (command or "")
+
+        text = (
+            f"⚠️ **Command Approval Required**\n\n"
+            f"```\n{cmd_preview}\n```\n\n"
+            f"Reason: {description}"
+        )
+
+        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
+
+        buttons = [[
+            {"type": "callback", "text": "✅ Approve Once", "payload": f"exec:once:{approval_id}"},
+            {"type": "callback", "text": "🔄 Session", "payload": f"exec:session:{approval_id}"},
+        ], [
+            {"type": "callback", "text": "🔒 Always", "payload": f"exec:always:{approval_id}"},
+            {"type": "callback", "text": "❌ Deny", "payload": f"exec:deny:{approval_id}"},
+        ]]
+
+        result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
+        if result.success:
+            self._exec_approval_state[approval_id] = session_key
+        return result
+
+    async def send_slash_confirm(
+        self,
+        chat_id: str,
+        title: str,
+        message: str,
+        session_key: str,
+        confirm_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Render a 3-button slash-command confirmation prompt.
+
+        Buttons: Approve Once / Always Approve / Cancel.
+        Mirrors Telegram's send_slash_confirm.
+        """
+        if not self._http_client:
+            return SendResult(success=False, error="Not connected")
+
+        text = f"**{title}**\n\n{message}"[:MAX_MESSAGE_LENGTH]
+        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
+
+        buttons = [[
+            {"type": "callback", "text": "✅ Approve Once", "payload": f"sc:once:{confirm_id}"},
+            {"type": "callback", "text": "🔒 Always", "payload": f"sc:always:{confirm_id}"},
+            {"type": "callback", "text": "❌ Cancel", "payload": f"sc:cancel:{confirm_id}"},
+        ]]
+
+        result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
+        if result.success:
+            self._slash_confirm_state[confirm_id] = session_key
+        return result
+
+    async def send_clarify(
+        self,
+        chat_id: str,
+        question: str,
+        choices: Optional[list],
+        clarify_id: str,
+        session_key: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send a clarify prompt with inline choice buttons.
+
+        Each choice becomes a callback button. The last button is always
+        "Other…" for free-text input.
+        """
+        if not self._http_client:
+            return SendResult(success=False, error="Not connected")
+
+        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
+
+        if choices and len(choices) > 0:
+            # Render choice buttons (up to 3 per row)
+            buttons: List[List[Dict[str, str]]] = []
+            row: List[Dict[str, str]] = []
+            for i, choice in enumerate(choices):
+                row.append({
+                    "type": "callback",
+                    "text": str(choice)[:64],
+                    "payload": f"clarify:{clarify_id}:{i}",
+                })
+                if len(row) >= 3:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row)
+            # Add "Other…" button
+            buttons.append([{
+                "type": "callback",
+                "text": "💬 Other…",
+                "payload": f"clarify:{clarify_id}:other",
+            }])
+
+            text = f"**{question}**"[:MAX_MESSAGE_LENGTH]
+            result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
+            if result.success:
+                self._clarify_state[clarify_id] = session_key
+            return result
+        else:
+            # Open-ended — just send the question as plain text
+            return await self.send(chat_id, question, reply_to=reply_to, metadata=metadata)
+
+    async def _on_callback(self, payload: Dict[str, Any]) -> Optional[MessageEvent]:
+        """Handle message_callback update from inline keyboard button press."""
+        callback = payload.get("callback", {}) or payload.get("message_callback", {})
+        data = (callback.get("payload") or callback.get("data") or "").strip()
+        if not data:
+            return None
+
+        user = callback.get("user", {}) or payload.get("user", {})
+        user_id = str(user.get("user_id", ""))
+        if not user_id:
+            return None
+
+        logger.info("MAX: callback received: data=%s from user=%s", data, user_id)
+
+        # Dispatch based on prefix
+        parts = data.split(":", 2)
+        prefix = parts[0] if parts else ""
+
+        if prefix == "exec":
+            # Dangerous command approval buttons
+            return await self._handle_exec_callback(data, user_id, payload)
+        elif prefix == "sc":
+            # Slash-command confirmation buttons
+            return await self._handle_slash_confirm_callback(data, user_id, payload)
+        elif prefix == "clarify":
+            # Clarify choice buttons
+            return await self._handle_clarify_callback(data, user_id, payload)
+        else:
+            logger.warning("MAX: unknown callback prefix: %s", prefix)
+            return None
+
+    async def _handle_exec_callback(
+        self, data: str, user_id: str, raw_payload: Dict[str, Any]
+    ) -> Optional[MessageEvent]:
+        """Route exec approval button to resolve_gateway_approval."""
+        # Format: exec:{choice}:{approval_id}
+        parts = data.split(":", 2)
+        if len(parts) < 3:
+            return None
+        choice = parts[1]   # once / session / always / deny
+        approval_id = parts[2]
+
+        session_key = self._exec_approval_state.pop(approval_id, None)
+        if not session_key:
+            logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
+            return None
+
+        from tools.approval import resolve_gateway_approval, has_blocking_approval
+
+        if not has_blocking_approval(session_key):
+            return None
+
+        count = resolve_gateway_approval(session_key, choice)
+        logger.info(
+            "MAX: button resolved %d approval(s) for session %s (choice=%s)",
+            count, session_key, choice,
+        )
+
+        # Send acknowledgment
+        source = self.build_source(
+            chat_id=f"user:{user_id}",
+            chat_name=user_id,
+            chat_type="dm",
+            user_id=user_id,
+            user_name=user_id,
+        )
+        labels = {
+            "once": "✅ Approved (once)",
+            "session": "🔄 Approved (session)",
+            "always": "🔒 Approved (always)",
+            "deny": "❌ Denied",
+        }
+        label = labels.get(choice, f"Resolved: {choice}")
+        return MessageEvent(
+            text=label,
+            message_type=MessageType.TEXT,
+            source=source,
+            raw_message=raw_payload,
+            internal=True,
+        )
+
+    async def _handle_slash_confirm_callback(
+        self, data: str, user_id: str, raw_payload: Dict[str, Any]
+    ) -> Optional[MessageEvent]:
+        """Route slash-confirm button to tools.slash_confirm.resolve."""
+        # Format: sc:{choice}:{confirm_id}
+        parts = data.split(":", 2)
+        if len(parts) < 3:
+            return None
+        choice = parts[1]     # once / always / cancel
+        confirm_id = parts[2]
+
+        session_key = self._slash_confirm_state.pop(confirm_id, None)
+        if not session_key:
+            logger.warning("MAX: unknown confirm_id in callback: %s", confirm_id)
+            return None
+
+        from tools import slash_confirm as _sc
+
+        result_text = await _sc.resolve(session_key, confirm_id, choice)
+        if result_text:
+            source = self.build_source(
+                chat_id=f"user:{user_id}",
+                chat_name=user_id,
+                chat_type="dm",
+                user_id=user_id,
+                user_name=user_id,
+            )
+            return MessageEvent(
+                text=result_text,
+                message_type=MessageType.TEXT,
+                source=source,
+                raw_message=raw_payload,
+                internal=True,
+            )
+        return None
+
+    async def _handle_clarify_callback(
+        self, data: str, user_id: str, raw_payload: Dict[str, Any]
+    ) -> Optional[MessageEvent]:
+        """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
+        # Format: clarify:{clarify_id}:{choice_index}
+        parts = data.split(":", 2)
+        if len(parts) < 3:
+            return None
+        clarify_id = parts[1]
+        choice_idx = parts[2]
+
+        session_key = self._clarify_state.pop(clarify_id, None)
+        if not session_key:
+            logger.warning("MAX: unknown clarify_id in callback: %s", clarify_id)
+            return None
+
+        try:
+            from tools.clarify_gateway import resolve_gateway_clarify, mark_awaiting_text
+
+            if choice_idx == "other":
+                # User chose "Other…" — next text message will be the answer
+                mark_awaiting_text(clarify_id)
+                return None
+
+            idx = int(choice_idx)
+            # Get the choice text from the pending clarify state
+            # The gateway stores the choices — we resolve with the index
+            response = str(idx)
+            result_text = await resolve_gateway_clarify(clarify_id, response)
+            if result_text:
+                source = self.build_source(
+                    chat_id=f"user:{user_id}",
+                    chat_name=user_id,
+                    chat_type="dm",
+                    user_id=user_id,
+                    user_name=user_id,
+                )
+                return MessageEvent(
+                    text=result_text,
+                    message_type=MessageType.TEXT,
+                    source=source,
+                    raw_message=raw_payload,
+                    internal=True,
+                )
+        except (ValueError, ImportError) as e:
+            logger.warning("MAX: clarify callback failed: %s", e)
+        return None
 
     # ═════════════════════════════════════════════════════════════════════
     # Policy properties (for authz_mixin)
