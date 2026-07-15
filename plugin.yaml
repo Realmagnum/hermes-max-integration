@@ -1,0 +1,45 @@
+name: max-platform
+label: Max (STT)
+kind: platform
+version: 2.0.0
+description: >
+  MAX messenger (max.ru) gateway adapter for Hermes Agent with built-in STT
+  voice transcription. Supports both long-polling and webhook. Downloads voice
+  messages and provides local paths for faster-whisper transcription.
+author: Alexander / Hermes Agent community
+license: MIT
+homepage: https://gitea.rmg7.com/agent/hermes-max-stt
+
+requires_env:
+  - name: MAX_BOT_TOKEN
+    description: "Bot token from MAX for Partners: Chat-bots → Advanced settings → Configure → Token"
+    prompt: "Max bot token"
+    url: "https://dev.max.ru/docs/chatbots/bots-create"
+    password: true
+
+optional_env:
+  - name: MAX_WEBHOOK_SECRET
+    description: "Webhook secret for X-Max-Bot-Api-Secret verification"
+    prompt: "Webhook secret (5-256 chars)"
+    password: true
+  - name: MAX_WEBHOOK_HOST
+    description: "Local bind host for webhook server, default 0.0.0.0"
+    prompt: "Webhook host"
+  - name: MAX_WEBHOOK_PORT
+    description: "Local bind port for webhook server, default 8646"
+    prompt: "Webhook port"
+  - name: MAX_WEBHOOK_PATH
+    description: "Webhook path, default /max/webhook"
+    prompt: "Webhook path"
+  - name: MAX_ALLOWED_USERS
+    description: "Comma-separated Max user IDs allowed to talk to the bot"
+    prompt: "Allowed user IDs (comma-separated)"
+  - name: MAX_ALLOW_ALL_USERS
+    description: "Set to true to allow any Max user who messages the bot"
+    prompt: "Allow all users (true/false)"
+  - name: MAX_HOME_CHANNEL
+    description: "Default Max delivery target for cron/send_message, e.g. user:123 or chat:456"
+    prompt: "Home channel (e.g. user:95825064)"
+  - name: MAX_STT_ENABLED
+    description: "Enable voice message auto-download for STT transcription (true/false, default: true)"
+    prompt: "Voice message download enabled"
