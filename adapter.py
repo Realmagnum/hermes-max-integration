@@ -199,6 +199,7 @@ class MaxAdapter(BasePlatformAdapter):
         self._exec_approval_state: Dict[str, str] = {}   # approval_id → session_key
         self._slash_confirm_state: Dict[str, str] = {}   # confirm_id → session_key
         self._clarify_state: Dict[str, str] = {}          # clarify_id → session_key
+        self._model_picker_state: Dict[str, dict] = {}    # chat_id → picker state
 
     # ═════════════════════════════════════════════════════════════════════
     # Connection lifecycle
@@ -1394,6 +1395,10 @@ class MaxAdapter(BasePlatformAdapter):
         if not user_id:
             return None
 
+        # Extract chat info for routing
+        chat_info = payload.get("chat", {}) or {}
+        chat_id = str(chat_info.get("chat_id", "") or payload.get("chat_id", ""))
+
         logger.info("MAX: callback received: data=%s from user=%s", data, user_id)
 
         # Dispatch based on prefix
@@ -1409,6 +1414,9 @@ class MaxAdapter(BasePlatformAdapter):
         elif prefix == "clarify":
             # Clarify choice buttons
             return await self._handle_clarify_callback(data, user_id, payload)
+        elif prefix == "model":
+            # Model picker buttons
+            return await self._handle_model_callback(data, user_id, payload, chat_id)
         else:
             logger.warning("MAX: unknown callback prefix: %s", prefix)
             return None
@@ -1546,6 +1554,236 @@ class MaxAdapter(BasePlatformAdapter):
         except (ValueError, ImportError) as e:
             logger.warning("MAX: clarify callback failed: %s", e)
         return None
+
+    async def _handle_model_callback(
+        self, data: str, user_id: str, raw_payload: Dict[str, Any], chat_id: str,
+    ) -> Optional[MessageEvent]:
+        """Route model picker button callbacks.
+
+        Formats:
+          model:provider:{slug}  — provider selected, show models
+          model:pick:{model}:{provider} — model selected, switch
+          model:back — back to provider list
+        """
+        parts = data.split(":", 2)
+
+        if len(parts) >= 3 and parts[1] == "provider":
+            # Provider selected
+            provider_slug = parts[2]
+            scoped_chat = f"user:{user_id}"
+            state = self._model_picker_state.get(scoped_chat)
+            msg_id = state.get("msg_id", "") if state else ""
+            await self._on_model_provider_selected(scoped_chat, provider_slug, msg_id)
+            return None
+
+        if len(parts) >= 3 and parts[1] == "pick" and len(parts) == 3:
+            # Model selected — parts[2] = "{model}:{provider}"
+            rest = parts[2].rsplit(":", 1)
+            if len(rest) == 2:
+                model_id, provider_slug = rest
+                scoped_chat = f"user:{user_id}"
+                return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
+
+        if data == "model:back":
+            scoped_chat = f"user:{user_id}"
+            await self._on_model_back(scoped_chat, user_id)
+            return None
+
+        logger.warning("MAX: unhandled model callback: %s", data)
+        return None
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Model picker
+    # ═════════════════════════════════════════════════════════════════════
+
+    async def send_model_picker(
+        self,
+        chat_id: str,
+        providers: list,
+        current_model: str,
+        current_provider: str,
+        session_key: str,
+        on_model_selected,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send an interactive model picker with callback buttons.
+
+        Two steps:
+        1. Show provider list → tap provider → show its models
+        2. Show model list → tap model → call on_model_selected
+        """
+        if not self._http_client:
+            return SendResult(success=False, error="Not connected")
+
+        try:
+            from hermes_cli.providers import get_label
+        except ImportError:
+            def get_label(slug: str) -> str:
+                return slug
+
+        # Step 1: Show provider selection
+        provider_label = get_label(current_provider)
+        text = (
+            f"⚙ **Model Configuration**\n\n"
+            f"Current: `{current_model or 'unknown'}` ({provider_label})\n\n"
+            f"Select a provider:"
+        )[:MAX_MESSAGE_LENGTH]
+
+        # Build provider buttons (2 per row)
+        buttons: List[List[Dict[str, str]]] = []
+        row: List[Dict[str, str]] = []
+        for p in providers[:20]:  # Max 20 providers
+            slug = p.get("slug", "")
+            name = p.get("name", slug)[:30]
+            tag = " ✅" if p.get("is_current") else ""
+            row.append({
+                "type": "callback",
+                "text": f"{name}{tag}"[:64],
+                "payload": f"model:provider:{slug}",
+            })
+            if len(row) >= 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+
+        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
+        result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
+        if result.success:
+            self._model_picker_state[str(chat_id)] = {
+                "msg_id": result.message_id,
+                "providers": providers,
+                "session_key": session_key,
+                "on_model_selected": on_model_selected,
+                "current_model": current_model,
+                "current_provider": current_provider,
+            }
+        return result
+
+    async def _on_model_provider_selected(
+        self, chat_id: str, provider_slug: str, message_id: str
+    ) -> None:
+        """Step 2: Show models for the selected provider."""
+        state = self._model_picker_state.get(str(chat_id))
+        if not state:
+            return
+
+        providers = state.get("providers", [])
+        provider = next((p for p in providers if p.get("slug") == provider_slug), None)
+        if not provider:
+            return
+
+        models = provider.get("models", [])[:15]  # Max 15 models
+        provider_name = provider.get("name", provider_slug)
+
+        text = (
+            f"⚙ **{provider_name}** models\n\n"
+            f"Select a model:"
+        )[:MAX_MESSAGE_LENGTH]
+
+        # Build model buttons (1 per row for readability)
+        buttons: List[List[Dict[str, str]]] = []
+        for m in models:
+            name = str(m)[:40]
+            is_current = (
+                state.get("current_model") == m
+                and state.get("current_provider") == provider_slug
+            )
+            label = f"{'✅ ' if is_current else ''}{name}"[:64]
+            buttons.append([{
+                "type": "callback",
+                "text": label,
+                "payload": f"model:pick:{m}:{provider_slug}",
+            }])
+
+        # Add "← Back" button
+        buttons.append([{
+            "type": "callback",
+            "text": "← Back to providers",
+            "payload": "model:back",
+        }])
+
+        # Edit the original message to show models
+        await self.edit_message(chat_id, message_id, text)
+        # Send new message with model buttons
+        await self._post_interactive(chat_id, "\u200b", buttons)  # zero-width space as body
+
+        # Update state
+        state["selected_provider"] = provider_slug
+        self._model_picker_state[str(chat_id)] = state
+
+    async def _on_model_picked(
+        self, chat_id: str, model_id: str, provider_slug: str, user_id: str,
+    ) -> Optional[MessageEvent]:
+        """Step 3: Model selected — call on_model_selected callback."""
+        state = self._model_picker_state.pop(str(chat_id), None)
+        if not state:
+            return None
+
+        on_model_selected = state.get("on_model_selected")
+        if not on_model_selected:
+            return None
+
+        try:
+            result_text = await on_model_selected(chat_id, model_id, provider_slug)
+        except Exception as e:
+            result_text = f"❌ Error switching model: {e}"
+
+        source = self.build_source(
+            chat_id=f"user:{user_id}",
+            chat_name=user_id,
+            chat_type="dm",
+            user_id=user_id,
+            user_name=user_id,
+        )
+        return MessageEvent(
+            text=result_text,
+            message_type=MessageType.TEXT,
+            source=source,
+            internal=True,
+        )
+
+    async def _on_model_back(self, chat_id: str, user_id: str) -> None:
+        """Go back to provider selection."""
+        state = self._model_picker_state.get(str(chat_id))
+        if not state:
+            return
+
+        from hermes_cli.providers import get_label as _get_label
+
+        providers = state.get("providers", [])
+        current_provider = state.get("current_provider", "")
+        current_model = state.get("current_model", "")
+
+        try:
+            provider_label = _get_label(current_provider)
+        except Exception:
+            provider_label = current_provider
+
+        text = (
+            f"⚙ **Model Configuration**\n\n"
+            f"Current: `{current_model or 'unknown'}` ({provider_label})\n\n"
+            f"Select a provider:"
+        )[:MAX_MESSAGE_LENGTH]
+
+        buttons: List[List[Dict[str, str]]] = []
+        row: List[Dict[str, str]] = []
+        for p in providers[:20]:
+            slug = p.get("slug", "")
+            name = p.get("name", slug)[:30]
+            tag = " ✅" if p.get("is_current") else ""
+            row.append({
+                "type": "callback",
+                "text": f"{name}{tag}"[:64],
+                "payload": f"model:provider:{slug}",
+            })
+            if len(row) >= 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+
+        await self._post_interactive(chat_id, text, buttons)
 
     # ═════════════════════════════════════════════════════════════════════
     # Policy properties (for authz_mixin)
