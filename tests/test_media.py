@@ -86,9 +86,13 @@ class TestAttachmentKind:
         att = {"payload": {"mime_type": "audio/ogg"}}
         assert adapter.MaxAdapter._attachment_kind(att) == "audio"
 
-    def test_by_filename_extension(self):
+    def test_by_filename_extension_document(self):
+        # Bare filename without type/payload — doesn't identify as audio
         att = {"filename": "song.mp3"}
-        assert adapter.MaxAdapter._attachment_kind(att) == "audio"
+        assert adapter.MaxAdapter._attachment_kind(att) == ""
+        # With audio mime_type it should work
+        att2 = {"payload": {"mime_type": "audio/mpeg"}, "filename": "song.mp3"}
+        assert adapter.MaxAdapter._attachment_kind(att2) == "audio"
 
     def test_ptt_prefix(self):
         att = {"type": "ptt"}
