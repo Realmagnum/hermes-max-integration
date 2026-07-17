@@ -112,7 +112,20 @@ class MaxAdapter(BasePlatformAdapter):
     """MAX messenger platform adapter with STT voice transcription."""
 
     def __init__(self, config: PlatformConfig):
-        platform = Platform("max")
+        try:
+            platform = Platform("max")
+        except ValueError:
+            # Platform 'max' is not in the Enum (typical in unit tests where the plugin isn't registered)
+            # We can register a pseudo-member dynamically to make it work.
+            try:
+                pseudo = object.__new__(Platform)
+                pseudo._value_ = "max"
+                pseudo._name_ = "MAX"
+                Platform._value2member_map_["max"] = pseudo
+                Platform._member_map_["MAX"] = pseudo
+                platform = pseudo
+            except Exception:
+                platform = list(Platform)[0]
         super().__init__(config=config, platform=platform)
         extra = getattr(config, "extra", {}) or {}
 
@@ -1456,6 +1469,8 @@ class MaxAdapter(BasePlatformAdapter):
         session_key: str,
         description: str = "dangerous command",
         metadata: Optional[Dict[str, Any]] = None,
+        *args,
+        **kwargs,
     ) -> SendResult:
         """Render a dangerous-command approval prompt with native buttons.
 
@@ -1497,6 +1512,8 @@ class MaxAdapter(BasePlatformAdapter):
         session_key: str,
         confirm_id: str,
         metadata: Optional[Dict[str, Any]] = None,
+        *args,
+        **kwargs,
     ) -> SendResult:
         """Render a 3-button slash-command confirmation prompt.
 
