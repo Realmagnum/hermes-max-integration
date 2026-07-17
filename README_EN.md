@@ -257,12 +257,28 @@ hermes-max-stt/
 
 Full audit and fixes: commit `e87ee64`.
 
+## Project History
+
+This plugin went through two iterations:
+
+**v1.0 — original from-scratch development**
+The first version was written entirely from scratch for specific needs: Hermes Agent integration with MAX, voice transcription, two-step file uploads, interactive buttons, response streaming.
+
+**v2.0 — rebased on a mature project**
+Later the [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) project was discovered — a more mature codebase with solid plugin architecture, webhooks, and tests. Instead of continuing v1.0 in isolation, the project was reworked:
+
+- Architecture and subscription system (webhook/long polling) taken from upstream
+- All v1.0 features (STT, table images, buttons, streaming, file upload) ported and extended
+- New capabilities added: PNG table rendering, improved model picker, standalone sender, group policies
+
+**Result:** a hybrid product combining upstream's robust architecture with original v1.0 features not found in either source project alone.
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
 
 ## Credits
 
-- Based on [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) — original plugin architecture
+- [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) — architecture base for v2.0 (subscriptions, webhooks, plugin structure)
+- Original v1.0 development — Realmagnum (STT, table images, buttons, streaming, file upload)
 - [Hermes Agent](https://hermes-agent.nousresearch.com/docs) — the agent framework
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper) — voice transcription
