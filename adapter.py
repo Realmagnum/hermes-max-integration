@@ -1581,7 +1581,7 @@ class MaxAdapter(BasePlatformAdapter):
             if not upload_url:
                 return None
 
-            # SECURITY: Only upload to known Max domains (SSRF prevention).
+            # SECURITY: Only upload to known Max/Cdn domains (SSRF prevention).
             # If the API returns an unexpected URL, refuse to connect.
             parsed = urlparse(upload_url)
             allowed_hosts = {
@@ -1589,10 +1589,12 @@ class MaxAdapter(BasePlatformAdapter):
                 "cdn.max.ru",
                 "storage.max.ru",
                 "upload.max.ru",
+                "iu.oneme.ru",
             }
             if parsed.hostname and (
                 parsed.hostname in allowed_hosts
                 or parsed.hostname.endswith(".max.ru")
+                or parsed.hostname.endswith(".oneme.ru")
             ):
                 pass  # Safe — within Max infrastructure
             else:
