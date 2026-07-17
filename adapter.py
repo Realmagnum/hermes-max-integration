@@ -1163,21 +1163,52 @@ class MaxAdapter(BasePlatformAdapter):
         if ncols == 0:
             return None
 
-        def _clean_cell(val: str) -> str:
-            """Replace emoji with plain-text markers for reliable rendering."""
-            val = val.replace("✅", "[OK]")
-            val = val.replace("❌", "[ERR]")
-            val = val.replace("⚠️", "[WARN]").replace("⚠", "[WARN]")
-            val = val.replace("⏳", "[WAIT]")
-            val = val.replace("🔴", "[CRIT]")
-            val = val.replace("🟢", "[GOOD]")
-            val = val.replace("🟡", "[MID]")
-            val = val.replace("ℹ️", "").replace("ℹ", "")
-            val = val.replace("➡️", "->").replace("➡", "->")
-            val = val.replace("📊", "")
-            return val.strip()
+        def _prepare_cell(val: str) -> tuple:
+            """Convert raw cell text to (display_text, color).
 
-        rows = [[_clean_cell(c) for c in row] for row in rows]
+            Emoji → Unicode symbols that DejaVu Sans renders properly.
+            Status cells (✓ ✗ ⚠) get semantic colors.
+            """
+            color = None  # default text color
+            text = val.strip()
+
+            # Map emoji to symbols and assign colors
+            if "✅" in text:
+                text = text.replace("✅", "✓").strip()
+                color = "#16a34a"  # green-600
+            elif "❌" in text:
+                text = text.replace("❌", "✗").strip()
+                color = "#dc2626"  # red-600
+            elif "⚠" in text or "⚠️" in text:
+                text = text.replace("⚠️", "⚠").replace("⚠", "⚠").strip()
+                color = "#ea580c"  # orange-600
+            elif "⏳" in text:
+                text = text.replace("⏳", "⌛").strip()
+                color = "#ca8a04"  # yellow-700
+            elif "🔴" in text:
+                text = text.replace("🔴", "●").strip()
+                color = "#dc2626"
+            elif "🟢" in text:
+                text = text.replace("🟢", "●").strip()
+                color = "#16a34a"
+            elif "🟡" in text:
+                text = text.replace("🟡", "●").strip()
+                color = "#ca8a04"
+
+            # Cleanup stray markers
+            text = text.replace("ℹ️", "").replace("ℹ", "")
+            text = text.replace("📊", "")
+            text = text.replace("[OK]", "✓")
+            text = text.replace("[ERR]", "✗")
+            text = text.replace("[WARN]", "⚠")
+            text = text.replace("[WAIT]", "⌛")
+            text = text.replace("[CRIT]", "●")
+            text = text.replace("[GOOD]", "●")
+            text = text.replace("[MID]", "●")
+
+            return text.strip(), color
+
+        cells_info = [[_prepare_cell(c) for c in row] for row in rows]
 
         try:
             from PIL import Image, ImageDraw, ImageFont
@@ -1186,12 +1217,12 @@ class MaxAdapter(BasePlatformAdapter):
             return None
 
         # ── Layout ────────────────────────────────────────────────────
-        CELL_PAD_X = 16
-        CELL_PAD_Y = 10
+        CELL_PAD_X = 18
+        CELL_PAD_Y = 12
         LINE_WIDTH = 2
-        MIN_COL_WIDTH = 60
-        FONT_SIZE = 14
-        HEADER_FONT_SIZE = 15
+        MIN_COL_WIDTH = 70
+        FONT_SIZE = 15
+        HEADER_FONT_SIZE = 16
 
         try:
             font = ImageFont.truetype(
@@ -1205,15 +1236,15 @@ class MaxAdapter(BasePlatformAdapter):
             font_bold = font
 
         # Measure cell widths in pixels
-        data_rows = rows[1:]
-        header = rows[0]
+        data_rows = cells_info[1:]
+        header = cells_info[0]  # list of (text, color) tuples
 
         px_widths = [MIN_COL_WIDTH] * ncols
-        for row in rows:
-            for i, cell in enumerate(row):
+        for row in cells_info:
+            for i, (cell_text, _color) in enumerate(row):
                 if i >= ncols:
                     continue
-                bbox = font.getbbox(cell[:40])
+                bbox = font.getbbox(cell_text[:40])
                 cw = (bbox[2] - bbox[0]) + CELL_PAD_X * 2
                 px_widths[i] = max(px_widths[i], cw)
 
@@ -1251,7 +1282,7 @@ class MaxAdapter(BasePlatformAdapter):
         draw.rectangle([(0, y), (total_w, y + header_h)], fill=HDR_BG)
         cx = LINE_WIDTH
         for ci in range(ncols):
-            cell_text = header[ci] if ci < len(header) else ""
+            cell_text = header[ci][0] if ci < len(header) else ""
             draw.text(
                 (cx + CELL_PAD_X, y + int((header_h - font_bold.getbbox("Ag")[3]) / 2)),
                 cell_text[:40],
@@ -1274,12 +1305,13 @@ class MaxAdapter(BasePlatformAdapter):
             draw.rectangle([(0, y), (total_w, y + row_h)], fill=bg)
             cx = LINE_WIDTH
             for ci in range(ncols):
-                cell_text = row[ci] if ci < len(row) else ""
+                cell_text, cell_color = row[ci] if ci < len(row) else ("", None)
+                fill_color = cell_color or TEXT_COLOR
                 draw.text(
                     (cx + CELL_PAD_X, y + int((row_h - font.getbbox("Ag")[3]) / 2)),
                     cell_text[:40],
                     font=font,
-                    fill=TEXT_COLOR,
+                    fill=fill_color,
                 )
                 # Vertical divider
                 draw.line(
