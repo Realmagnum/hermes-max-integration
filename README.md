@@ -139,6 +139,21 @@ hermes-max-stt/
 └── .github/workflows/ci.yml # CI/CD
 ```
 
+## Security
+
+This plugin follows secure-by-default practices:
+
+| Measure | Detail |
+|---------|--------|
+| 🛡️ **SSRF Protection** | File upload URLs validated against `*.max.ru` whitelist |
+| 🔐 **Token Safety** | `Authorization` header never forwarded on HTTP redirects |
+| 🔑 **Webhook Secret** | Constant-time comparison via `secrets.compare_digest` |
+| 🔊 **Voice Privacy** | Audio cache stored with `0700` permissions |
+| 🧹 **Error Sanitization** | Token/URLs stripped from error messages returned to gateway |
+| 🔍 **CI Hardening** | `bandit` SAST + `pip-audit` dependency scanning on every push |
+
+Full audit and fixes: commit `e87ee64`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
