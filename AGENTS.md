@@ -4,7 +4,10 @@ This repository contains a Hermes Agent platform plugin that adds Max messenger 
 
 When a user gives you this repository and asks to connect Hermes to Max:
 
-1. **Do not invent** Max bot setup steps. Use the fact-checked sources in `README.md`; if available, re-open the official pages under `https://dev.max.ru/` and prefer current official docs.
+1. **Do not invent** Max bot setup steps. Use the fact-checked sources in `README.md` (Russian) or `README_EN.md` (English); if available, re-open the official pages under `https://dev.max.ru/` and prefer current official docs.
+
+> **⚠️ Bilingual READMEs:** This repo has two READMEs — `README.md` (Russian) and `README_EN.md` (English). When updating documentation, **always update both files in sync** with identical structure and content. The English version is the canonical source; the Russian version is its translation. Do not add a section to one without porting it to the other.
+
 2. Install Hermes first if it is missing: https://hermes-agent.nousresearch.com/docs
 3. Install this plugin with:
    ```bash
@@ -54,3 +57,10 @@ When a user gives you this repository and asks to connect Hermes to Max:
 - The adapter auto-downloads them to `~/.hermes/audio_cache/max_audio_{message_id}.ogg` when `MAX_STT_ENABLED=true`.
 - Use the `scripts/transcribe_audio.py` script with faster-whisper for transcription.
 - Default model: `base` (best speed/accuracy trade-off on CPU).
+
+**Tables as Images (`MAX_TABLE_AS_IMAGE=true`):**
+- Pipe markdown tables (`| A | B |\n|---|---|`) are rendered as Pillow-generated PNG images.
+- Emoji status icons (✅❌⚠️⏳) are replaced with Unicode symbols (✓✗⚠◷▶) in semantic colors.
+- Images are uploaded via two-step API (`POST /uploads` → PUT → token → POST /messages`).
+- If Pillow is not installed, falls back to inline `` `code` `` text rendering.
+- Generated PNGs are cached in `~/.hermes/table_images/`.
