@@ -26,6 +26,7 @@ import json
 import logging
 import mimetypes
 import os
+import socket as _socket
 import time
 import uuid
 from pathlib import Path
@@ -325,6 +326,16 @@ class MaxAdapter(BasePlatformAdapter):
             self._set_fatal_error("no_aiohttp", "aiohttp not installed", retryable=False)
             return False
 
+        # Port-in-use check
+        try:
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)
+                sock.connect(("127.0.0.1", self._webhook_port))
+            self._set_fatal_error("port_in_use", f"Port {self._webhook_port} already in use", retryable=False)
+            return False
+        except (ConnectionRefusedError, OSError):
+            pass  # Port is free
+
         secret = self._webhook_secret
         path = self._webhook_path
 
@@ -537,6 +548,13 @@ class MaxAdapter(BasePlatformAdapter):
         # Extract media
         media_urls, media_types = await self._extract_inbound_media(update, message, body)
 
+        # Auto-transcribe audio when STT is enabled
+        if self._stt_enabled and media_urls:
+            stt_text = await self._transcribe_media(media_urls, media_types)
+            if stt_text:
+                text = (text + "\n\n" + stt_text).strip() if text else stt_text
+                logger.info("MAX: audio auto-transcribed: %s...", stt_text[:80])
+
         # Process basic attachments as text references (for non-recursive fallback)
         if not media_urls:
             attachments = body.get("attachments", [])
@@ -549,10 +567,12 @@ class MaxAdapter(BasePlatformAdapter):
                 elif atype == "audio":
                     audio_url = payload_att.get("url", "")
                     if audio_url and self._stt_enabled:
-                        audio_path = await self._download_audio(audio_url, mid)
-                        if audio_path:
+                        pseudo_att = {"type": "audio", "payload": {"url": audio_url}}
+                        cached = await self._cache_audio_attachment(pseudo_att, "audio")
+                        if cached:
+                            audio_path, _ = cached
                             text = (text + f"\n[Audio: {audio_path}]").strip() if text else f"[Audio: {audio_path}]"
-                            logger.info("MAX: audio downloaded to %s", audio_path)
+                            logger.info("MAX: audio downloaded (fallback) to %s", audio_path)
                         else:
                             text = (text + "\n[Audio]").strip() if text else "[Audio]"
                     else:
@@ -784,11 +804,16 @@ class MaxAdapter(BasePlatformAdapter):
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
+        headers = {
+            "Authorization": self._token,
+            "User-Agent": "HermesAgent/1.0 MaxBot",
+            "Accept": "audio/*,*/*;q=0.8",
+        }
         try:
-            resp = await self._http_client.get(url)
+            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
             resp.raise_for_status()
         except Exception as exc:
-            logger.warning("MAX: failed to download %s: %s", kind, exc)
+            logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -813,11 +838,16 @@ class MaxAdapter(BasePlatformAdapter):
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
+        headers = {
+            "Authorization": self._token,
+            "User-Agent": "HermesAgent/1.0 MaxBot",
+            "Accept": "image/*,*/*;q=0.8",
+        }
         try:
-            resp = await self._http_client.get(url)
+            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
             resp.raise_for_status()
         except Exception as exc:
-            logger.warning("MAX: failed to download image: %s", exc)
+            logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -846,11 +876,16 @@ class MaxAdapter(BasePlatformAdapter):
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
+        headers = {
+            "Authorization": self._token,
+            "User-Agent": "HermesAgent/1.0 MaxBot",
+            "Accept": "application/*,text/*,*/*;q=0.8",
+        }
         try:
-            resp = await self._http_client.get(url)
+            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
             resp.raise_for_status()
         except Exception as exc:
-            logger.warning("MAX: failed to download document: %s", exc)
+            logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         filename = self._find_first_filename(attachment) or Path(urlparse(url).path).name or "document"
@@ -870,6 +905,44 @@ class MaxAdapter(BasePlatformAdapter):
             logger.warning("MAX: failed to cache document: %s", exc)
             return None
 
+    async def _transcribe_media(self, media_urls: list, media_types: list) -> Optional[str]:
+        """Run STT on cached audio files and return combined transcription."""
+        if not self._stt_enabled:
+            return None
+
+        import asyncio.subprocess
+        transcriptions = []
+        for path, mtype in zip(media_urls, media_types):
+            if not mtype.startswith("audio/"):
+                continue
+            try:
+                venv_path = os.getenv("MAX_STT_VENV",
+                                     str(Path.home() / ".hermes" / "stt-venv"))
+                python = str(Path(venv_path) / "bin" / "python3")
+                if not os.path.exists(python):
+                    python = "python3"
+                proc = await asyncio.subprocess.create_subprocess_exec(
+                    python, "-c",
+                    f"from faster_whisper import WhisperModel; m=WhisperModel('base','cpu','int8'); segs,_=m.transcribe('{path}',language='ru'); [print(s.text.strip()) for s in segs]",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=120.0
+                )
+                if proc.returncode == 0 and stdout:
+                    transcriptions.append(stdout.decode().strip())
+                elif stderr:
+                    logger.warning("MAX: STT failed: %s", stderr.decode()[:200])
+            except asyncio.TimeoutError:
+                logger.warning("MAX: STT timed out for %s", path)
+            except Exception as e:
+                logger.error("MAX: STT error: %s", e)
+
+        if transcriptions:
+            return "\n".join(transcriptions)
+        return None
+
     @staticmethod
     def _derive_message_type(text: str, media_types: List[str]) -> MessageType:
         """Derive MessageType from text and media types."""
@@ -881,37 +954,6 @@ class MaxAdapter(BasePlatformAdapter):
         if any(mtype.startswith("audio/") for mtype in media_types):
             return MessageType.TEXT if text else MessageType.VOICE
         return MessageType.TEXT
-
-    # ═════════════════════════════════════════════════════════════════════
-    # STT: Audio download for voice transcription
-    # ═════════════════════════════════════════════════════════════════════
-
-    async def _download_audio(self, url: str, message_id: str) -> Optional[str]:
-        """Download audio file from MAX URL to local cache for STT. Returns path or None."""
-        if not self._http_client or not self._stt_enabled:
-            return None
-        AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        ext = ".ogg"
-        url_lower = url.lower()
-        if ".mp3" in url_lower:
-            ext = ".mp3"
-        elif ".opus" in url_lower:
-            ext = ".opus"
-        elif ".m4a" in url_lower:
-            ext = ".m4a"
-        filepath = AUDIO_CACHE_DIR / f"max_audio_{message_id}{ext}"
-        try:
-            resp = await self._http_client.get(url, timeout=httpx.Timeout(60.0))
-            if resp.status_code == 200:
-                filepath.write_bytes(resp.content)
-                logger.info("MAX: downloaded audio %d bytes to %s", len(resp.content), filepath)
-                return str(filepath)
-            else:
-                logger.warning("MAX: audio download failed HTTP %s", resp.status_code)
-                return None
-        except Exception as e:
-            logger.error("MAX: audio download error: %s", e)
-            return None
 
     # ═════════════════════════════════════════════════════════════════════
     # Outbound: send messages
@@ -2171,7 +2213,7 @@ def register(ctx) -> None:
             "Max supports markdown formatting (**bold**, *italic*, `code`, ```blocks```). "
             "Messages are limited to 4000 characters. "
             "You can send images using markdown ![alt](url) syntax. "
-            "Voice messages appear as [Audio: /path/to/file] — use the transcription script. "
+            "Voice messages are automatically transcribed — the transcription appears in the message text. "
             "Keep responses clear and well-structured."
         ),
     )

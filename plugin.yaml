@@ -1,7 +1,7 @@
 name: max-platform
 label: Max (STT)
 kind: platform
-version: 2.0.0
+version: 2.1.0
 description: >
   MAX messenger (max.ru) gateway adapter for Hermes Agent with built-in STT
   voice transcription. Supports both long-polling and webhook. Downloads voice
