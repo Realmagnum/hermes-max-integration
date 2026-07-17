@@ -1107,20 +1107,19 @@ class MaxAdapter(BasePlatformAdapter):
                     widths[i] = max(widths[i], min(len(cell), 25))
 
         # Build formatted table.
-        # MAX does not support fenced code blocks (```) and <pre> is only
-        # listed under HTML mode. Aligned pipes + dashes render as-is in
-        # monospace in MAX — clean, reliable, no markup needed.
+        # MAX supports inline `code` for monospace. Each line is its own
+        # inline code span — no newlines inside, so they render correctly.
         sep = '-' * (sum(widths) + 3 * ncols + 1)
 
-        result = [sep]
+        result = ['`' + sep + '`']
         for row in rows:
             padded = []
             for i in range(ncols):
                 cell = row[i] if i < len(row) else ''
                 cell = cell[:25]
                 padded.append(cell.ljust(widths[i]))
-            result.append('| ' + ' | '.join(padded) + ' |')
-        result.append(sep)
+            result.append('`| ' + ' | '.join(padded) + ' |`')
+        result.append('`' + sep + '`')
         return '\n'.join(result)
 
     async def send(
