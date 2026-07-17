@@ -21,7 +21,9 @@
 | ⬆️ **File Upload** | Two-step upload: `POST /uploads` → PUT → token → send |
 | 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
 | 📎 **Media** | Recursive attachment extraction, image/document/audio caching |
+| 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
+| 🔧 **Standalone Sender** | Send messages from cron/send_message via `_send_max_message` |
 | 🧪 **Tested** | pytest + pytest-asyncio, **94 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 
@@ -142,9 +144,14 @@ hermes gateway restart
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
+| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
+| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
 | `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
+| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to faster-whisper venv |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as Pillow-generated PNG images |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
+| `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
 
 ## Table Image Symbol Reference
 

@@ -21,7 +21,9 @@
 | ⬆️ **Загрузка файлов** | Двухшаговая загрузка: `POST /uploads` → PUT → токен → отправка |
 | 🔒 **Контроль доступа** | Белый список пользователей, групповые политики, проверка секрета вебхука |
 | 📎 **Медиа** | Рекурсивное извлечение вложений, кэш изображений/документов/аудио |
+| 🎞️ **Голосовые/Видео/Документы** | Отдельные методы `send_voice`, `send_video`, `send_document` |
 | ⚡ **Индикатор ввода** | Отображение набора текста для всех типов чатов |
+| 🔧 **Standalone-отправитель** | Отправка сообщений из cron/send_message через `_send_max_message` |
 | 🧪 **Тесты** | pytest + pytest-asyncio, **94 теста** |
 | 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
 
@@ -141,10 +143,15 @@ hermes gateway restart
 | `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
 | `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS (включает webhook-режим) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей |
-| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех |
-| `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Таблицы → PNG-картинки |
-| `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron |
+| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
+| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
+| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
+| `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
+| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG через Pillow |
+| `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
+| `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
 
 ## Символы в таблицах-картинках
 
