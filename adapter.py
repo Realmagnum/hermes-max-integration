@@ -1217,12 +1217,12 @@ class MaxAdapter(BasePlatformAdapter):
             return None
 
         # ── Layout ────────────────────────────────────────────────────
-        CELL_PAD_X = 18
-        CELL_PAD_Y = 12
+        CELL_PAD_X = 22
+        CELL_PAD_Y = 14
         LINE_WIDTH = 2
-        MIN_COL_WIDTH = 70
-        FONT_SIZE = 15
-        HEADER_FONT_SIZE = 16
+        MIN_COL_WIDTH = 85
+        FONT_SIZE = 18
+        HEADER_FONT_SIZE = 20
 
         try:
             font = ImageFont.truetype(
@@ -1248,10 +1248,10 @@ class MaxAdapter(BasePlatformAdapter):
                 cw = (bbox[2] - bbox[0]) + CELL_PAD_X * 2
                 px_widths[i] = max(px_widths[i], cw)
 
-        # Cap total width at 720px for mobile
+        # Cap total width at 860px for mobile retina
         total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
-        if total_w > 720:
-            scale = 720 / total_w
+        if total_w > 860:
+            scale = 860 / total_w
             px_widths = [max(MIN_COL_WIDTH, int(w * scale)) for w in px_widths]
             total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
 
