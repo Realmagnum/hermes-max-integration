@@ -148,6 +148,16 @@ class MaxAdapter(BasePlatformAdapter):
             DEFAULT_STT_ENABLED,
         )
 
+        # Table-as-image (requires Pillow)
+        self._table_as_image: bool = _coerce_bool(
+            os.getenv("MAX_TABLE_AS_IMAGE")
+            or extra.get("table_as_image", False),
+            False,
+        )
+        self._table_image_dir: Path = AUDIO_CACHE_DIR.parent / "table_images"
+        if self._table_as_image:
+            self._table_image_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
         # Webhook settings
         self._webhook_host: str = (
             os.getenv("MAX_WEBHOOK_HOST")
@@ -1132,6 +1142,163 @@ class MaxAdapter(BasePlatformAdapter):
         result.append('`' + sep + '`')
         return '\n'.join(result)
 
+    async def _render_table_as_image(self, table_lines: list) -> Optional[str]:
+        """Render pipe-delimited table lines as a PNG image and upload to MAX.
+
+        Returns upload token on success, None on failure (missing Pillow,
+        upload error, etc.).
+        """
+        # Parse rows (same logic as _render_table)
+        rows = []
+        for line in table_lines:
+            if not line.strip():
+                continue
+            if all(c in '|-: ' for c in line):
+                continue
+            cells = [c.strip() for c in line.strip('|').split('|')]
+            rows.append(cells)
+        if not rows:
+            return None
+
+        ncols = max(len(r) for r in rows)
+        if ncols == 0:
+            return None
+
+        # Column widths — measure generously (up to 40 chars for image)
+        widths = [3] * ncols
+        for row in rows:
+            for i, cell in enumerate(row):
+                if i < ncols:
+                    widths[i] = max(widths[i], min(len(cell), 40))
+
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except ImportError:
+            logger.warning("MAX: Pillow not installed, cannot render table as image")
+            return None
+
+        # ── Layout constants ──────────────────────────────────────────
+        CELL_PAD_X = 12
+        CELL_PAD_Y = 6
+        FONT_SIZE = 13
+        HEADER_FONT_SIZE = 14
+        LINE_WIDTH = 1
+        MAX_IMG_WIDTH = 700
+
+        # Fonts (fall back to default if no DejaVu)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE)
+            font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", HEADER_FONT_SIZE)
+        except (IOError, OSError):
+            font = ImageFont.load_default()
+            font_bold = font
+
+        # Measure column widths in pixels
+        px_widths = [3] * ncols
+        for row in rows:
+            for i, cell in enumerate(row):
+                if i < ncols:
+                    bbox = font.getbbox(cell[:40])
+                    cw = (bbox[2] - bbox[0]) + CELL_PAD_X * 2
+                    px_widths[i] = max(px_widths[i], cw)
+
+        # Cap at MAX_IMG_WIDTH
+        total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
+        if total_w > MAX_IMG_WIDTH:
+            scale = MAX_IMG_WIDTH / total_w
+            px_widths = [max(20, int(w * scale)) for w in px_widths]
+            total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
+
+        # Measure row heights
+        row_h = max(CELL_PAD_Y * 2 + int(font.getbbox("Ay")[3] - font.getbbox("Ay")[1]), 20)
+        header_h = max(CELL_PAD_Y * 2 + int(font_bold.getbbox("Ay")[3] - font_bold.getbbox("Ay")[1]), 24)
+
+        data_rows = rows[1:]  # skip header row (rendered separately)
+        img_h = int(
+            LINE_WIDTH           # top border
+            + header_h           # header row
+            + LINE_WIDTH         # header separator
+            + row_h * len(data_rows)  # data rows
+            + LINE_WIDTH         # bottom border
+            + 4                  # small padding
+        )
+
+        # ── Draw ──────────────────────────────────────────────────────
+        img = Image.new("RGB", (total_w, img_h), "#ffffff")
+        draw = ImageDraw.Draw(img)
+
+        # Colors
+        BG_HEADER = "#f0f4f8"
+        BG_ROW_EVEN = "#ffffff"
+        BG_ROW_ODD = "#f8fafc"
+        BORDER_COLOR = "#94a3b8"
+        TEXT_COLOR = "#1e293b"
+        TEXT_COLOR_HEADER = "#0f172a"
+        SEP_COLOR = "#cbd5e1"
+
+        x = 0
+        y = 0
+
+        # Draw top border
+        draw.line([(0, 0), (total_w, 0)], fill=BORDER_COLOR, width=LINE_WIDTH)
+
+        # --- Header row ---
+        draw.rectangle([(0, y), (total_w, y + header_h)], fill=BG_HEADER)
+        cx = LINE_WIDTH
+        for ci in range(ncols):
+            cell_text = rows[0][ci] if ci < len(rows[0]) else ""
+            # Bold for first row (treat as header)
+            draw.text(
+                (cx + CELL_PAD_X, y + CELL_PAD_Y),
+                cell_text[:40],
+                font=font_bold,
+                fill=TEXT_COLOR_HEADER,
+            )
+            cx += px_widths[ci] + LINE_WIDTH
+
+        y += header_h
+
+        # Separator line below header
+        draw.line([(0, y), (total_w, y)], fill=SEP_COLOR, width=LINE_WIDTH)
+
+        # --- Data rows ---
+        for ri, row in enumerate(data_rows):
+            bg = BG_ROW_EVEN if ri % 2 == 0 else BG_ROW_ODD
+            draw.rectangle([(0, y), (total_w, y + row_h)], fill=bg)
+            cx = LINE_WIDTH
+            for ci in range(ncols):
+                cell_text = row[ci] if ci < len(row) else ""
+                draw.text(
+                    (cx + CELL_PAD_X, y + CELL_PAD_Y),
+                    cell_text[:40],
+                    font=font,
+                    fill=TEXT_COLOR,
+                )
+                # Vertical cell border
+                draw.line(
+                    [(cx, y), (cx, y + row_h)],
+                    fill=SEP_COLOR, width=1,
+                )
+                cx += px_widths[ci] + LINE_WIDTH
+            # Right vertical border
+            draw.line([(cx, y), (cx, y + row_h)], fill=SEP_COLOR, width=1)
+            # Horizontal row separator
+            if ri < len(rows) - 1:
+                draw.line([(0, y + row_h), (total_w, y + row_h)], fill=SEP_COLOR, width=1)
+            y += row_h
+
+        # Bottom border
+        draw.line([(0, y), (total_w, y)], fill=BORDER_COLOR, width=LINE_WIDTH)
+
+        # ── Save & upload ────────────────────────────────────────────
+        import hashlib
+        digest = hashlib.md5(str(table_lines).encode()).hexdigest()[:12]
+        out_path = self._table_image_dir / f"table_{digest}.png"
+        img.save(out_path, "PNG")
+
+        token = await self._upload(str(out_path), "image")
+        return token
+
     async def send(
         self,
         chat_id: str,
@@ -1154,9 +1321,49 @@ class MaxAdapter(BasePlatformAdapter):
             user_id = self._dm_user_ids.get(chat_id, target_id)
             params["user_id"] = user_id
 
-        # Convert markdown tables to MAX-compatible format
-        content = self._convert_markdown_tables(content)
+        # ── Handle tables ─────────────────────────────────────────────
+        # Table images (MAX_TABLE_AS_IMAGE) or text fallback
+        image_tokens: List[str] = []
 
+        if self._table_as_image:
+            # Try to render tables as images
+            import re as _re
+
+            lines = content.split("\n")
+            new_lines = []
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                if _re.match(r"^\|.+\|", line):
+                    table_lines = []
+                    has_sep = False
+                    while i < len(lines) and _re.match(r"^\|.+\|", lines[i]):
+                        cur = lines[i]
+                        table_lines.append(cur)
+                        if _re.match(r"^\|[\s\-:|]+\|$", cur):
+                            has_sep = True
+                        i += 1
+                    if has_sep and len(table_lines) >= 2:
+                        token = await self._render_table_as_image(table_lines)
+                        if token:
+                            image_tokens.append(token)
+                            # Replace table with a compact text reference
+                            new_lines.append("📊 _таблица_")
+                        else:
+                            # Image failed — render as text
+                            converted = MaxAdapter._render_table(table_lines)
+                            new_lines.append(converted)
+                    else:
+                        new_lines.extend(table_lines)
+                else:
+                    new_lines.append(line)
+                    i += 1
+            content = "\n".join(new_lines)
+        else:
+            # Text-only mode (default)
+            content = self._convert_markdown_tables(content)
+
+        # ── Send ───────────────────────────────────────────────────────
         chunks = self._split_outbound_text(content)
         last_result: Optional[SendResult] = None
 
@@ -1170,6 +1377,13 @@ class MaxAdapter(BasePlatformAdapter):
                 "format": "markdown",
                 "notify": True,
             }
+
+            # Attach table images to the first chunk
+            if idx == 1 and image_tokens:
+                body["attachments"] = [
+                    {"type": "image", "payload": {"token": t}} for t in image_tokens
+                ]
+
             if reply_to:
                 body["link"] = {"type": "REPLY", "mid": reply_to}
 

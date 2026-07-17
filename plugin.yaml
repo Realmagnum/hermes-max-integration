@@ -43,3 +43,6 @@ optional_env:
   - name: MAX_STT_ENABLED
     description: "Enable voice message auto-download for STT transcription (true/false, default: true)"
     prompt: "Voice message download enabled"
+  - name: MAX_TABLE_AS_IMAGE
+    description: "Render markdown tables as images via Pillow (true/false, default: false)"
+    prompt: "Render tables as images"
