@@ -21,7 +21,6 @@ Configuration in ~/.hermes/.env:
 from __future__ import annotations
 
 import asyncio
-import hmac
 import json
 import logging
 import mimetypes
@@ -219,8 +218,9 @@ class MaxAdapter(BasePlatformAdapter):
         self._stop: asyncio.Event = asyncio.Event()
         self._running: bool = False
 
-        # Dedup: mid → timestamp
+        # Dedup: mid → timestamp (max 5000 entries to prevent memory exhaustion)
         self._seen_msgs: Dict[str, float] = {}
+        self._SEEN_MSGS_MAX = 5000
         # DM routing: chat_id → user_id
         self._dm_user_ids: Dict[str, str] = {}
 
@@ -376,7 +376,27 @@ class MaxAdapter(BasePlatformAdapter):
         async def health_handler(req: web.Request) -> web.Response:
             return web.json_response({"status": "ok"})
 
+        # Rate limiter for webhook (per-IP, in-memory, cleaned every 5 min)
+        _webhook_hits: Dict[str, list] = {}
+        _WEBHOOK_LIMIT = 30   # max requests
+        _WEBHOOK_WINDOW = 10  # per 10 seconds
+
         async def webhook_handler(req: web.Request) -> web.Response:
+            # Simple per-IP rate limiting
+            now = time.monotonic()
+            peer = req.remote or "unknown"
+            hits = _webhook_hits.get(peer, [])
+            hits[:] = [t for t in hits if now - t < _WEBHOOK_WINDOW]
+            if len(hits) >= _WEBHOOK_LIMIT:
+                logger.warning("MAX: webhook rate limit exceeded for %s", peer)
+                return web.Response(status=429)
+            hits.append(now)
+            _webhook_hits[peer] = hits
+            # Periodic cleanup
+            if len(_webhook_hits) > 1000:
+                _webhook_hits = {k: v for k, v in _webhook_hits.items()
+                                 if any(now - t < _WEBHOOK_WINDOW for t in v)}
+
             # Verify secret
             if secret:
                 body = await req.read()
@@ -557,8 +577,11 @@ class MaxAdapter(BasePlatformAdapter):
             if mid in self._seen_msgs and now - self._seen_msgs[mid] < 300:
                 return None
             self._seen_msgs[mid] = now
-            # Prune old entries
-            self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
+            # Prune old entries + hard limit
+            if len(self._seen_msgs) > self._SEEN_MSGS_MAX:
+                self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
+            elif len(self._seen_msgs) > 100:
+                self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
 
         # Access control
         if not self._allow_all_users and self._allowed_users_set:
@@ -1489,7 +1512,8 @@ class MaxAdapter(BasePlatformAdapter):
             await self.send_typing(chat_id)
             return SendResult(success=True, message_id=message_id, raw_response=resp.json())
         except Exception as e:
-            return SendResult(success=False, error=str(e), retryable=True)
+            logger.error("MAX: edit_message failed: %s", e)
+            return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
 
     async def send_image(
         self, chat_id: str, image_url: str,
@@ -1517,7 +1541,8 @@ class MaxAdapter(BasePlatformAdapter):
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
         except Exception as e:
-            return SendResult(success=False, error=str(e), retryable=True)
+            logger.error("MAX: send_image failed: %s", e)
+            return SendResult(success=False, error="Send image failed (see logs)", retryable=True)
 
     async def send_image_file(
         self, chat_id: str, image_path: str,
@@ -1603,7 +1628,8 @@ class MaxAdapter(BasePlatformAdapter):
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
         except Exception as e:
-            return SendResult(success=False, error=str(e), retryable=True)
+            logger.error("MAX: _upload_send failed: %s", e)
+            return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
 
     async def _upload(self, file_path: str, media_type: str) -> Optional[str]:
         """Two-step upload: get upload URL → PUT file → return token."""
@@ -1749,7 +1775,7 @@ class MaxAdapter(BasePlatformAdapter):
             return SendResult(success=True, message_id=mid, raw_response=d)
         except Exception as e:
             logger.error("MAX: interactive send failed: %s", e)
-            return SendResult(success=False, error=str(e))
+            return SendResult(success=False, error="Interactive send failed (see logs)")
 
     async def send_exec_approval(
         self,
@@ -2033,7 +2059,14 @@ class MaxAdapter(BasePlatformAdapter):
                 mark_awaiting_text(clarify_id)
                 return None
 
+            if not choice_idx.isdigit():
+                logger.warning("MAX: clarify callback with non-numeric index: %s", choice_idx)
+                return None
+
             idx = int(choice_idx)
+            if idx < 0 or idx > 256:  # reasonable upper bound
+                logger.warning("MAX: clarify callback index out of range: %s", idx)
+                return None
             # Get the choice text from the pending clarify state
             # The gateway stores the choices — we resolve with the index
             response = str(idx)
@@ -2581,7 +2614,7 @@ async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str)
             )
     except Exception as exc:
         logger.error("MAX: send_message failed: %s", exc)
-        return SendResult(success=False, error=str(exc))
+        return SendResult(success=False, error="Standalone send failed (see logs)")
 
 
 async def _standalone_send(
