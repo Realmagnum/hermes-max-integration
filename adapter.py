@@ -1752,12 +1752,19 @@ class MaxAdapter(BasePlatformAdapter):
           model:pick:{model}:{provider} — model selected, switch
           model:back — back to provider list
         """
+        # Build the correct scoped_chat matching how send_model_picker stores state.
+        # If chat_id (raw numeric) is present, the message was in a group → "chat:{id}".
+        # Otherwise it's a DM → "user:{user_id}".
+        if chat_id:
+            scoped_chat = f"chat:{chat_id}"
+        else:
+            scoped_chat = f"user:{user_id}"
+
         parts = data.split(":", 2)
 
         if len(parts) >= 3 and parts[1] == "provider":
             # Provider selected
             provider_slug = parts[2]
-            scoped_chat = f"user:{user_id}"
             state = self._model_picker_state.get(scoped_chat)
             msg_id = state.get("msg_id", "") if state else ""
             await self._on_model_provider_selected(scoped_chat, provider_slug, msg_id)
@@ -1768,11 +1775,9 @@ class MaxAdapter(BasePlatformAdapter):
             rest = parts[2].rsplit(":", 1)
             if len(rest) == 2:
                 model_id, provider_slug = rest
-                scoped_chat = f"user:{user_id}"
                 return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
 
         if data == "model:back":
-            scoped_chat = f"user:{user_id}"
             await self._on_model_back(scoped_chat, user_id)
             return None
 
