@@ -16,6 +16,7 @@
 | 🎤 **STT Voice** | Auto-download voice messages → faster-whisper transcription |
 | 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
+| 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
 | ✂️ **Auto-chunking** | Smart 4000-char message splitting preserving paragraphs |
 | ⬆️ **File Upload** | Two-step upload: `POST /uploads` → PUT → token → send |
 | 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
@@ -60,6 +61,7 @@ Each status cell gets a colored icon: ✓ green, ✗ red, ⚠ orange, ◷ amber,
 | STT Voice | ❌ | ✅ Built-in |
 | Streaming (edit_message) | ❌ | ✅ |
 | **Tables as Images (PNG)** | ❌ | ✅ **Unique** |
+| **Interactive Buttons** | ❌ | ✅ model picker, approval, clarify |
 | File upload | ❌ | ✅ Two-step |
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
