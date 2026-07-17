@@ -14,6 +14,7 @@
 | 🎤 **STT Voice** | Auto-download voice messages → local path → faster-whisper transcription |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
 | ✂️ **Chunking** | Smart 4000-char message splitting preserving paragraphs |
+| 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
 | 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
 | 📎 **Media** | Recursive attachment extraction, image/document/audio caching |
 | ⬆️ **Upload** | Two-step file upload (`POST /uploads` → PUT file → token) |
@@ -84,6 +85,44 @@ cp scripts/transcribe_audio.py ~/.hermes/scripts/
 
 For HTTPS webhook (production), expose port 8646 via Cloudflare Tunnel or Traefik.
 
+### 6. Optional: Tables as Images
+
+Render markdown pipe-tables as clean PNG images with colored status icons instead of monospace text.
+
+```bash
+# Install Pillow (required)
+pip install Pillow
+
+# Enable in .env
+echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
+
+# Restart gateway
+hermes gateway restart
+```
+
+When enabled, the adapter renders tables like:
+
+```
+`-------------------------`
+`| Server  | Status      |`
+`|---------|-------------|`
+`| web-01  | ✓ Done      |`   →  colored PNG with icons
+`| db-main | ✗ Failed    |`
+`-------------------------`
+```
+
+Supports ✅✓ ✗ ❌ ⚠ ⏳ emoji → colored Unicode symbols (✓ ✗ ⚠ ◷ ▶ ●) with green/red/orange/amber/blue text.
+
+| Symbol | Meaning | Color |
+|--------|---------|-------|
+| ✓ Done | Green `#16a34a` |
+| ✗ Failed | Red `#dc2626` |
+| ⚠ In review/warning | Orange `#ea580c` |
+| ◷ Pending | Amber `#ca8a04` |
+| ▶ Scheduled | Blue `#3b82f6` |
+
+Falls back to text rendering if Pillow is not installed.
+
 ## Configuration Reference
 
 | Env Variable | Required | Default | Description |
@@ -97,6 +136,7 @@ For HTTPS webhook (production), expose port 8646 via Cloudflare Tunnel or Traefi
 | `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as Pillow-generated PNG images |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 
 ## Troubleshooting
@@ -127,7 +167,7 @@ hermes-max-stt/
 ├── plugin.yaml              # Hermes plugin metadata
 ├── __init__.py              # register() entry point
 ├── pyproject.toml           # Python package config
-├── adapter.py               # MaxAdapter (~1000 lines)
+├── adapter.py               # MaxAdapter (~2600 lines)
 ├── scripts/
 │   └── transcribe_audio.py  # STT transcription
 ├── skills/
@@ -145,7 +185,7 @@ This plugin follows secure-by-default practices:
 
 | Measure | Detail |
 |---------|--------|
-| 🛡️ **SSRF Protection** | File upload URLs validated against `*.max.ru` whitelist |
+| 🛡️ **SSRF Protection** | File upload URLs validated against `*.max.ru` / `*.oneme.ru` whitelist |
 | 🔐 **Token Safety** | `Authorization` header never forwarded on HTTP redirects |
 | 🔑 **Webhook Secret** | Constant-time comparison via `secrets.compare_digest` |
 | 🔊 **Voice Privacy** | Audio cache stored with `0700` permissions |

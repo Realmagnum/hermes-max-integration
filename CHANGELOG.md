@@ -2,6 +2,23 @@
 
 All notable changes to the hermes-max-stt plugin.
 
+## [2.1.2] — 2026-07-17
+
+### Added
+
+- **Tables as Images** (`MAX_TABLE_AS_IMAGE=true`): render pipe-markdown tables as Pillow-generated PNG images with colored status icons:
+  - ✓ Done (green), ✗ Failed (red), ⚠ In review (orange), ◷ Pending (amber), ▶ Scheduled (blue)
+  - Emoji variation selector normalization (U+FE0F/U+FE0E stripping)
+  - Dark header (#1e293b) with white text, alternating row colors
+  - Auto-fallback to text rendering when Pillow is missing
+  - Image upload via two-step API (`POST /uploads` → PUT → token → send)
+
+### Fixed
+
+- **Markdown table rendering:** removed unsupported fenced code blocks (```) and `<pre>` tags — MAX supports neither. Tables now render as inline `code` spans for monospace text, or as PNG images when `MAX_TABLE_AS_IMAGE=true`
+- **Upload domain whitelist:** added `iu.oneme.ru` and `*.oneme.ru` to SSRF allowlist (MAX image CDN)
+- **Emoji rendering in table images:** replaced emoji with proper Unicode symbols that DejaVu Sans renders clearly (16×15px vs 8×8px blobs)
+
 ## [2.1.1] — 2026-07-17
 
 ### Security (audit + hardening)
