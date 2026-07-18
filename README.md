@@ -116,7 +116,7 @@
 ### 1. Установка
 
 ```bash
-hermes plugins install Realmagnum/hermes-max-stt --enable
+hermes plugins install Realmagnum/hermes-max-integration --enable
 ```
 
 ### 2. Получить токен
@@ -225,7 +225,7 @@ python3 scripts/transcribe_audio.py --latest
 ## Структура проекта
 
 ```
-hermes-max-stt/
+hermes-max-integration/
 ├── plugin.yaml              # Метаданные плагина
 ├── __init__.py              # register() — точка входа
 ├── pyproject.toml           # Python-пакет

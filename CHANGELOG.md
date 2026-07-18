@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the hermes-max-stt plugin.
+All notable changes to the hermes-max-integration plugin.
 
 ## [2.1.3] — 2026-07-17
 

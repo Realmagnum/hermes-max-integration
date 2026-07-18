@@ -8,7 +8,7 @@ description: >
   messages and provides local paths for faster-whisper transcription.
 author: Alexander / Hermes Agent community
 license: MIT
-homepage: https://gitea.rmg7.com/agent/hermes-max-stt
+homepage: https://gitea.rmg7.com/agent/hermes-max-integration
 
 requires_env:
   - name: MAX_BOT_TOKEN

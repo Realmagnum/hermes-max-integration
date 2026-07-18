@@ -116,7 +116,7 @@ We tried several approaches before settling on PNG:
 ### 1. Install
 
 ```bash
-hermes plugins install Realmagnum/hermes-max-stt --enable
+hermes plugins install Realmagnum/hermes-max-integration --enable
 ```
 
 ### 2. Get a bot token
@@ -225,7 +225,7 @@ python3 scripts/transcribe_audio.py --latest
 ## Project Structure
 
 ```
-hermes-max-stt/
+hermes-max-integration/
 ├── plugin.yaml              # Hermes plugin metadata
 ├── __init__.py              # register() entry point
 ├── pyproject.toml           # Python package config

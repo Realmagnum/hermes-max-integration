@@ -1,4 +1,4 @@
-# Webhook в hermes-max-stt
+# Webhook в hermes-max-integration
 
 Подробное описание архитектуры, запуска, обработки запросов и безопасности вебхук-сервера.
 

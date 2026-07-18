@@ -35,11 +35,11 @@ If these docs changed, follow the current official docs instead of this skill.
    ```
 3. Install and enable the plugin:
    ```bash
-   hermes plugins install Realmagnum/hermes-max-stt --enable
+   hermes plugins install Realmagnum/hermes-max-integration --enable
    ```
    Or from local path:
    ```bash
-   hermes plugins install /path/to/hermes-max-stt-plugin --enable
+   hermes plugins install /path/to/hermes-max-integration-plugin --enable
    ```
 4. Help the user get a Max bot token.
    Official path after moderation:

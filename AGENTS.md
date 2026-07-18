@@ -11,7 +11,7 @@ When a user gives you this repository and asks to connect Hermes to Max:
 2. Install Hermes first if it is missing: https://hermes-agent.nousresearch.com/docs
 3. Install this plugin with:
    ```bash
-   hermes plugins install Realmagnum/hermes-max-stt --enable
+   hermes plugins install Realmagnum/hermes-max-integration --enable
    ```
 4. Ensure `aiohttp` and `httpx` are installed in the same Python environment that runs Hermes.
 5. Help the user obtain `MAX_BOT_TOKEN` from Max for Partners.
