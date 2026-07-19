@@ -620,7 +620,18 @@ class MaxAdapter(BasePlatformAdapter):
             else:
                 logger.warning("MAX: STT returned empty transcription")
         elif self._stt_enabled and not media_urls and not text:
-            logger.warning("MAX: empty message with no media — possible undetected voice attachment")
+            logger.warning(
+                "MAX: empty message with no media — possible undetected voice attachment. "
+                "Update keys: %s, Message keys: %s",
+                list(update.keys()), list(message.keys()),
+            )
+            # Log first 2KB of the raw update for debugging
+            import json as _json
+            try:
+                dump = _json.dumps(update, ensure_ascii=False, default=str)[:2048]
+                logger.debug("MAX: raw update payload: %s", dump)
+            except Exception:
+                pass
 
         # Process basic attachments as text references (for non-recursive fallback)
         if not media_urls:
