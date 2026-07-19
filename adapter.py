@@ -602,13 +602,25 @@ class MaxAdapter(BasePlatformAdapter):
 
         # Extract media
         media_urls, media_types = await self._extract_inbound_media(update, message, body)
+        logger.debug(
+            "MAX: media extracted: %s urls, types=%s",
+            len(media_urls), media_types,
+        )
 
         # Auto-transcribe audio when STT is enabled
         if self._stt_enabled and media_urls:
+            logger.info(
+                "MAX: STT starting for %s audio file(s) of types %s",
+                len(media_urls), media_types,
+            )
             stt_text = await self._transcribe_media(media_urls, media_types)
             if stt_text:
                 text = (text + "\n\n" + stt_text).strip() if text else stt_text
                 logger.info("MAX: audio auto-transcribed: %s...", stt_text[:80])
+            else:
+                logger.warning("MAX: STT returned empty transcription")
+        elif self._stt_enabled and not media_urls and not text:
+            logger.warning("MAX: empty message with no media — possible undetected voice attachment")
 
         # Process basic attachments as text references (for non-recursive fallback)
         if not media_urls:
