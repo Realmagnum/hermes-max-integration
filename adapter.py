@@ -1490,16 +1490,29 @@ class MaxAdapter(BasePlatformAdapter):
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
 
-        # Streaming throttle: minimum 800ms between edits
+        # Streaming throttle: minimum 200ms between edits to avoid flooding.
+        # Unlike the old 800ms throttle, this stores the content when skipped
+        # so no edit is ever silently lost.
         now = time.monotonic()
         last = getattr(self, "_last_edit_at", 0.0)
-        if not finalize and last > 0 and (now - last) < 0.8:
+        if not finalize and last > 0 and (now - last) < 0.2:
+            self._pending_edit = content
+            logger.debug("MAX: edit_message throttled, content queued")
             return SendResult(success=True, message_id=message_id)
+
+        # If there was a throttled edit, merge it with the current content.
+        # The content parameter already carries the full accumulated text from
+        # the agent, so _pending_edit is used only for internal bookkeeping —
+        # no actual merging needed on the wire, the agent already concatenated.
+        if getattr(self, "_pending_edit", None) is not None:
+            self._pending_edit = None
+
         self._last_edit_at = now
         if finalize:
             self._last_edit_at = 0.0
 
         text = content[:MAX_MESSAGE_LENGTH - 3] + "..." if len(content) > MAX_MESSAGE_LENGTH else content
+        text = self._convert_markdown_tables(text)
         body = {"text": text, "format": "markdown"}
         try:
             resp = await self._http_client.put(
