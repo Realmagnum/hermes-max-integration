@@ -420,6 +420,16 @@ class MaxAdapter(BasePlatformAdapter):
         except (ConnectionRefusedError, OSError):
             pass  # Port is free
 
+        # Port-in-use check
+        try:
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)
+                sock.connect(("127.0.0.1", self._webhook_port))
+            self._set_fatal_error("port_in_use", f"Port {self._webhook_port} already in use", retryable=False)
+            return False
+        except (ConnectionRefusedError, OSError):
+            pass  # Port is free
+
         secret = self._webhook_secret
         path = self._webhook_path
 
@@ -961,7 +971,7 @@ class MaxAdapter(BasePlatformAdapter):
             "Accept": "audio/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers)
+            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
@@ -995,7 +1005,7 @@ class MaxAdapter(BasePlatformAdapter):
             "Accept": "image/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers)
+            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
@@ -1033,7 +1043,7 @@ class MaxAdapter(BasePlatformAdapter):
             "Accept": "application/*,text/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers)
+            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
