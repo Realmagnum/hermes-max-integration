@@ -1889,9 +1889,12 @@ class MaxAdapter(BasePlatformAdapter):
             buttons: List[List[Dict[str, str]]] = []
             row: List[Dict[str, str]] = []
             for i, choice in enumerate(choices):
+                btn_text = str(choice)[:30]
+                if len(str(choice)) > 30:
+                    btn_text = btn_text[:27] + "..."
                 row.append({
                     "type": "callback",
-                    "text": str(choice)[:64],
+                    "text": btn_text,
                     "payload": f"clarify:{clarify_id}:{i}",
                 })
                 if len(row) >= 3:
@@ -2188,11 +2191,12 @@ class MaxAdapter(BasePlatformAdapter):
         row: List[Dict[str, str]] = []
         for p in providers[:20]:  # Max 20 providers
             slug = p.get("slug", "")
-            name = p.get("name", slug)[:30]
+            name = str(p.get("name", slug))[:25]
             tag = " ✅" if p.get("is_current") else ""
+            btn_text = f"{name}{tag}"[:30]
             row.append({
                 "type": "callback",
-                "text": f"{name}{tag}"[:64],
+                "text": btn_text,
                 "payload": f"model:provider:{slug}",
             })
             if len(row) >= 2:
@@ -2238,12 +2242,12 @@ class MaxAdapter(BasePlatformAdapter):
         # Build model buttons (1 per row for readability)
         buttons: List[List[Dict[str, str]]] = []
         for m in models:
-            name = str(m)[:40]
+            name = str(m)[:30]
             is_current = (
                 state.get("current_model") == m
                 and state.get("current_provider") == provider_slug
             )
-            label = f"{'✅ ' if is_current else ''}{name}"[:64]
+            label = f"{'✅ ' if is_current else ''}{name}"[:35]
             buttons.append([{
                 "type": "callback",
                 "text": label,
