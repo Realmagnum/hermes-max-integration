@@ -3143,16 +3143,6 @@ async def _standalone_send(
     """
     del thread_id, force_document
 
-    # Determine media type by file extension
-    _MEDIA_TYPES = {
-        ".jpg": "image", ".jpeg": "image", ".png": "image",
-        ".webp": "image", ".gif": "image", ".bmp": "image",
-        ".mp4": "video", ".mov": "video", ".avi": "video",
-        ".mkv": "video", ".webm": "video",
-        ".mp3": "audio", ".wav": "audio", ".ogg": "audio",
-        ".opus": "audio", ".m4a": "audio", ".flac": "audio",
-    }
-
     token = _standalone_get_token(pconfig)
     if not token:
         return {"error": "MAX_BOT_TOKEN not configured"}
@@ -3181,12 +3171,9 @@ async def _standalone_send(
                     logger.warning("MAX: standalone media file not found: %s", media_path)
                     continue
 
-                ext = os.path.splitext(media_path)[1].lower()
-                mtype = _MEDIA_TYPES.get(ext, "file")
-
-                # Step 1: get upload URL
+                # Step 1: get upload URL (always use type=file for reliability)
                 try:
-                    resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": mtype}, headers=headers)
+                    resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": "file"}, headers=headers)
                     if resp.status_code != 200:
                         logger.warning("MAX: upload URL request failed for %s (status %d)", media_path, resp.status_code)
                         continue
@@ -3245,8 +3232,8 @@ async def _standalone_send(
                 target_id = parts[1] if len(parts) > 1 else chat_id
                 params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
                 body = {
-                    "text": "",
-                    "attachments": [{"type": mtype, "payload": {"token": file_token}}],
+                    "text": os.path.basename(media_path),
+                    "attachments": [{"type": "file", "payload": {"token": file_token}}],
                 }
                 resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
                 resp.raise_for_status()
