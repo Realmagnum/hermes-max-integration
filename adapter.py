@@ -58,6 +58,16 @@ POLL_ERROR_DELAY = 5.0
 WEBHOOK_MAX_BODY_BYTES = 1_048_576  # 1 MB
 UPLOAD_DELAY = 2.0
 
+# SSRF allowlist for file upload CDNs (used by both adapter and standalone sender)
+_ALLOWED_UPLOAD_HOSTS = frozenset({
+    "platform-api.max.ru",
+    "cdn.max.ru",
+    "storage.max.ru",
+    "upload.max.ru",
+    "iu.oneme.ru",
+    "fu.oneme.ru",
+})
+
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — webhook server must accept external callbacks from MAX API; protected by reverse proxy (TLS) + rate limiting + secret verification
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
@@ -1949,16 +1959,8 @@ class MaxAdapter(BasePlatformAdapter):
             # SECURITY: Only upload to known Max/Cdn domains (SSRF prevention).
             # If the API returns an unexpected URL, refuse to connect.
             parsed = urlparse(upload_url)
-            allowed_hosts = {
-                "platform-api.max.ru",
-                "cdn.max.ru",
-                "storage.max.ru",
-                "upload.max.ru",
-                "iu.oneme.ru",
-                "fu.oneme.ru",  # actual file upload CDN
-            }
             if parsed.hostname and (
-                parsed.hostname in allowed_hosts
+                parsed.hostname in _ALLOWED_UPLOAD_HOSTS
                 or parsed.hostname.endswith(".max.ru")
                 or parsed.hostname.endswith(".oneme.ru")
             ):
@@ -3183,27 +3185,56 @@ async def _standalone_send(
                 mtype = _MEDIA_TYPES.get(ext, "file")
 
                 # Step 1: get upload URL
-                resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": mtype}, headers=headers)
-                if resp.status_code != 200:
-                    logger.warning("MAX: standalone upload URL request failed for %s", media_path)
+                try:
+                    resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": mtype}, headers=headers)
+                    if resp.status_code != 200:
+                        logger.warning("MAX: upload URL request failed for %s (status %d)", media_path, resp.status_code)
+                        continue
+                    upload_json = resp.json()
+                    upload_url = upload_json.get("url", "")
+                    if not upload_url:
+                        logger.warning("MAX: upload URL response missing 'url' for %s", media_path)
+                        continue
+                except Exception as e:
+                    logger.warning("MAX: upload URL parse failed for %s: %s", media_path, e)
                     continue
-                upload_url = resp.json().get("url", "")
-                if not upload_url:
+
+                # SSRF protection: only upload to known MAX/CDN domains
+                from urllib.parse import urlparse as _urlparse_upload
+                parsed_upload = _urlparse_upload(upload_url)
+                if not parsed_upload.hostname or not (
+                    parsed_upload.hostname in _ALLOWED_UPLOAD_HOSTS
+                    or parsed_upload.hostname.endswith(".max.ru")
+                    or parsed_upload.hostname.endswith(".oneme.ru")
+                    or parsed_upload.hostname.endswith(".okcdn.ru")
+                    or parsed_upload.hostname.endswith(".cdn-max.ru")
+                ):
+                    logger.warning("MAX: upload URL rejected (SSRF): %s", upload_url[:80])
                     continue
 
                 # Step 2: upload file as multipart
-                import aiohttp as _aiohttp
-                async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
-                    with open(media_path, "rb") as f:
-                        form = _aiohttp.FormData()
-                        form.add_field("data", f, filename=os.path.basename(media_path))
-                        async with aio_session.post(upload_url, data=form) as r:
-                            if r.status != 200:
-                                continue
-                            upload_data = await r.json()
-                            file_token = upload_data.get("token")
-                            if not file_token:
-                                continue
+                try:
+                    import aiohttp as _aiohttp
+                    async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
+                        with open(media_path, "rb") as f:
+                            form = _aiohttp.FormData()
+                            form.add_field("data", f, filename=os.path.basename(media_path))
+                            async with aio_session.post(upload_url, data=form) as r:
+                                if r.status != 200:
+                                    logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
+                                    continue
+                                try:
+                                    upload_data = await r.json()
+                                except Exception:
+                                    logger.warning("MAX: CDN returned non-JSON for %s", media_path)
+                                    continue
+                                file_token = upload_data.get("token")
+                                if not file_token:
+                                    logger.warning("MAX: CDN response missing token for %s", media_path)
+                                    continue
+                except Exception as e:
+                    logger.warning("MAX: CDN upload error for %s: %s", media_path, e)
+                    continue
 
                 # Wait for MAX to process the file
                 await asyncio.sleep(UPLOAD_DELAY)

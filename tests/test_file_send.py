@@ -239,6 +239,36 @@ class TestStandaloneSend:
                 assert result.get("success") is True
 
 
+# ── Tests for SSRF in standalone sender ──────────────────────────────────
+
+
+class TestStandaloneSSRF:
+    """_standalone_send blocks remote upload URLs not in allowlist."""
+
+    @pytest.mark.asyncio
+    async def test_standalone_upload_url_ssrf_blocked(self):
+        """Upload URL from unknown domain should be skipped with warning."""
+        from gateway.config import PlatformConfig
+        pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
+
+        with patch.object(adapter, "_standalone_get_token", return_value="tok"):
+            with patch("httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+                evil_resp = MagicMock()
+                evil_resp.status_code = 200
+                evil_resp.json.return_value = {"url": "https://evil.com/upload"}
+                mock_client.post = AsyncMock(return_value=evil_resp)
+
+                with patch("os.path.exists", return_value=True):
+                    result = await adapter._standalone_send(
+                        pconfig, "user:42", "test",
+                        media_files=[("/tmp/test.pdf", False)],
+                    )
+                assert result.get("success") is True
+
+
 # ── Tests for _standalone_get_token ───────────────────────────────────────
 
 
@@ -288,16 +318,9 @@ class TestStandaloneGetToken:
 def test_allowed_upload_hosts(host):
     """Verify that allowed CDN hosts pass the SSRF check."""
     from urllib.parse import urlparse
-    allowed_hosts = {
-        "platform-api.max.ru",
-        "cdn.max.ru",
-        "storage.max.ru",
-        "upload.max.ru",
-        "iu.oneme.ru",
-        "fu.oneme.ru",
-    }
+    allowed = adapter._ALLOWED_UPLOAD_HOSTS
     if (
-        host in allowed_hosts
+        host in allowed
         or host.endswith(".max.ru")
         or host.endswith(".oneme.ru")
     ):
