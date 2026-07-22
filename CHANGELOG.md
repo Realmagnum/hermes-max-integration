@@ -4,9 +4,9 @@
 
 ## [2.3.0] — 2026-07-22
 
-### Added
+### Добавлено
 
-- **Bilingual documentation policy** — all `*.md` files now follow RU-primary + EN-translation (`*_EN.md`) pattern:
+- **Двуязычная политика документации** — все `*.md` файлы теперь следуют схеме RU-основной + EN-перевод (`*_EN.md`):
   - `AGENTS.md` + `AGENTS_EN.md`
   - `CHANGELOG.md` + `CHANGELOG_EN.md`
   - `README.md` + `README_EN.md`
@@ -14,17 +14,17 @@
   - `after-install.md` + `after-install_EN.md`
   - `skills/max-gateway/SKILL.md` + `skills/max-gateway/SKILL_EN.md`
 
-### Fixed
+### Исправлено
 
-- `send_buttons()` now wraps one button per row (full width) instead of 2 per row
-- Button text auto-truncated to MAX API limits (40 chars callback, 64 chars link)
-- `send_buttons()` — double-encoded JSON bug fix in `send_typing` (mentioned in v2.2.0)
+- `send_buttons()` теперь размещает одну кнопку на ряд (полная ширина) вместо 2 в ряд
+- Текст кнопок автоматически обрезается до лимитов MAX API (40 символов для callback, 64 для link)
+- `send_buttons()` — исправлен баг двойной сериализации JSON в `send_typing`
 
-### Changed
+### Изменено
 
-- `send_buttons()` — text duplicated in message body as fallback (mobile readability)
-- `send_buttons()` — auto-numbering (`1.`, `2.`, `3.`...) when 3+ buttons
-- `send_buttons()` — optional `label` field: full description in message body, short `text` on button
+- `send_buttons()` — текст дублируется в теле сообщения как запасной вариант (читаемость на мобильных)
+- `send_buttons()` — авто-нумерация (`1.`, `2.`, `3.`...) при 3+ кнопках
+- `send_buttons()` — опциональное поле `label`: полное описание в теле сообщения, короткий `text` на кнопке
 
 ## [2.2.0] — 2026-07-22
 
