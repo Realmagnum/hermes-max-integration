@@ -2146,9 +2146,9 @@ class MaxAdapter(BasePlatformAdapter):
             buttons: List[List[Dict[str, str]]] = []
             row: List[Dict[str, str]] = []
             for i, choice in enumerate(choices):
-                btn_text = str(choice)[:30]
-                if len(str(choice)) > 30:
-                    btn_text = btn_text[:27] + "..."
+                btn_text = str(choice)[:40]
+                if len(str(choice)) > 40:
+                    btn_text = btn_text[:37] + "..."
                 row.append({
                     "type": "callback",
                     "text": btn_text,
@@ -2448,9 +2448,9 @@ class MaxAdapter(BasePlatformAdapter):
         row: List[Dict[str, str]] = []
         for p in providers[:20]:  # Max 20 providers
             slug = p.get("slug", "")
-            name = str(p.get("name", slug))[:25]
+            name = str(p.get("name", slug))[:38]
             tag = " ✅" if p.get("is_current") else ""
-            btn_text = f"{name}{tag}"[:30]
+            btn_text = f"{name}{tag}"[:40]
             row.append({
                 "type": "callback",
                 "text": btn_text,
@@ -2499,12 +2499,12 @@ class MaxAdapter(BasePlatformAdapter):
         # Build model buttons (1 per row for readability)
         buttons: List[List[Dict[str, str]]] = []
         for m in models:
-            name = str(m)[:30]
+            name = str(m)[:38]
             is_current = (
                 state.get("current_model") == m
                 and state.get("current_provider") == provider_slug
             )
-            label = f"{'✅ ' if is_current else ''}{name}"[:35]
+            label = f"{'✅ ' if is_current else ''}{name}"[:40]
             buttons.append([{
                 "type": "callback",
                 "text": label,
@@ -2585,11 +2585,11 @@ class MaxAdapter(BasePlatformAdapter):
         row: List[Dict[str, str]] = []
         for p in providers[:20]:
             slug = p.get("slug", "")
-            name = p.get("name", slug)[:30]
+            name = p.get("name", slug)[:38]
             tag = " ✅" if p.get("is_current") else ""
             row.append({
                 "type": "callback",
-                "text": f"{name}{tag}"[:64],
+                "text": f"{name}{tag}"[:40],
                 "payload": f"model:provider:{slug}",
             })
             if len(row) >= 2:
