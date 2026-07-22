@@ -1,11 +1,12 @@
 name: max-platform
 label: Max (STT)
 kind: platform
-version: 2.1.4
+version: 2.2.0
 description: >
   MAX messenger (max.ru) gateway adapter for Hermes Agent with built-in STT
-  voice transcription. Supports both long-polling and webhook. Downloads voice
-  messages and provides local paths for faster-whisper transcription.
+  voice transcription and cross-platform session management. Supports both
+  long-polling and webhook. Downloads voice messages and provides local paths
+  for faster-whisper transcription.
 author: Alexander / Hermes Agent community
 license: MIT
 homepage: https://gitea.rmg7.com/agent/hermes-max-integration
@@ -46,3 +47,6 @@ optional_env:
   - name: MAX_TABLE_AS_IMAGE
     description: "Render markdown tables as images via Pillow (true/false, default: false)"
     prompt: "Render tables as images"
+  - name: MAX_CROSS_SESSION
+    description: "Enable cross-platform session listing — /sessions shows sessions from ALL platforms (CLI, Telegram, Discord, WebUI). /resume <id> switches to any session. Set to false to restore default per-platform scoping. (true/false, default: true)"
+    prompt: "Cross-platform session commands"

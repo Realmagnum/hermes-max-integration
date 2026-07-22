@@ -209,6 +209,13 @@ class MaxAdapter(BasePlatformAdapter):
         if self._table_as_image:
             self._table_image_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
+        # Cross-platform session commands (/sessions, /resume across all platforms)
+        self._cross_session: bool = _coerce_bool(
+            os.getenv("MAX_CROSS_SESSION")
+            or extra.get("cross_session", True),  # enabled by default
+            True,
+        )
+
         # Webhook settings
         self._webhook_host: str = (
             os.getenv("MAX_WEBHOOK_HOST")
@@ -795,7 +802,7 @@ class MaxAdapter(BasePlatformAdapter):
                     text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else f"[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
-        if text:
+        if text and self._cross_session:
             if text.startswith('/sessions'):
                 args = text[len('/sessions'):].strip()
                 if args and not args.lower().startswith('search '):
@@ -2708,6 +2715,10 @@ def _env_enablement() -> Optional[dict]:
             "name": os.getenv("MAX_HOME_CHANNEL_NAME", "Max Home") or "Max Home",
         }
 
+    cross = os.getenv("MAX_CROSS_SESSION", "").strip()
+    if cross:
+        extra["cross_session"] = _coerce_bool(cross, True)
+
     return extra
 
 
@@ -2730,6 +2741,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
         "home_channel": "MAX_HOME_CHANNEL",
         "stt_enabled": "MAX_STT_ENABLED",
         "group_policy": "MAX_GROUP_POLICY",
+        "cross_session": "MAX_CROSS_SESSION",
     }
 
     for key, env_name in mapping.items():

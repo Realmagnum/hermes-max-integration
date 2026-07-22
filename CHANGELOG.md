@@ -2,6 +2,23 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.2.0] — 2026-07-22
+
+### Added
+
+- **Cross-platform session commands** — `/sessions` now shows sessions from ALL platforms (💻CLI, 📱Telegram, 🟣MAX, 🎮Discord, 🌐WebUI, 🔌API Server), not just MAX:
+  - Rich output with source emoji, title preview, and abbreviated session ID
+  - `/sessions search <query>` — full-text search across all platforms
+  - `/resume <id>` automatically uses `--all` flag — resume any session from any platform
+  - Configurable via `MAX_CROSS_SESSION=true|false` (default: true)
+  - Requires `allow_admin_from` in config.yaml for the `max` platform (adds the user's MAX ID) to make core `--all` flag work
+- **`plugin.yaml`** — added `MAX_CROSS_SESSION` optional env var
+
+### Notes
+
+- When `MAX_CROSS_SESSION=false`, `/sessions` and `/resume` fall back to core gateway's default per-platform scoping (MAX only)
+- Cross-platform resume (`/resume --all`) requires the user's MAX ID to be listed in `platforms.max.extra.allow_admin_from` in config.yaml
+
 ## [2.1.3] — 2026-07-17
 
 ### Security (audit finalization)
