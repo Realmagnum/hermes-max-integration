@@ -3223,6 +3223,14 @@ async def _standalone_send(
                                     continue
                                 file_token = upload_data.get("token")
                                 if not file_token:
+                                    # type=image returns: {"photos": {"id": {"token": "..."}}}
+                                    photos = upload_data.get("photos", {})
+                                    if isinstance(photos, dict):
+                                        for _pid, _pdata in photos.items():
+                                            if isinstance(_pdata, dict) and _pdata.get("token"):
+                                                file_token = _pdata["token"]
+                                                break
+                                if not file_token:
                                     logger.warning("MAX: CDN response missing token for %s", media_path)
                                     continue
                 except Exception as e:
