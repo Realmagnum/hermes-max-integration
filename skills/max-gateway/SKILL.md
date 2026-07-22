@@ -1,6 +1,6 @@
 ---
 name: max-gateway
-description: "Install and configure Hermes Agent access through Max messenger with STT voice transcription."
+description: "Установка и настройка доступа Hermes Agent через мессенджер MAX с STT-транскрипцией голоса."
 version: 2.0.0
 author: Alexander / Hermes Agent community
 license: MIT
@@ -9,107 +9,107 @@ metadata:
     tags: [hermes, gateway, messaging, max, chatbot, stt, voice, whisper]
 ---
 
-# Max Gateway for Hermes (with STT)
+# Шлюз MAX для Hermes (с STT)
 
-Use this skill when a user wants to control Hermes Agent through Max messenger.
+Используйте этот навык, когда пользователь хочет управлять Hermes Agent через мессенджер MAX.
 
-## Official facts to trust first
+## Официальные факты, которым доверять в первую очередь
 
-Checked on 2026-06-22:
-- Max partner platform connection: https://dev.max.ru/docs/maxbusiness/connection
-- Chatbot creation and token location: https://dev.max.ru/docs/chatbots/bots-create
-- Developer setup and token warning: https://dev.max.ru/docs/chatbots/bots-coding/prepare
-- API overview: https://dev.max.ru/docs-api
-- Webhook subscriptions: https://dev.max.ru/docs-api/methods/POST/subscriptions
-- Sending messages: https://dev.max.ru/docs-api/methods/POST/messages
+Проверено 2026-06-22:
+- Подключение партнёрской платформы MAX: https://dev.max.ru/docs/maxbusiness/connection
+- Создание чат-бота и расположение токена: https://dev.max.ru/docs/chatbots/bots-create
+- Настройка разработчика и предупреждение о токене: https://dev.max.ru/docs/chatbots/bots-coding/prepare
+- Обзор API: https://dev.max.ru/docs-api
+- Подписки вебхуков: https://dev.max.ru/docs-api/methods/POST/subscriptions
+- Отправка сообщений: https://dev.max.ru/docs-api/methods/POST/messages
 
-If these docs changed, follow the current official docs instead of this skill.
+Если эти документы изменились, следуйте текущей официальной документации вместо этого навыка.
 
-## Procedure
+## Процедура
 
-1. Verify Hermes is installed: `hermes --version`
-2. Install plugin dependencies:
+1. Проверьте, установлен ли Hermes: `hermes --version`
+2. Установите зависимости плагина:
    ```bash
    pip install aiohttp httpx
-   pip install faster-whisper  # for STT voice transcription
+   pip install faster-whisper  # для STT-транскрипции голоса
    ```
-3. Install and enable the plugin:
+3. Установите и включите плагин:
    ```bash
    hermes plugins install Realmagnum/hermes-max-integration --enable
    ```
-   Or from local path:
+   Или из локального пути:
    ```bash
    hermes plugins install /path/to/hermes-max-integration-plugin --enable
    ```
-4. Help the user get a Max bot token.
-   Official path after moderation:
-   `Chat-bots → Go → Advanced settings → Configure → Token`
-5. Save token as `MAX_BOT_TOKEN` in Hermes `.env`. Do not echo the token back.
-6. Configure webhook bind settings (default):
+4. Помогите пользователю получить токен MAX-бота.
+   Официальный путь после модерации:
+   `Чат-боты → Перейти → Расширенные настройки → Настроить → Токен`
+5. Сохраните токен как `MAX_BOT_TOKEN` в `.env` Hermes. Не выводите токен обратно.
+6. Настройте параметры привязки вебхука (по умолчанию):
    ```
    MAX_WEBHOOK_HOST=0.0.0.0
    MAX_WEBHOOK_PORT=8646
    MAX_WEBHOOK_PATH=/max/webhook
    ```
-7. Create a public HTTPS tunnel to `http://localhost:8646` or use the user's HTTPS domain.
-8. Register subscription:
+7. Создайте публичный HTTPS-туннель к `http://localhost:8646` или используйте HTTPS-домен пользователя.
+8. Зарегистрируйте подписку:
    ```bash
    curl -X POST "https://platform-api.max.ru/subscriptions" \
-     -H "Authorization: $MAX_BOT_TOKEN" \
+     -H "Authorization: ***" \
      -H "Content-Type: application/json" \
      -d '{"url":"https://YOUR-DOMAIN/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"CHANGE_ME_5_256_CHARS"}'
    ```
-9. Restart and verify:
+9. Перезапустите и проверьте:
    ```bash
    hermes gateway restart
    hermes gateway status
    curl http://localhost:8646/health
    ```
-10. Ask the user to send a real message to the Max bot and verify Hermes answers.
+10. Попросите пользователя отправить реальное сообщение MAX-боту и проверьте, отвечает ли Hermes.
 
-## Voice Messages (STT)
+## Голосовые сообщения (STT)
 
-When the agent receives a message with `[Audio: /path/to/file.ogg]`:
+Когда агент получает сообщение с `[Audio: /path/to/file.ogg]`:
 
-1. The adapter auto-downloads voice messages to `~/.hermes/audio_cache/`
-2. Transcribe with:
+1. Адаптер автоматически загружает голосовые сообщения в `~/.hermes/audio_cache/`
+2. Транскрибируйте с помощью:
    ```bash
    python3 scripts/transcribe_audio.py /path/to/audio.ogg
    ```
-3. Or for most recent:
+3. Или для последнего файла:
    ```bash
    python3 scripts/transcribe_audio.py --latest
    ```
 
-### Models
+### Модели
 
-| Model | Speed (CPU) | Accuracy | Use case |
-|-------|------------|----------|----------|
-| `tiny` | ~0.1s | ★★☆ | Quick test |
-| `base` | ~2-3s | ★★★ | Daily use (default) |
-| `small` | ~5-8s | ★★★★ | Important messages |
+| Модель | Скорость (CPU) | Точность | Сценарий использования |
+|--------|---------------|----------|----------------------|
+| `tiny` | ~0.1с | ★★☆ | Быстрая проверка |
+| `base` | ~2-3с | ★★★ | Ежедневное использование (по умолчанию) |
+| `small` | ~5-8с | ★★★★ | Важные сообщения |
 
-Options: `--model tiny|base|small`, `--language ru|auto`
+Опции: `--model tiny|base|small`, `--language ru|auto`
 
-### Pitfalls for STT
+### Проблемы STT
 
-- Uses venv at `~/.hermes/stt-venv/` (faster-whisper)
-- `base` model: good accuracy, ~2-3s on CPU. Still mishears complex words.
-- `tiny` model: fast (0.1s), less accurate — expect garbled words
-- Audio files cleaned after 7 days
-- Script timeout: 120s
+- Использует venv в `~/.hermes/stt-venv/` (faster-whisper)
+- Модель `base`: хорошая точность, ~2-3с на CPU. Всё ещё может неправильно распознавать сложные слова.
+- Модель `tiny`: быстрая (0.1с), менее точная — возможны искажённые слова
+- Аудиофайлы очищаются через 7 дней
+- Таймаут скрипта: 120с
 
-## Pitfalls (general)
+## Проблемы (общие)
 
-- Use `Authorization: *** not query params and not `Bearer <token>`.
-- Webhook must be HTTPS with a trusted certificate.
-- If `secret` is configured, Max sends it raw in `X-Max-Bot-Api-Secret`; compare it directly with constant-time comparison.
-- **🚨 CRITICAL: Webhook and Long Polling are mutually exclusive.** If a webhook subscription exists in MAX API, `/updates` returns empty and ALL messages go to the webhook URL instead. Even after removing `MAX_WEBHOOK_URL` from .env and restarting, the stale subscription persists in MAX API and silently blocks message delivery.
-  - **Fix:** Delete the old subscription:
+- Используйте `Authorization: ***`, а не параметры запроса и не `Bearer <token>`.
+- Вебхук должен быть HTTPS с доверенным сертификатом.
+- Если настроен `secret`, MAX отправляет его как сырое значение в `X-Max-Bot-Api-Secret`; сравнивайте напрямую с constant-time сравнением.
+- **🚨 КРИТИЧНО: Вебхук и Long Polling взаимоисключающи.** Если в MAX API существует подписка вебхука, `/updates` возвращает пустой ответ, и ВСЕ сообщения идут на URL вебхука. Даже после удаления `MAX_WEBHOOK_URL` из .env и перезапуска, устаревшая подписка сохраняется в MAX API и молча блокирует доставку сообщений.
+  - **Исправление:** Удалите старую подписку:
     ```bash
-    curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" -H "Authorization: $MAX_BOT_TOKEN"
+    curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" -H "Authorization: ***"
     ```
-  - **Auto-fix (v2.1.4+):** The plugin now auto-cleans stale webhook subscriptions on startup when running in long-polling mode.
-  - **Prevention:** Don't set `MAX_WEBHOOK_URL` in .env unless you have a working reverse proxy in front of port 8646. When switching modes, always clean up the old subscription first.
-- Keep tunnel/gateway running while using Max.
-- Max API requires Russian Federation jurisdiction for bot registration.
+  - **Авто-исправление (v2.1.4+):** Плагин теперь автоматически очищает устаревшие подписки вебхуков при запуске в режиме long-polling.
+  - **Предотвращение:** Не устанавливайте `MAX_WEBHOOK_URL` в .env, если у вас нет работающего обратного прокси перед портом 8646. При переключении режимов всегда сначала очищайте старую подписку.
+- Держите туннель/шлюз работающими при использовании MAX.
+- MAX API требует юрисдикции Российской Федерации для регистрации бота.
