@@ -3186,6 +3186,8 @@ async def _standalone_send(
                     logger.warning("MAX: upload URL parse failed for %s: %s", media_path, e)
                     continue
 
+                logger.info("MAX: upload url obtained for %s: %s", media_path, upload_url[:80])
+
                 # SSRF protection: only upload to known MAX/CDN domains
                 from urllib.parse import urlparse as _urlparse_upload
                 parsed_upload = _urlparse_upload(upload_url)
@@ -3208,7 +3210,11 @@ async def _standalone_send(
                             form.add_field("data", f, filename=os.path.basename(media_path))
                             async with aio_session.post(upload_url, data=form) as r:
                                 if r.status != 200:
-                                    logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
+                                    try:
+                                        err_body = await r.text()
+                                        logger.warning("MAX: CDN upload failed for %s (status %d): %s", media_path, r.status, err_body[:200])
+                                    except Exception:
+                                        logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
                                     continue
                                 try:
                                     upload_data = await r.json()
@@ -3238,7 +3244,10 @@ async def _standalone_send(
                 resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
-                last_message_id = str(data.get("message", {}).get("message_id", "") or data.get("message", {}).get("body", {}).get("mid", ""))
+                if not data.get("ok", True):
+                    logger.warning("MAX: message rejected for %s: %s", media_path, data.get("message", data))
+                    continue
+                last_message_id = str(data.get("message", {}).get("body", {}).get("mid", "") or "")
 
             return {"success": True, "message_id": last_message_id}
     except Exception as exc:
