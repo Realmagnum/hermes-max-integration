@@ -12,7 +12,13 @@ All notable changes to the hermes-max-integration plugin.
   - `/resume <id>` automatically uses `--all` flag — resume any session from any platform
   - Configurable via `MAX_CROSS_SESSION=true|false` (default: true)
   - Requires `allow_admin_from` in config.yaml for the `max` platform (adds the user's MAX ID) to make core `--all` flag work
+- **`send_action()`** — extended chat actions: `typing`, `typing_off`, `sending_photo`, `sending_video`, `sending_audio`, `sending_file`, `read`. Replaces the old `send_typing()` which now delegates to `send_action()`.
+- **`send_buttons()`** — public method for sending messages with inline buttons of ANY type: `callback`, `link`, `message`, `request_contact`, `request_geo_location`. Auto-wraps into rows of 2.
 - **`plugin.yaml`** — added `MAX_CROSS_SESSION` optional env var
+
+### Fixed
+
+- `send_typing` had a double-encoded JSON bug (`json.dumps` wrapping a dict that `httpx` then serialised again) — fixed by passing the dict directly to `json=`.
 
 ### Notes
 

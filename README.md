@@ -17,7 +17,9 @@
 | 🎤 **STT Голос** | Автозагрузка голосовых сообщений → faster-whisper транскрипция |
 | 🖼️ **Таблицы-картинки** | Отрисовка markdown-таблиц в PNG с цветными иконками статусов |
 | 📝 **Стриминг** | `edit_message` через `PUT /messages` для вывода токенов в реальном времени |
-| 🔘 **Интерактивные кнопки** | Выбор модели (`/model`), подтверждение команд (approval), уточнения (clarify) |
+| 🔘 **Интерактивные кнопки** | callback + link + message + request_contact/geo + модель/approval/clarify |
+| 🔗 **Link-кнопки** | Кнопки-ссылки в сообщениях (`send_buttons()` с типом `link`) |
+| 👁️ **send_action** | Расширенные статусы: typing, sending_photo/video/audio/file, read, typing_off |
 | ✂️ **Авточанкование** | Умная разбивка длинных сообщений (до 4000 символов с сохранением абзацев) |
 | ⬆️ **Загрузка файлов** | Двухшаговая загрузка: `POST /uploads` → PUT → токен → отправка |
 | 🔒 **Контроль доступа** | Белый список пользователей, групповые политики, проверка секрета вебхука |
@@ -198,6 +200,54 @@ platforms:
 ```
 
 **Отключение:** `MAX_CROSS_SESSION=false` в `.env` — вернёт стандартное поведение ядра (только MAX-сессии).
+
+---
+
+## 👁️ send_action — расширенные статусы
+
+`send_typing()` теперь делегирует `send_action()`, которая поддерживает все статусы MAX API:
+
+| Метод | action | MAX API | Описание |
+|-------|--------|---------|----------|
+| `send_typing()` | `typing` | `typing_on` | Печатает (по умолчанию) |
+| `send_action(cid, "typing_off")` | `typing_off` | `typing_off` | Скрыть индикатор |
+| `send_action(cid, "sending_photo")` | `sending_photo` | `sending_photo` | Отправляет фото |
+| `send_action(cid, "sending_video")` | `sending_video` | `sending_video` | Отправляет видео |
+| `send_action(cid, "sending_audio")` | `sending_audio` | `sending_audio` | Отправляет аудио |
+| `send_action(cid, "sending_file")` | `sending_file` | `sending_file` | Отправляет файл |
+| `send_action(cid, "read")` | `read` | `read` | Отметить как прочитано |
+
+```python
+await adapter.send_action("chat:123", "sending_file")
+```
+
+## 🔗 Link-кнопки и send_buttons()
+
+Новый публичный метод `send_buttons()` — отправка сообщений с inline-кнопками любых типов:
+
+```python
+await adapter.send_buttons(
+    chat_id="chat:123",
+    text="Выберите действие:",
+    buttons=[
+        {"type": "link", "text": "🌐 Открыть сайт", "url": "https://example.com"},
+        {"type": "callback", "text": "✅ Подтвердить", "payload": "confirm:123"},
+        {"type": "request_contact", "text": "📞 Поделиться номером"},
+    ],
+)
+```
+
+Поддерживаемые типы кнопок:
+
+| type | Параметры | Описание |
+|------|-----------|----------|
+| `callback` | `text`, `payload` | Inline callback с payload |
+| `link` | `text`, `url` | Открывает URL |
+| `message` | `text`, `payload` | Отправляет предзаполненное сообщение |
+| `request_contact` | `text` | Запрос контакта |
+| `request_geo_location` | `text` | Запрос геолокации |
+
+Кнопки автоматически группируются по 2 в ряд (до 10 кнопок на сообщение).
 
 | Исходный эмодзи | Отображается | Значение | Цвет |
 |----------------|--------------|----------|------|

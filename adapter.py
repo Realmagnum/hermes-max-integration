@@ -1894,13 +1894,49 @@ class MaxAdapter(BasePlatformAdapter):
     # ═════════════════════════════════════════════════════════════════════
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
-        """Send typing indicator. Best-effort."""
+        """Send typing indicator (delegates to send_action)."""
+        await self.send_action(chat_id, "typing")
+
+    async def send_action(self, chat_id: str, action: str = "typing", metadata=None) -> None:
+        """Send a chat action indicator. Best-effort (silent on failure).
+
+        Supported actions (mapped to MAX API):
+          typing / typing_on  — показать «печатает»
+          typing_off          — скрыть «печатает»
+          sending_photo       — отправляет фото
+          sending_video       — отправляет видео
+          sending_audio       — отправляет аудио
+          sending_file        — отправляет файл
+          read                — отметить как прочитано
+
+        Args:
+            chat_id: Scoped chat ID (e.g. 'chat:123' or 'user:456').
+            action: Action type string from the list above.
+            metadata: Optional platform-specific context (ignored for MAX).
+        """
         if not self._http_client:
             return
+
+        # Normalise action name to MAX API format
+        action_map = {
+            "typing": "typing_on",
+            "typing_on": "typing_on",
+            "typing_off": "typing_off",
+            "sending_photo": "sending_photo",
+            "sending_video": "sending_video",
+            "sending_audio": "sending_audio",
+            "sending_file": "sending_file",
+            "read": "read",
+        }
+        api_action = action_map.get(action.lower().strip(), "typing_on")
+
+        parts = chat_id.split(":", 1)
+        target_id = parts[1] if len(parts) > 1 else chat_id
+
         try:
             await self._http_client.post(
-                f"{MAX_API_BASE}/chats/{chat_id}/actions",
-                json={"action": "typing_on"},
+                f"{MAX_API_BASE}/chats/{target_id}/actions",
+                json={"action": api_action},
                 timeout=httpx.Timeout(3.0),
             )
         except Exception:
@@ -1973,6 +2009,43 @@ class MaxAdapter(BasePlatformAdapter):
         except Exception as e:
             logger.error("MAX: interactive send failed: %s", e)
             return SendResult(success=False, error="Interactive send failed (see logs)")
+
+    async def send_buttons(
+        self, chat_id: str, text: str,
+        buttons: List[Dict[str, str]],
+        reply_to: Optional[str] = None,
+    ) -> SendResult:
+        """Send a message with inline buttons of ANY type.
+
+        Reuses _post_interactive, which accepts all MAX button types:
+          - callback  → {"type": "callback", "text": "...", "payload": "..."}
+          - link      → {"type": "link", "text": "...", "url": "https://..."}
+          - message   → {"type": "message", "text": "...", "payload": "..."}
+          - request_contact → {"type": "request_contact", "text": "..."}
+          - request_geo_location → {"type": "request_geo_location", "text": "..."}
+
+        Example:
+            await adapter.send_buttons(
+                chat_id="chat:123",
+                text="Выберите действие:",
+                buttons=[
+                    {"type": "link", "text": "🌐 Открыть сайт", "url": "https://example.com"},
+                    {"type": "callback", "text": "✅ Подтвердить", "payload": "confirm:123"},
+                ],
+            )
+        """
+        # Wrap in rows (2 per row for compact layout)
+        keyboard: List[List[Dict[str, str]]] = []
+        row: List[Dict[str, str]] = []
+        for btn in buttons[:10]:  # MAX limit ~10 buttons per message
+            row.append(btn)
+            if len(row) >= 2:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        return await self._post_interactive(chat_id, text, keyboard, reply_to=reply_to)
 
     async def send_exec_approval(
         self,
