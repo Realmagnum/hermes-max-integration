@@ -1,5 +1,7 @@
 # Hermes MAX Gateway
 
+> **⚠️ Bilingual Project:** The primary documentation language is **Russian**. English translation is in `README_EN.md`. When modifying this file, **always** sync changes with `README.md`.
+
 **Hermes Agent gateway plugin for MAX messenger (max.ru).**  
 Voice transcription (STT), interactive buttons (model picker, approval, clarify), table-as-image rendering (PNG with colored icons), streaming responses, file upload, access control.
 
