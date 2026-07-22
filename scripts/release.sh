@@ -40,10 +40,6 @@ fi
 echo "⟳ Pulling latest from gitea..."
 git pull gitea main
 
-# Тег
-echo "🏷️  Creating tag $VERSION..."
-git tag -a "$VERSION" -m "Release $VERSION"
-
 # Генерация CHANGELOG_EN.md
 echo "📝 Generating CHANGELOG_EN.md..."
 git cliff --config cliff.toml --tag "$VERSION" --prepend CHANGELOG_EN.md
@@ -51,6 +47,17 @@ git cliff --config cliff.toml --tag "$VERSION" --prepend CHANGELOG_EN.md
 # Генерация CHANGELOG.md (RU)
 echo "📝 Generating CHANGELOG.md..."
 git cliff --config cliff-ru.toml --tag "$VERSION" --prepend CHANGELOG.md
+
+# Извлечь описание новой версии из changelog для аннотации тега
+RELEASE_NOTES=$(sed -n "/^## \[${TAG_VERSION}\]/,/^## \[/p" CHANGELOG_EN.md | head -n -1 | sed 's/^## \[.*\] — .*$/Release '"$VERSION"'/')
+if [ -z "$RELEASE_NOTES" ]; then
+  echo "⚠️  Could not extract release notes, using minimal tag message"
+  RELEASE_NOTES="Release $VERSION"
+fi
+
+# Тег (с аннотацией из changelog)
+echo "🏷️  Creating tag $VERSION..."
+git tag -a "$VERSION" -m "$RELEASE_NOTES"
 
 # Показать что изменилось
 echo ""
