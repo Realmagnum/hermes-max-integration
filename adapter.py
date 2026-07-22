@@ -2017,27 +2017,31 @@ class MaxAdapter(BasePlatformAdapter):
     ) -> SendResult:
         """Send a message with inline buttons of ANY type.
 
-        Reuses _post_interactive, which accepts all MAX button types:
-          - callback  → {"type": "callback", "text": "...", "payload": "..."}
-          - link      → {"type": "link", "text": "...", "url": "https://..."}
-          - message   → {"type": "message", "text": "...", "payload": "..."}
-          - request_contact → {"type": "request_contact", "text": "..."}
-          - request_geo_location → {"type": "request_geo_location", "text": "..."}
+        Reuses _post_interactive, which accepts all MAX button types.
+        Each button dict may include an optional "label" key with the
+        full description text for the fallback in the message body.
+        If "label" is omitted, "text" is used for both.
+
+          - callback  → {"type": "callback", "text": "...", "payload": "...", "label": "..."}
+          - link      → {"type": "link", "text": "...", "url": "...", "label": "..."}
+          - message   → {"type": "message", "text": "...", "payload": "...", "label": "..."}
+          - request_contact → {"type": "request_contact", "text": "...", "label": "..."}
+          - request_geo_location → {"type": "request_geo_location", "text": "...", "label": "..."}
 
         Features:
         - One button per row (full width)
         - Buttons auto-numbered when 3+
         - Button text duplicated in the message body as fallback
-          (MAX mobile may truncate button text visually; the fallback
-           ensures the user always sees the full content)
+          (MAX mobile may truncate button text visually; the "label"
+           field provides the full description that always stays readable)
 
         Example:
             await adapter.send_buttons(
                 chat_id="chat:123",
-                text="Выберите действие:",
+                text="Выберите тариф:",
                 buttons=[
-                    {"type": "link", "text": "🌐 Открыть сайт", "url": "https://example.com"},
-                    {"type": "callback", "text": "✅ Подтвердить", "payload": "confirm:123"},
+                    {"type": "callback", "text": "Базовый", "label": "Базовый — 500₽/мес, 10GB", "payload": "basic"},
+                    {"type": "callback", "text": "Стандарт", "label": "Стандарт — 1000₽/мес, 50GB", "payload": "std"},
                 ],
             )
         """
@@ -2045,32 +2049,29 @@ class MaxAdapter(BasePlatformAdapter):
         numbered = len(buttons) >= 3
 
         # Build keyboard (one button per row)
-        limited = buttons[:10]
+        limited = buttons[:10]  # MAX API limit ~10 buttons per message
         keyboard: List[List[Dict[str, str]]] = []
         for i, btn in enumerate(limited, 1):
             b = dict(btn)
+            # Remove label from the button payload (MAX API doesn't use it)
+            b.pop("label", None)
             if numbered:
                 prefix = f"{i}. "
                 if not b.get("text", "").startswith(prefix):
                     b["text"] = f"{prefix}{b['text']}"
             keyboard.append([b])
 
-        # Append button text as fallback (MAX mobile may clip button labels)
+        # Build fallback text from full labels (untruncated)
         fallback_lines: List[str] = []
         for i, btn in enumerate(limited, 1):
-            label = btn.get("text", "")
+            desc = btn.get("label") or btn.get("text", "")
             if numbered:
-                fallback_lines.append(f"{i}. {label}")
+                fallback_lines.append(f"{i}. {desc}")
             else:
-                fallback_lines.append(f"• {label}")
+                fallback_lines.append(f"• {desc}")
         fallback_text = "\n".join(fallback_lines)
 
-        # Only append fallback if there are actual buttons listed
-        full_text = text
-        if fallback_lines:
-            full_text = f"{text}\n\n{fallback_text}"
-
-        # Trim to MAX limit
+        full_text = f"{text}\n\n{fallback_text}" if fallback_lines else text
         if len(full_text) > MAX_MESSAGE_LENGTH - 200:
             full_text = full_text[:MAX_MESSAGE_LENGTH - 200]
 

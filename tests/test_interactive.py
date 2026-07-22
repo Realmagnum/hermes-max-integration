@@ -156,6 +156,37 @@ class TestSendButtons:
         assert "• Docs" in body["text"]
 
     @pytest.mark.asyncio
+    async def test_send_buttons_label_field(self):
+        """label field provides full fallback text, button text stays short."""
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"body": {"mid": "m"}}}
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        result = await a.send_buttons(
+            chat_id="user:1", text="Choose:",
+            buttons=[
+                {"type": "callback", "text": "Basic", "label": "Basic plan — 500/mo, 10GB", "payload": "b"},
+                {"type": "callback", "text": "Pro", "label": "Pro plan — 1500/mo, 100GB", "payload": "p"},
+            ],
+        )
+        assert result.success is True
+        body = a._http_client.post.call_args[1]["json"]
+
+        # Button text stays short
+        rows = body["attachments"][0]["payload"]["buttons"]
+        assert rows[0][0]["text"] == "Basic"
+        assert rows[1][0]["text"] == "Pro"
+
+        # label is NOT in the button payload
+        assert "label" not in rows[0][0]
+        assert "label" not in rows[1][0]
+
+        # Fallback uses the full label text
+        assert "Basic plan — 500/mo, 10GB" in body["text"]
+        assert "Pro plan — 1500/mo, 100GB" in body["text"]
+
+    @pytest.mark.asyncio
     async def test_send_buttons_numbered(self):
         """3+ buttons → auto-numbered 1. 2. 3. ..."""
         a = self._make_adapter()
@@ -197,8 +228,8 @@ class TestSendButtons:
         result = await a.send_buttons(
             chat_id="chat:99", text="Actions:",
             buttons=[
-                {"type": "link", "text": "Site", "url": "https://x.com"},
-                {"type": "callback", "text": "Ok", "payload": "ok"},
+                {"type": "link", "text": "Site", "label": "Open our website", "url": "https://x.com"},
+                {"type": "callback", "text": "Ok", "label": "Confirm and proceed", "payload": "ok"},
                 {"type": "request_contact", "text": "Contact"},
             ],
         )
@@ -212,9 +243,14 @@ class TestSendButtons:
         assert rows[0][0]["text"] == "1. Site"
         assert rows[1][0]["text"] == "2. Ok"
 
-        # Fallback with numbers
-        assert "1. Site" in body["text"]
-        assert "3. Contact" in body["text"]
+        # label removed from button payload
+        assert "label" not in rows[0][0]
+        assert "label" not in rows[1][0]
+
+        # Fallback uses label if available, text otherwise
+        assert "Open our website" in body["text"]    # label
+        assert "Confirm and proceed" in body["text"]  # label
+        assert "3. Contact" in body["text"]           # no label → falls back to text
 
     @pytest.mark.asyncio
     async def test_send_buttons_max_10(self):
