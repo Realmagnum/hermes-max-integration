@@ -2411,11 +2411,13 @@ class MaxAdapter(BasePlatformAdapter):
         session_key = self._exec_approval_state.pop(approval_id, None)
         if not session_key:
             logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
+            await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
             return None
 
         from tools.approval import resolve_gateway_approval, has_blocking_approval
 
         if not has_blocking_approval(session_key):
+            await self.send(f"user:{user_id}", "❌ No pending approval to resolve.")
             return None
 
         count = resolve_gateway_approval(session_key, choice)
@@ -2424,14 +2426,11 @@ class MaxAdapter(BasePlatformAdapter):
             count, session_key, choice,
         )
 
-        # Send acknowledgment
-        source = self.build_source(
-            chat_id=f"user:{user_id}",
-            chat_name=user_id,
-            chat_type="dm",
-            user_id=user_id,
-            user_name=user_id,
-        )
+        # Send acknowledgment directly via MAX API (not as MessageEvent)
+        # — avoids injecting the acknowledgment into the AI's context as a
+        # new user message in the next turn.  Telegram does the same by
+        # editing the original message (query.edit_message_text) and
+        # returning without creating a MessageEvent.
         labels = {
             "once": "✅ Approved (once)",
             "session": "🔄 Approved (session)",
@@ -2439,13 +2438,8 @@ class MaxAdapter(BasePlatformAdapter):
             "deny": "❌ Denied",
         }
         label = labels.get(choice, f"Resolved: {choice}")
-        return MessageEvent(
-            text=label,
-            message_type=MessageType.TEXT,
-            source=source,
-            raw_message=raw_payload,
-            internal=True,
-        )
+        await self.send(f"user:{user_id}", label)
+        return None
 
     async def _handle_slash_confirm_callback(
         self, data: str, user_id: str, raw_payload: Dict[str, Any]
@@ -2467,20 +2461,10 @@ class MaxAdapter(BasePlatformAdapter):
 
         result_text = await _sc.resolve(session_key, confirm_id, choice)
         if result_text:
-            source = self.build_source(
-                chat_id=f"user:{user_id}",
-                chat_name=user_id,
-                chat_type="dm",
-                user_id=user_id,
-                user_name=user_id,
-            )
-            return MessageEvent(
-                text=result_text,
-                message_type=MessageType.TEXT,
-                source=source,
-                raw_message=raw_payload,
-                internal=True,
-            )
+            # Send result directly via MAX API — same reasoning as
+            # _handle_exec_callback: avoid injecting the result into the
+            # AI's context as a new user message in the next turn.
+            await self.send(f"user:{user_id}", result_text)
         return None
 
     async def _handle_clarify_callback(
@@ -2520,6 +2504,10 @@ class MaxAdapter(BasePlatformAdapter):
             response = str(idx)
             result_text = await resolve_gateway_clarify(clarify_id, response)
             if result_text:
+                # Send choice text to MAX so the user sees what they picked,
+                # then return a MessageEvent (NOT internal) so the AI sees it
+                # as the user's input in the next turn.
+                await self.send(f"user:{user_id}", result_text)
                 source = self.build_source(
                     chat_id=f"user:{user_id}",
                     chat_name=user_id,
@@ -2532,7 +2520,6 @@ class MaxAdapter(BasePlatformAdapter):
                     message_type=MessageType.TEXT,
                     source=source,
                     raw_message=raw_payload,
-                    internal=True,
                 )
         except (ValueError, ImportError) as e:
             logger.warning("MAX: clarify callback failed: %s", e)
