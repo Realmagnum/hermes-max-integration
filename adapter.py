@@ -1963,6 +1963,7 @@ class MaxAdapter(BasePlatformAdapter):
                 parsed.hostname in _ALLOWED_UPLOAD_HOSTS
                 or parsed.hostname.endswith(".max.ru")
                 or parsed.hostname.endswith(".oneme.ru")
+                or parsed.hostname.endswith(".okcdn.ru")
             ):
                 pass  # Safe — within Max infrastructure
             else:
@@ -1979,14 +1980,39 @@ class MaxAdapter(BasePlatformAdapter):
                     form.add_field("data", f, filename=fp.name)
                     async with session.post(upload_url, data=form) as r:
                         if r.status != 200:
+                            logger.warning(
+                                "MAX: CDN upload failed for %s (status %d, type=%s)",
+                                fp, r.status, media_type,
+                            )
+                            # Audio/video CDNs may reject; fall back to type=file
+                            if media_type in ("audio", "video") and r.status != 200:
+                                logger.info("MAX: falling back to type=file for %s", fp.name)
+                                return await self._upload(str(fp), "file")
                             return None
-                        upload_data = await r.json()
+                        try:
+                            upload_data = await r.json()
+                        except Exception:
+                            logger.warning(
+                                "MAX: CDN returned non-JSON for %s (type=%s), falling back to type=file",
+                                fp, media_type,
+                            )
+                            if media_type in ("audio", "video"):
+                                logger.info("MAX: falling back to type=file for %s", fp.name)
+                                return await self._upload(str(fp), "file")
+                            return None
                         token = upload_data.get("token")
                         if not token and "photos" in upload_data:
                             photos = upload_data["photos"]
                             if isinstance(photos, dict):
                                 first = next(iter(photos.values()), {})
                                 token = first.get("token") if isinstance(first, dict) else None
+                        if not token:
+                            logger.warning(
+                                "MAX: CDN response missing token for %s (type=%s), falling back to type=file",
+                                fp.name, media_type,
+                            )
+                            if media_type in ("audio", "video"):
+                                return await self._upload(str(fp), "file")
                         return token
         except Exception as e:
             logger.error("MAX: upload error: %s", e)
@@ -3171,6 +3197,18 @@ async def _standalone_send(
                     logger.warning("MAX: standalone media file not found: %s", media_path)
                     continue
 
+                # Determine attachment type from extension (for native playback)
+                _ATTACH_TYPES = {
+                    ".jpg": "image", ".jpeg": "image", ".png": "image",
+                    ".webp": "image", ".gif": "image", ".bmp": "image",
+                    ".mp4": "video", ".mov": "video", ".avi": "video",
+                    ".mkv": "video", ".webm": "video",
+                    ".mp3": "audio", ".wav": "audio", ".ogg": "audio",
+                    ".opus": "audio", ".m4a": "audio", ".flac": "audio",
+                }
+                _ext = os.path.splitext(media_path)[1].lower()
+                _attach_type = _ATTACH_TYPES.get(_ext, "file")
+
                 # Step 1: get upload URL (always use type=file for reliability)
                 try:
                     resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": "file"}, headers=headers)
@@ -3247,7 +3285,7 @@ async def _standalone_send(
                 params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
                 body = {
                     "text": os.path.basename(media_path),
-                    "attachments": [{"type": "file", "payload": {"token": file_token}}],
+                    "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
                 }
                 resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
                 resp.raise_for_status()
