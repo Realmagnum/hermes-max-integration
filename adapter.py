@@ -1657,7 +1657,11 @@ class MaxAdapter(BasePlatformAdapter):
                 msg = data.get("message", {})
                 last_result = SendResult(
                     success=True,
-                    message_id=str(msg.get("message_id", "")),
+                    message_id=str(
+                        msg.get("message_id", "")
+                        or msg.get("body", {}).get("mid", "")
+                        or ""
+                    ),
                     raw_response=data,
                 )
             except Exception as exc:

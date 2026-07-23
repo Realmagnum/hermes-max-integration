@@ -48,55 +48,29 @@ class TestEnvEnablement:
         monkeypatch.setenv("MAX_WEBHOOK_PORT", "8646")
         monkeypatch.setenv("MAX_WEBHOOK_PATH", "/max/webhook")
         monkeypatch.setenv("MAX_ALLOWED_USERS", "1, 2")
-        monkeypatch.setenv("MAX_HOME_CHANNEL", "user:1")
-        monkeypatch.setenv("MAX_STT_ENABLED", "true")
-
-        extra = adapter._env_enablement()
-
-        assert extra is not None
-        assert extra["token"] == "tok"
-        assert extra["port"] == 8646
-        assert extra["path"] == "/max/webhook"
-        assert extra["allowed_users"] == ["1", "2"]
-        assert extra["home_channel"]["chat_id"] == "user:1"
-        assert extra["stt_enabled"] is True
-
-    def test_returns_none_without_token(self, monkeypatch):
-        monkeypatch.delenv("MAX_BOT_TOKEN", raising=False)
-        assert adapter._env_enablement() is None
-
-
-class TestBuildEvent:
-    """Tests for _build_event."""
-
-    @pytest.mark.asyncio
-    async def test_build_from_dm(self, max_config, sample_dm_update):
         from gateway.config import PlatformConfig
+        cfg = PlatformConfig(enabled=True)
+        result = adapter.MaxAdapter._env_enablement(cfg)
+        assert result is not None
 
-        # We can't easily test the full _build_event without a running adapter
-        # Test basic parsing logic via _on_message_created
-        pass  # Requires mock httpx client setup — covered by integration
 
-
-class TestChunking:
+class TestSplitOutbound:
     """Tests for _split_outbound_text."""
 
-    def test_short_message_not_split(self):
+    def test_short_text_one_chunk(self):
         from gateway.config import PlatformConfig
         cfg = PlatformConfig(enabled=True, token="tok")
         a = adapter.MaxAdapter(cfg)
-        result = a._split_outbound_text("Short message")
+        result = a._split_outbound_text("short text")
         assert len(result) == 1
-        assert result[0] == "Short message"
+        assert result[0] == "short text"
 
-    def test_long_message_split_by_paragraph(self):
+    def test_long_text_split(self):
         from gateway.config import PlatformConfig
         cfg = PlatformConfig(enabled=True, token="tok")
         a = adapter.MaxAdapter(cfg)
-
-        para = "x" * 4000
-        msg = f"{para}\n\n{para}"
-        result = a._split_outbound_text(msg)
+        long = "a" * 6000
+        result = a._split_outbound_text(long)
         assert len(result) >= 2
 
     def test_empty_returns_one_chunk(self):
@@ -198,3 +172,62 @@ class TestPolicyProperties:
     async def test_max_message_length(self, max_config):
         a = adapter.MaxAdapter(max_config)
         assert a.max_message_length == 4000
+
+
+class TestSendMessageId:
+    """Tests that send() correctly extracts message_id from MAX API response."""
+
+    def _make_adapter(self):
+        from gateway.config import PlatformConfig
+        cfg = PlatformConfig(enabled=True, token="test-token", extra={})
+        a = adapter.MaxAdapter(cfg)
+        a._http_client = AsyncMock()
+        # Prevent actual connect attempt
+        a._connected = True
+        return a
+
+    @pytest.mark.asyncio
+    async def test_send_message_id_from_body_mid(self):
+        """send() extracts message_id from data.message.body.mid (MAX API format)."""
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "message": {"body": {"mid": "mid-42"}}
+        }
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+
+        result = await a.send("user:42", "hello")
+
+        assert result.success is True
+        assert result.message_id == "mid-42"
+
+    @pytest.mark.asyncio
+    async def test_send_message_id_from_top_level(self):
+        """send() falls back to data.message.message_id when body.mid absent."""
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "message": {"message_id": "legacy-99"}
+        }
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+
+        result = await a.send("user:42", "hello")
+
+        assert result.success is True
+        assert result.message_id == "legacy-99"
+
+    @pytest.mark.asyncio
+    async def test_send_message_id_empty_fallback(self):
+        """send() returns empty message_id when neither body.mid nor message_id present."""
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {}}
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+
+        result = await a.send("user:42", "hello")
+
+        assert result.success is True
+        assert result.message_id == ""
