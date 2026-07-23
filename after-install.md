@@ -28,18 +28,33 @@
    - Просто установите `MAX_BOT_TOKEN` и перезапустите. Адаптер автоматически использует long-polling.
    - Публичный URL не нужен. Подходит для разработки.
 
-   **Webhook (продакшен):**
-   - Откройте локальный webhook-сервер через публичный HTTPS:
+   **Webhook (продакшен) — требуется reverse proxy:**
+   - MAX API стучится **только на порт 443** по HTTPS.
+   - Вам нужен reverse proxy (Caddy, Nginx, Traefik, Cloudflare Tunnel), который терминирует TLS и проксирует на `127.0.0.1:8646`.
+   - Пример для **Caddy** (`Caddyfile`):
+     ```caddyfile
+     max.example.com {
+         reverse_proxy 127.0.0.1:8646
+     }
+     ```
+   - Пример для **Cloudflare Tunnel** (без своего сервера):
      ```bash
      cloudflared tunnel --url http://localhost:8646
-     # или: ngrok http 8646
      ```
-   - Зарегистрируйте публичный URL в MAX:
+   - В `.env` пропишите публичный URL и секрет:
+     ```bash
+     MAX_WEBHOOK_URL=https://max.example.com/max/webhook
+     MAX_WEBHOOK_SECRET=my-secret-abc123
+     MAX_WEBHOOK_HOST=0.0.0.0
+     MAX_WEBHOOK_PORT=8646
+     MAX_WEBHOOK_PATH=/max/webhook
+     ```
+   - Зарегистрируйте подписку в MAX API (адаптер делает это автоматически при старте, но можно и вручную):
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \
        -H "Authorization: ***" \
        -H "Content-Type: application/json" \
-       -d '{"url":"https://YOUR-DOMAIN/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"CHANGE_ME_5_256_CHARS"}'
+       -d '{"url":"https://max.example.com/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"my-secret-abc123"}'
      ```
 
 5. **Перезапустите шлюз Hermes:**

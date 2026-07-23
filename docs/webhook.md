@@ -23,6 +23,17 @@ MAX API ◀──────────────│              │       
                                               └─────────────────────┘
 ```
 
+### URL и порт (требования MAX API)
+
+По [официальной документации](https://dev.max.ru/docs-api/methods/POST/subscriptions):
+
+| Требование | Значение |
+|------------|----------|
+| Протокол | **HTTPS** только |
+| Порт | **Только 443** (порт в URL не указывается) |
+| Путь | Любой (например, `/max/webhook`, `/webhook`) |
+| Сертификат | Доверенный (Let's Encrypt и т.п.) |
+
 ---
 
 ## 2. Конфигурация
@@ -40,6 +51,83 @@ MAX_WEBHOOK_PATH=/max/webhook          # URL-путь для приёма кол
 ```
 
 Без `MAX_WEBHOOK_URL` адаптер работает в режиме **long polling** — сам ходит в MAX API каждые 5 секунд.
+
+### Настройка reverse proxy
+
+Вебхук MAX API стучится **только на 443 порт** по HTTPS. На практике это означает, что перед адаптером нужен reverse proxy (Caddy, Traefik, Nginx, Cloudflare Tunnel), который:
+- Принимает HTTPS на порту 443
+- Терминирует TLS
+- Проксирует HTTP-запросы на локальный порт адаптера (`127.0.0.1:8646` или `172.x.x.x:8646`)
+
+#### Caddy (рекомендуется)
+
+```caddyfile
+max.example.com {
+    reverse_proxy 127.0.0.1:8646
+
+    header {
+        X-Content-Type-Options nosniff
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/max-access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+```
+
+**Важно для Docker:** Если Caddy запущен в Docker-контейнере, используйте IP шлюза Docker-сети вместо `127.0.0.1` (который внутри контейнера — сам контейнер). Узнать IP шлюза:
+
+```bash
+docker inspect caddy \
+  --format '{{range $net,$conf := .NetworkSettings.Networks}}{{$net}}: Gateway={{$conf.Gateway}}{{"\n"}}{{end}}'
+```
+
+Пример для сети `webproxy` с gateway `172.20.0.1`:
+
+```caddyfile
+max.example.com {
+    reverse_proxy 172.20.0.1:8646
+    # ...
+}
+```
+
+Не используйте `172.17.0.x` (default bridge) — у Caddy может быть своя сеть.
+
+#### Nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name max.example.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location /max/webhook {
+        proxy_pass http://127.0.0.1:8646;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:8646;
+    }
+}
+```
+
+#### Cloudflare Tunnel (без выделенного сервера)
+
+```bash
+cloudflared tunnel --url http://localhost:8646
+```
+
+Тогда `MAX_WEBHOOK_URL=https://your-tunnel.trycloudflare.com/max/webhook`
 
 ---
 
@@ -111,6 +199,8 @@ Body: {
 ```python
 # Упрощённая логика:
 async def webhook_handler(req):
+    nonlocal _webhook_hits  # необходимо для доступа к счётчику rate limiter
+
     # 1. Rate limit (30 req/10s с одного IP)
     if too_many_requests(req.remote):
         return 429
@@ -132,6 +222,8 @@ async def webhook_handler(req):
     await self._message_queue.put(event)
     return 200
 ```
+
+> **⚠️ Ошибка:** Без `nonlocal` Python выбрасывает `UnboundLocalError: cannot access local variable '_webhook_hits' where it is not associated with a value`. Rate limiter определён во внешней функции `_start_webhook()`, а `webhook_handler()` — вложенная. Python считает `_webhook_hits` локальной для вложенной функции при любой операции присваивания (`hits[:] = ...`, `_webhook_hits[peer] = hits`). `nonlocal` решает это.
 
 ---
 

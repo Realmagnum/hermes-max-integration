@@ -68,7 +68,7 @@ _ALLOWED_UPLOAD_HOSTS = frozenset({
     "fu.oneme.ru",
 })
 
-DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — webhook server must accept external callbacks from MAX API; protected by reverse proxy (TLS) + rate limiting + secret verification
+DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy reverse proxy; порт защищён host firewall
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
 
@@ -512,6 +512,7 @@ class MaxAdapter(BasePlatformAdapter):
         _WEBHOOK_WINDOW = 10  # per 10 seconds
 
         async def webhook_handler(req: web.Request) -> web.Response:
+            nonlocal _webhook_hits
             # Simple per-IP rate limiting
             now = time.monotonic()
             peer = req.remote or "unknown"

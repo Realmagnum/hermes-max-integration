@@ -11,7 +11,7 @@ MAX Cloud               Your Server                    Hermes Gateway
 ─────────────          ─────────────                   ──────────────
                        ┌──────────────┐
 User writes            │ Reverse Proxy │               ┌────────────┐
-to bot ───────────────→│ (Traefik)    │──→ :8646 ──→  │ MaxAdapter │
+to bot ───────────────→│ (Caddy)      │──→ :8646 ──→  │ MaxAdapter │
                        │ TLS terminate│               │ (aiohttp)  │
 MAX API ◀──────────────│              │               └─────┬──────┘
 (sends                 └──────────────┘                     │
@@ -23,6 +23,17 @@ MAX API ◀──────────────│              │       
                                               └─────────────────────┘
 ```
 
+### URL and port (MAX API requirements)
+
+Per [official documentation](https://dev.max.ru/docs-api/methods/POST/subscriptions):
+
+| Requirement | Value |
+|------------|-------|
+| Protocol | **HTTPS only** |
+| Port | **Only 443** (port is NOT specified in URL) |
+| Path | Any (e.g. `/max/webhook`, `/webhook`) |
+| Certificate | Trusted (Let's Encrypt, etc.) |
+
 ---
 
 ## 2. Configuration
@@ -32,7 +43,7 @@ Webhook activates **only** when `MAX_WEBHOOK_URL` is set — a public HTTPS addr
 ```bash
 # ~/.hermes/.env
 MAX_BOT_TOKEN=***
-MAX_WEBHOOK_URL=https://max.rmg7.com/max/webhook
+MAX_WEBHOOK_URL=https://max.example.com/max/webhook
 MAX_WEBHOOK_SECRET=***    # optional but strongly recommended
 MAX_WEBHOOK_HOST=0.0.0.0               # IP to listen on (default: all)
 MAX_WEBHOOK_PORT=8646                  # port (default: 8646)
@@ -40,6 +51,83 @@ MAX_WEBHOOK_PATH=/max/webhook          # URL path for receiving callbacks
 ```
 
 Without `MAX_WEBHOOK_URL`, the adapter runs in **long polling** mode — it polls MAX API every 5 seconds.
+
+### Reverse proxy setup
+
+MAX API webhook connects **only to port 443** over HTTPS. You need a reverse proxy (Caddy, Nginx, Traefik, Cloudflare Tunnel) that:
+- Accepts HTTPS on port 443
+- Terminates TLS
+- Proxies HTTP requests to the local adapter port (`127.0.0.1:8646` or `172.x.x.x:8646`)
+
+#### Caddy (recommended)
+
+```caddyfile
+max.example.com {
+    reverse_proxy 127.0.0.1:8646
+
+    header {
+        X-Content-Type-Options nosniff
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/max-access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+```
+
+**Docker note:** If Caddy runs in a Docker container, use the Docker network gateway IP instead of `127.0.0.1` (which inside the container refers to the container itself). Find the gateway IP:
+
+```bash
+docker inspect caddy \
+  --format '{{range $net,$conf := .NetworkSettings.Networks}}{{$net}}: Gateway={{$conf.Gateway}}{{"\n"}}{{end}}'
+```
+
+Example for `webproxy` network with gateway `172.20.0.1`:
+
+```caddyfile
+max.example.com {
+    reverse_proxy 172.20.0.1:8646
+    # ...
+}
+```
+
+Do NOT use `172.17.0.x` (default bridge) — Caddy may be on a custom network.
+
+#### Nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name max.example.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location /max/webhook {
+        proxy_pass http://127.0.0.1:8646;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:8646;
+    }
+}
+```
+
+#### Cloudflare Tunnel (no dedicated server)
+
+```bash
+cloudflared tunnel --url http://localhost:8646
+```
+
+Then set `MAX_WEBHOOK_URL=https://your-tunnel.trycloudflare.com/max/webhook`
 
 ---
 
@@ -68,7 +156,7 @@ connect()
   │     ├─ 2e. Auto-register in MAX API:
   │     │     POST https://platform-api.max.ru/subscriptions
   │     │     Body: {
-  │     │       "url": "https://max.rmg7.com/max/webhook",
+  │     │       "url": "https://max.example.com/max/webhook",
   │     │       "secret": "***",
   │     │       "update_types": ["message_created", "message_callback",
   │     │                        "bot_started", "bot_added"]
@@ -86,7 +174,7 @@ connect()
 When a user messages the bot, MAX API POSTs to the webhook:
 
 ```
-POST https://max.rmg7.com/max/webhook
+POST https://max.example.com/max/webhook
 Header: X-Max-Bot-Api-Secret: my-secret-abc123
 Body: {
   "update_type": "message_created",
@@ -111,6 +199,8 @@ Body: {
 ```python
 # Simplified logic:
 async def webhook_handler(req):
+    nonlocal _webhook_hits  # required for rate limiter access (see pitfall below)
+
     # 1. Rate limit (30 req/10s per IP)
     if too_many_requests(req.remote):
         return 429
@@ -132,6 +222,8 @@ async def webhook_handler(req):
     await self._message_queue.put(event)
     return 200
 ```
+
+> **⚠️ Pitfall:** Without `nonlocal`, Python raises `UnboundLocalError: cannot access local variable '_webhook_hits' where it is not associated with a value`. The rate limiter dict is defined in the outer function `_start_webhook()`, and `webhook_handler()` is a nested function. Python treats `_webhook_hits` as local to the nested function upon any assignment (`hits[:] = ...`, `_webhook_hits[peer] = hits`). `nonlocal` fixes this.
 
 ---
 
@@ -198,7 +290,7 @@ async def disconnect():
 | **How it works** | Adapter polls MAX API (`GET /updates`) | MAX API calls the adapter (`POST /webhook`) |
 | **Latency** | Up to 5 seconds | Instant |
 | **HTTPS needed** | No | **Yes** (MAX requirement) |
-| **Public URL needed** | No | Yes (Traefik/Cloudflare/ngrok) |
+| **Public URL needed** | No | Yes (Caddy/Cloudflare/ngrok) |
 | **When to use** | Development, testing | Production |
 | **Activation** | Default (no `MAX_WEBHOOK_URL`) | When `MAX_WEBHOOK_URL` is set |
 
@@ -212,7 +304,7 @@ External World
     ▼
 ┌──────────────────────┐
 │ Reverse Proxy (TLS)  │  ← terminates HTTPS
-│ Traefik / nginx      │
+│ Caddy / nginx        │
 └────────┬─────────────┘
          │ HTTP (internal network)
          ▼

@@ -28,18 +28,33 @@ Next steps:
    - Just set `MAX_BOT_TOKEN` and restart. The adapter auto-uses long-polling.
    - No public URL needed. Good for development.
 
-   **Webhook (production):**
-   - Expose the local webhook server as public HTTPS:
+   **Webhook (production) — requires a reverse proxy:**
+   - MAX API connects **only to port 443** over HTTPS.
+   - You need a reverse proxy (Caddy, Nginx, Traefik, Cloudflare Tunnel) that terminates TLS and proxies to `127.0.0.1:8646`.
+   - **Caddy** example (`Caddyfile`):
+     ```caddyfile
+     max.example.com {
+         reverse_proxy 127.0.0.1:8646
+     }
+     ```
+   - **Cloudflare Tunnel** example (no dedicated server):
      ```bash
      cloudflared tunnel --url http://localhost:8646
-     # or: ngrok http 8646
      ```
-   - Register the public URL with Max:
+   - In `.env`, set the public URL and secret:
+     ```bash
+     MAX_WEBHOOK_URL=https://max.example.com/max/webhook
+     MAX_WEBHOOK_SECRET=my-secret-abc123
+     MAX_WEBHOOK_HOST=0.0.0.0
+     MAX_WEBHOOK_PORT=8646
+     MAX_WEBHOOK_PATH=/max/webhook
+     ```
+   - Register the subscription in MAX API (the adapter does this automatically on startup, but manual registration is also possible):
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \
        -H "Authorization: ***" \
        -H "Content-Type: application/json" \
-       -d '{"url":"https://YOUR-DOMAIN/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"CHANGE_ME_5_256_CHARS"}'
+       -d '{"url":"https://max.example.com/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"my-secret-abc123"}'
      ```
 
 5. **Restart Hermes gateway:**
