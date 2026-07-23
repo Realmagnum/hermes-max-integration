@@ -158,6 +158,7 @@ hermes gateway restart
 | Env Variable | Required | Default | Description |
 |-------------|----------|---------|-------------|
 | `MAX_BOT_TOKEN` | ✅ | — | Bot token from Max Platform |
+| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | API base URL (docs now recommend `https://platform-api2.max.ru`) |
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |

@@ -133,4 +133,25 @@ All notable changes to the hermes-max-integration plugin.
 - Group access control policies
 - Interactive `hermes gateway setup` flow
 - Standalone sender for cron/send_message
-- faster-whisper STT integration
+|- faster-whisper STT integration
+
+## [2.5.0] — 2026-07-23
+
+### Added
+
+- **Native audio/video delivery.** `_standalone_send()` now uses `type=audio`/`type=video` for `POST /uploads`. The token comes from the `/uploads` response (not CDN), enabling native playback in MAX.
+- **CDN fallback for audio/video.** `_upload()` falls back to `type=file` when audio/video CDN fails — file is still delivered as downloadable.
+- **Retry on `attachment.not.ready`.** Up to 3 attempts with 5s delay in `_standalone_send()` (video needs transcoding time).
+- **SSRF whitelist.** Upload URL validated against `.okcdn.ru`, `.cdn-max.ru`, `.oneme.ru`, `.max.ru`.
+
+### Fixed
+
+- **`_upload()` — audio/video token source.** Previously expected token from CDN (which returns XML `<retval>1</retval>`). Now correctly uses `token` from `POST /uploads` response.
+- **MAX API response parsing.** Messages with `ok=false` in response body no longer rejected — checks for `message` field presence.
+- **CDN token extraction for images.** `type=image` CDN returns token in `photos[photoId][token]`, not flat `token`. Both formats are now parsed.
+
+### Changed
+
+- **plugin.yaml** bumped to `2.5.0`
+- README.md / README_EN.md — new «Native File Delivery» section with protocol details.
+- **New API domain:** MAX docs now recommend `platform-api2.max.ru` (backward compatible).

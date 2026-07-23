@@ -161,6 +161,7 @@ hermes gateway restart
 | Переменная | Обязат. | По умолч. | Описание |
 |------------|---------|-----------|----------|
 | `MAX_BOT_TOKEN` | ✅ | — | Токен бота |
+| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | Базовый URL API (документация рекомендует `https://platform-api2.max.ru`) |
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт вебхука |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь вебхука |
