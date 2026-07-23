@@ -1,6 +1,36 @@
 # Список изменений
 
 Все заметные изменения в плагине hermes-max-integration.
+## [2.6.0] — 2026-07-23
+
+
+### Исправлено
+
+
+- Extract message_id from body.mid in send() — fixes progress message duplication
+
+- Add logging to MAX polling error handler
+
+- Send callback acknowledgments directly via MAX API instead of MessageEvent
+
+
+### Прочее
+
+
+- Merge branch 'feature/callback-message-event-fix'
+
+
+### Документация
+
+
+- Update webhook docs with reverse proxy setup and nonlocal pitfall
+
+
+<!-- 7 -->⚙️ Miscellaneous Tasks
+
+
+- Bump version to 2.6.0
+
 
 ## [2.5.0] — 2026-07-23
 
