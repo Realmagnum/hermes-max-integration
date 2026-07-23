@@ -1956,6 +1956,10 @@ class MaxAdapter(BasePlatformAdapter):
             if not upload_url:
                 return None
 
+            # audio/video: token comes from POST /uploads response itself
+            # file/image: token comes from CDN upload response
+            upload_token = data.get("token") if media_type in ("audio", "video") else None
+
             # SECURITY: Only upload to known Max/Cdn domains (SSRF prevention).
             # If the API returns an unexpected URL, refuse to connect.
             parsed = urlparse(upload_url)
@@ -1984,20 +1988,24 @@ class MaxAdapter(BasePlatformAdapter):
                                 "MAX: CDN upload failed for %s (status %d, type=%s)",
                                 fp, r.status, media_type,
                             )
-                            # Audio/video CDNs may reject; fall back to type=file
-                            if media_type in ("audio", "video") and r.status != 200:
-                                logger.info("MAX: falling back to type=file for %s", fp.name)
-                                return await self._upload(str(fp), "file")
-                            return None
+                            if media_type in ("audio", "video") and upload_token:
+                                logger.info("MAX: audio/video CDN failed but we have token from /uploads, still trying")
+                            else:
+                                return None
+
+                        # For audio/video: token already obtained from /uploads response
+                        if upload_token:
+                            return upload_token
+
+                        # For file/image: parse CDN JSON response for token
                         try:
                             upload_data = await r.json()
                         except Exception:
                             logger.warning(
-                                "MAX: CDN returned non-JSON for %s (type=%s), falling back to type=file",
+                                "MAX: CDN returned non-JSON for %s (type=%s)",
                                 fp, media_type,
                             )
                             if media_type in ("audio", "video"):
-                                logger.info("MAX: falling back to type=file for %s", fp.name)
                                 return await self._upload(str(fp), "file")
                             return None
                         token = upload_data.get("token")
@@ -2008,11 +2016,12 @@ class MaxAdapter(BasePlatformAdapter):
                                 token = first.get("token") if isinstance(first, dict) else None
                         if not token:
                             logger.warning(
-                                "MAX: CDN response missing token for %s (type=%s), falling back to type=file",
+                                "MAX: CDN response missing token for %s (type=%s)",
                                 fp.name, media_type,
                             )
                             if media_type in ("audio", "video"):
                                 return await self._upload(str(fp), "file")
+                            return None
                         return token
         except Exception as e:
             logger.error("MAX: upload error: %s", e)
@@ -3208,18 +3217,34 @@ async def _standalone_send(
                 }
                 _ext = os.path.splitext(media_path)[1].lower()
                 _attach_type = _ATTACH_TYPES.get(_ext, "file")
+                _upload_token = ""
 
-                # Step 1: get upload URL (always use type=file for reliability)
+                # Step 1: get upload URL
+                # For audio/video: use proper type so /uploads returns a token
+                # For file/image: use type=file for reliability
+                _upload_type = _attach_type if _attach_type in ("audio", "video") else "file"
                 try:
-                    resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": "file"}, headers=headers)
+                    resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": _upload_type}, headers=headers)
                     if resp.status_code != 200:
                         logger.warning("MAX: upload URL request failed for %s (status %d)", media_path, resp.status_code)
-                        continue
+                        # Fall back to type=file for audio/video
+                        if _upload_type in ("audio", "video"):
+                            resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": "file"}, headers=headers)
+                            if resp.status_code != 200:
+                                continue
+                            _upload_type = "file"
+                        else:
+                            continue
                     upload_json = resp.json()
                     upload_url = upload_json.get("url", "")
                     if not upload_url:
                         logger.warning("MAX: upload URL response missing 'url' for %s", media_path)
                         continue
+                    # For audio/video: token comes from /uploads response itself
+                    if _upload_type in ("audio", "video"):
+                        _upload_token = upload_json.get("token", "")
+                        if _upload_token:
+                            logger.info("MAX: audio/video token obtained from /uploads for %s", media_path)
                 except Exception as e:
                     logger.warning("MAX: upload URL parse failed for %s: %s", media_path, e)
                     continue
@@ -3253,24 +3278,35 @@ async def _standalone_send(
                                         logger.warning("MAX: CDN upload failed for %s (status %d): %s", media_path, r.status, err_body[:200])
                                     except Exception:
                                         logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
-                                    continue
-                                try:
-                                    upload_data = await r.json()
-                                except Exception:
-                                    logger.warning("MAX: CDN returned non-JSON for %s", media_path)
-                                    continue
-                                file_token = upload_data.get("token")
-                                if not file_token:
-                                    # type=image returns: {"photos": {"id": {"token": "..."}}}
-                                    photos = upload_data.get("photos", {})
-                                    if isinstance(photos, dict):
-                                        for _pid, _pdata in photos.items():
-                                            if isinstance(_pdata, dict) and _pdata.get("token"):
-                                                file_token = _pdata["token"]
-                                                break
-                                if not file_token:
-                                    logger.warning("MAX: CDN response missing token for %s", media_path)
-                                    continue
+                                    # For audio/video with token from /uploads: even if CDN fails, we might still try
+                                    if _upload_type in ("audio", "video") and _upload_token:
+                                        logger.info("MAX: CDN failed but using token from /uploads anyway for %s", media_path)
+                                        file_token = _upload_token
+                                    else:
+                                        continue
+                                else:
+                                    # For audio/video: use token from /uploads (CDN just returns <retval>1</retval>)
+                                    if _upload_type in ("audio", "video") and _upload_token:
+                                        file_token = _upload_token
+                                    else:
+                                        # For file/image: parse CDN JSON response for token
+                                        try:
+                                            upload_data = await r.json()
+                                        except Exception:
+                                            logger.warning("MAX: CDN returned non-JSON for %s", media_path)
+                                            continue
+                                        file_token = upload_data.get("token")
+                                        if not file_token:
+                                            # type=image returns: {"photos": {"id": {"token": "..."}}}
+                                            photos = upload_data.get("photos", {})
+                                            if isinstance(photos, dict):
+                                                for _pid, _pdata in photos.items():
+                                                    if isinstance(_pdata, dict) and _pdata.get("token"):
+                                                        file_token = _pdata["token"]
+                                                        break
+                                        if not file_token:
+                                            logger.warning("MAX: CDN response missing token for %s", media_path)
+                                            continue
                 except Exception as e:
                     logger.warning("MAX: CDN upload error for %s: %s", media_path, e)
                     continue
@@ -3278,7 +3314,7 @@ async def _standalone_send(
                 # Wait for MAX to process the file
                 await asyncio.sleep(UPLOAD_DELAY)
 
-                # Step 3: send message with attachment
+                # Step 3: send message with attachment (with retry for attachment.not.ready)
                 parts = chat_id.split(":", 1)
                 target_type = parts[0] if len(parts) > 1 else "user"
                 target_id = parts[1] if len(parts) > 1 else chat_id
@@ -3287,13 +3323,32 @@ async def _standalone_send(
                     "text": os.path.basename(media_path),
                     "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
                 }
-                resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                if not data.get("ok", True):
-                    logger.warning("MAX: message rejected for %s: %s", media_path, data.get("message", data))
+                _sent_ok = False
+                for _retry in range(3):
+                    try:
+                        resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
+                        if resp.status_code in (200, 201):
+                            data = resp.json()
+                            if data.get("ok", True):
+                                last_message_id = str(data.get("message", {}).get("body", {}).get("mid", "") or "")
+                                _sent_ok = True
+                                break
+                        elif resp.status_code == 400:
+                            err_body = resp.json()
+                            if err_body.get("code") == "attachment.not.ready":
+                                logger.info("MAX: attachment not ready for %s, retrying...", media_path)
+                                await asyncio.sleep(5.0)
+                                continue
+                            logger.warning("MAX: message rejected for %s: %s", media_path, err_body)
+                            break
+                        else:
+                            logger.warning("MAX: send failed for %s (status %d)", media_path, resp.status_code)
+                            break
+                    except Exception as _exc:
+                        logger.warning("MAX: send exception for %s: %s", media_path, _exc)
+                        break
+                if not _sent_ok:
                     continue
-                last_message_id = str(data.get("message", {}).get("body", {}).get("mid", "") or "")
 
             return {"success": True, "message_id": last_message_id}
     except Exception as exc:
