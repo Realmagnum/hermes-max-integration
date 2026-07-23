@@ -58,6 +58,16 @@ POLL_ERROR_DELAY = 5.0
 WEBHOOK_MAX_BODY_BYTES = 1_048_576  # 1 MB
 UPLOAD_DELAY = 2.0
 
+# SSRF allowlist for file upload CDNs (used by both adapter and standalone sender)
+_ALLOWED_UPLOAD_HOSTS = frozenset({
+    "platform-api.max.ru",
+    "cdn.max.ru",
+    "storage.max.ru",
+    "upload.max.ru",
+    "iu.oneme.ru",
+    "fu.oneme.ru",
+})
+
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — webhook server must accept external callbacks from MAX API; protected by reverse proxy (TLS) + rate limiting + secret verification
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
@@ -208,6 +218,13 @@ class MaxAdapter(BasePlatformAdapter):
         self._table_image_dir: Path = AUDIO_CACHE_DIR.parent / "table_images"
         if self._table_as_image:
             self._table_image_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+        # Cross-platform session commands (/sessions, /resume across all platforms)
+        self._cross_session: bool = _coerce_bool(
+            os.getenv("MAX_CROSS_SESSION")
+            or extra.get("cross_session", True),  # enabled by default
+            True,
+        )
 
         # Webhook settings
         self._webhook_host: str = (
@@ -364,6 +381,55 @@ class MaxAdapter(BasePlatformAdapter):
 
     async def _start_polling(self) -> bool:
         self._stop.clear()
+
+        # ═══════════════════════════════════════════════════════════════
+        # Auto-clean stale webhook subscriptions
+        #
+        # MAX API does NOT support simultaneous webhook + long polling.
+        # If a webhook subscription exists (from a previous run or manual
+        # registration), /updates returns empty — all messages go to the
+        # webhook URL instead.
+        #
+        # We proactively delete any active webhook subscription when
+        # starting in long-polling mode so the user doesn't get stuck
+        # with a "dead" subscription pointing at an old/stale URL.
+        # ═══════════════════════════════════════════════════════════════
+        try:
+            sub_resp = await self._http_client.get(
+                f"{MAX_API_BASE}/subscriptions",
+                timeout=httpx.Timeout(5.0),
+            )
+            if sub_resp.status_code == 200:
+                data = sub_resp.json()
+                subs = data.get("subscriptions", [])
+                if subs:
+                    for sub in subs:
+                        url = sub.get("url", "")
+                        if url:
+                            logger.info(
+                                "MAX: cleaning stale webhook subscription: %s",
+                                url,
+                            )
+                            del_resp = await self._http_client.request(
+                                "DELETE",
+                                f"{MAX_API_BASE}/subscriptions?url={url}",
+                                timeout=httpx.Timeout(5.0),
+                            )
+                            if del_resp.status_code == 200:
+                                logger.info(
+                                    "MAX: stale webhook subscription deleted: %s",
+                                    url,
+                                )
+                            else:
+                                logger.warning(
+                                    "MAX: failed to delete stale subscription %s: HTTP %s",
+                                    url, del_resp.status_code,
+                                )
+        except Exception as e:
+            logger.debug(
+                "MAX: webhook cleanup skipped (non-fatal): %s", e,
+            )
+
         self._mark_connected()
         self._background_tasks.add(asyncio.create_task(self._poll_loop()))
         self._poll_task = asyncio.create_task(self._queue_poll_loop())
@@ -744,6 +810,28 @@ class MaxAdapter(BasePlatformAdapter):
                     text = (text + "\n[File]").strip() if text else "[File]"
                 elif atype == "location":
                     text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else f"[Location: ...]"
+
+        # ── Cross-platform session commands (bypass platform scoping) ──
+        if text and self._cross_session:
+            if text.startswith('/sessions'):
+                args = text[len('/sessions'):].strip()
+                if args and not args.lower().startswith('search '):
+                    # Has a target ID → let core handle with --all override
+                    text = f"/resume --all {args}"
+                else:
+                    # Plain /sessions or /sessions search → our handler (all platforms)
+                    await self._handle_cross_sessions(text, scoped_chat_id)
+                    return None
+            elif text.startswith('/resume'):
+                if '--all' not in text and '--cross-room' not in text:
+                    parts = text.split(maxsplit=1)
+                    if len(parts) == 1:
+                        # /resume with no args → our handler (all platforms)
+                        await self._handle_cross_sessions('/sessions', scoped_chat_id)
+                        return None
+                    else:
+                        # /resume <target> → rewrite with --all for core
+                        text = f"/resume --all {parts[1].strip()}"
 
         if not text and not media_urls:
             return None
@@ -1672,6 +1760,84 @@ class MaxAdapter(BasePlatformAdapter):
     ) -> SendResult:
         return await self._upload_send(chat_id, image_path, "image", caption or "", reply_to)
 
+    async def send_multiple_images(
+        self, chat_id: str,
+        images: List[Tuple[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Send multiple images in a single message.
+
+        Uploads all images concurrently via ``_upload``, then sends one
+        message with all attachment tokens. Falls back to sequential
+        ``send_image_file`` if any upload fails.
+
+        ``images`` is a list of ``(url_or_path, caption)`` tuples, matching
+        the Hermes core contract (``chat_id`` is already scoped by the caller).
+        """
+        if not self._http_client:
+            return SendResult(success=False, error="Not connected")
+
+        if not images:
+            return SendResult(success=False, error="No images provided")
+
+        # Upload all images concurrently
+        tokens: List[str] = []
+        captions: List[str] = []
+        for url_or_path, caption in images:
+            # Prefer local path, fall back to URL-based _send_image
+            if url_or_path.startswith(("http://", "https://", "file://")):
+                tok = await self._upload(url_or_path, "image") if not url_or_path.startswith("http") else None
+                if tok:
+                    tokens.append(tok)
+                else:
+                    # URL-based: send_image handles this; fall back to sequential
+                    return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
+            else:
+                tok = await self._upload(url_or_path, "image")
+                if tok:
+                    tokens.append(tok)
+                    captions.append(caption or "")
+                else:
+                    return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
+
+        parts = chat_id.split(":", 1)
+        target_type = parts[0] if len(parts) > 1 else "user"
+        target_id = parts[1] if len(parts) > 1 else chat_id
+        params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+
+        body: Dict[str, Any] = {
+            "text": " ".join(c for c in captions if c).strip() or "📷",
+            "attachments": [{"type": "image", "payload": {"token": t}} for t in tokens],
+        }
+
+        try:
+            resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
+            resp.raise_for_status()
+            d = resp.json()
+            mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
+            return SendResult(success=True, message_id=mid, raw_response=d)
+        except Exception as e:
+            logger.error("MAX: send_multiple_images failed: %s", e)
+            return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
+
+    async def _send_multiple_images_fallback(
+        self, chat_id: str,
+        images: List[Tuple[str, str]],
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Fallback: send images one by one if batch upload fails."""
+        last_result = SendResult(success=False, error="No images sent")
+        for url_or_path, caption in images:
+            if url_or_path.startswith(("http://", "https://", "file://")):
+                result = await self.send_image(chat_id, url_or_path, caption, reply_to, metadata)
+            else:
+                result = await self.send_image_file(chat_id, url_or_path, caption, reply_to, metadata)
+            if result.success:
+                last_result = result
+        return last_result
+
     async def send_document(
         self, chat_id: str, file_path: str,
         caption: Optional[str] = None,
@@ -1717,16 +1883,18 @@ class MaxAdapter(BasePlatformAdapter):
         self, chat_id: str, file_path: str, mtype: str,
         caption: str, reply_to: Optional[str],
     ) -> SendResult:
-        """Upload file then send as attachment."""
+        """Upload file then send as attachment.
+
+        Retries up to 3 times with exponential backoff (2/4/6s) when MAX
+        returns ``attachment.not.ready`` — the CDN needs time to scan
+        and validate the uploaded file before it can be attached.
+        """
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
 
         token = await self._upload(file_path, mtype)
         if not token:
             return SendResult(success=False, error="Upload failed")
-
-        if UPLOAD_DELAY:
-            await asyncio.sleep(UPLOAD_DELAY)
 
         parts = chat_id.split(":", 1)
         target_type = parts[0] if len(parts) > 1 else "user"
@@ -1740,18 +1908,38 @@ class MaxAdapter(BasePlatformAdapter):
         if reply_to:
             body["link"] = {"type": "REPLY", "mid": reply_to}
 
-        try:
-            resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
-            resp.raise_for_status()
-            d = resp.json()
-            mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
-            return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:
-            logger.error("MAX: _upload_send failed: %s", e)
-            return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    delay = 2.0 * (2 ** (attempt - 1))  # 2s, 4s, 6s
+                    await asyncio.sleep(delay)
+
+                resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
+                resp.raise_for_status()
+                d = resp.json()
+                mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
+                return SendResult(success=True, message_id=mid, raw_response=d)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 400:
+                    try:
+                        err_body = e.response.json()
+                        code = err_body.get("code", "")
+                        if code == "attachment.not.ready" and attempt + 1 < max_retries:
+                            logger.info("MAX: upload not ready (attempt %d/%d), retrying…", attempt + 1, max_retries)
+                            continue
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                logger.error("MAX: _upload_send failed: %s", e)
+                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
+            except Exception as e:
+                logger.error("MAX: _upload_send failed: %s", e)
+                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
+
+        return SendResult(success=False, error="Upload-send failed: attachment still not ready after retries", retryable=True)
 
     async def _upload(self, file_path: str, media_type: str) -> Optional[str]:
-        """Two-step upload: get upload URL → PUT file → return token."""
+        """Two-step upload: get upload URL → POST file (multipart) → return token."""
         import aiohttp as _aiohttp
 
         fp = Path(file_path)
@@ -1768,20 +1956,18 @@ class MaxAdapter(BasePlatformAdapter):
             if not upload_url:
                 return None
 
+            # audio/video: token comes from POST /uploads response itself
+            # file/image: token comes from CDN upload response
+            upload_token = data.get("token") if media_type in ("audio", "video") else None
+
             # SECURITY: Only upload to known Max/Cdn domains (SSRF prevention).
             # If the API returns an unexpected URL, refuse to connect.
             parsed = urlparse(upload_url)
-            allowed_hosts = {
-                "platform-api.max.ru",
-                "cdn.max.ru",
-                "storage.max.ru",
-                "upload.max.ru",
-                "iu.oneme.ru",
-            }
             if parsed.hostname and (
-                parsed.hostname in allowed_hosts
+                parsed.hostname in _ALLOWED_UPLOAD_HOSTS
                 or parsed.hostname.endswith(".max.ru")
                 or parsed.hostname.endswith(".oneme.ru")
+                or parsed.hostname.endswith(".okcdn.ru")
             ):
                 pass  # Safe — within Max infrastructure
             else:
@@ -1798,14 +1984,44 @@ class MaxAdapter(BasePlatformAdapter):
                     form.add_field("data", f, filename=fp.name)
                     async with session.post(upload_url, data=form) as r:
                         if r.status != 200:
+                            logger.warning(
+                                "MAX: CDN upload failed for %s (status %d, type=%s)",
+                                fp, r.status, media_type,
+                            )
+                            if media_type in ("audio", "video") and upload_token:
+                                logger.info("MAX: audio/video CDN failed but we have token from /uploads, still trying")
+                            else:
+                                return None
+
+                        # For audio/video: token already obtained from /uploads response
+                        if upload_token:
+                            return upload_token
+
+                        # For file/image: parse CDN JSON response for token
+                        try:
+                            upload_data = await r.json()
+                        except Exception:
+                            logger.warning(
+                                "MAX: CDN returned non-JSON for %s (type=%s)",
+                                fp, media_type,
+                            )
+                            if media_type in ("audio", "video"):
+                                return await self._upload(str(fp), "file")
                             return None
-                        upload_data = await r.json()
                         token = upload_data.get("token")
                         if not token and "photos" in upload_data:
                             photos = upload_data["photos"]
                             if isinstance(photos, dict):
                                 first = next(iter(photos.values()), {})
                                 token = first.get("token") if isinstance(first, dict) else None
+                        if not token:
+                            logger.warning(
+                                "MAX: CDN response missing token for %s (type=%s)",
+                                fp.name, media_type,
+                            )
+                            if media_type in ("audio", "video"):
+                                return await self._upload(str(fp), "file")
+                            return None
                         return token
         except Exception as e:
             logger.error("MAX: upload error: %s", e)
@@ -1816,13 +2032,49 @@ class MaxAdapter(BasePlatformAdapter):
     # ═════════════════════════════════════════════════════════════════════
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
-        """Send typing indicator. Best-effort."""
+        """Send typing indicator (delegates to send_action)."""
+        await self.send_action(chat_id, "typing")
+
+    async def send_action(self, chat_id: str, action: str = "typing", metadata=None) -> None:
+        """Send a chat action indicator. Best-effort (silent on failure).
+
+        Supported actions (mapped to MAX API):
+          typing / typing_on  — показать «печатает»
+          typing_off          — скрыть «печатает»
+          sending_photo       — отправляет фото
+          sending_video       — отправляет видео
+          sending_audio       — отправляет аудио
+          sending_file        — отправляет файл
+          read                — отметить как прочитано
+
+        Args:
+            chat_id: Scoped chat ID (e.g. 'chat:123' or 'user:456').
+            action: Action type string from the list above.
+            metadata: Optional platform-specific context (ignored for MAX).
+        """
         if not self._http_client:
             return
+
+        # Normalise action name to MAX API format
+        action_map = {
+            "typing": "typing_on",
+            "typing_on": "typing_on",
+            "typing_off": "typing_off",
+            "sending_photo": "sending_photo",
+            "sending_video": "sending_video",
+            "sending_audio": "sending_audio",
+            "sending_file": "sending_file",
+            "read": "read",
+        }
+        api_action = action_map.get(action.lower().strip(), "typing_on")
+
+        parts = chat_id.split(":", 1)
+        target_id = parts[1] if len(parts) > 1 else chat_id
+
         try:
             await self._http_client.post(
-                f"{MAX_API_BASE}/chats/{chat_id}/actions",
-                json={"action": "typing_on"},
+                f"{MAX_API_BASE}/chats/{target_id}/actions",
+                json={"action": api_action},
                 timeout=httpx.Timeout(3.0),
             )
         except Exception:
@@ -1895,6 +2147,73 @@ class MaxAdapter(BasePlatformAdapter):
         except Exception as e:
             logger.error("MAX: interactive send failed: %s", e)
             return SendResult(success=False, error="Interactive send failed (see logs)")
+
+    async def send_buttons(
+        self, chat_id: str, text: str,
+        buttons: List[Dict[str, str]],
+        reply_to: Optional[str] = None,
+    ) -> SendResult:
+        """Send a message with inline buttons of ANY type.
+
+        Reuses _post_interactive, which accepts all MAX button types.
+        Each button dict may include an optional "label" key with the
+        full description text for the fallback in the message body.
+        If "label" is omitted, "text" is used for both.
+
+          - callback  → {"type": "callback", "text": "...", "payload": "...", "label": "..."}
+          - link      → {"type": "link", "text": "...", "url": "...", "label": "..."}
+          - message   → {"type": "message", "text": "...", "payload": "...", "label": "..."}
+          - request_contact → {"type": "request_contact", "text": "...", "label": "..."}
+          - request_geo_location → {"type": "request_geo_location", "text": "...", "label": "..."}
+
+        Features:
+        - One button per row (full width)
+        - Buttons auto-numbered when 3+
+        - Button text duplicated in the message body as fallback
+          (MAX mobile may truncate button text visually; the "label"
+           field provides the full description that always stays readable)
+
+        Example:
+            await adapter.send_buttons(
+                chat_id="chat:123",
+                text="Выберите тариф:",
+                buttons=[
+                    {"type": "callback", "text": "Базовый", "label": "Базовый — 500₽/мес, 10GB", "payload": "basic"},
+                    {"type": "callback", "text": "Стандарт", "label": "Стандарт — 1000₽/мес, 50GB", "payload": "std"},
+                ],
+            )
+        """
+        # Number buttons if 3+ for clarity
+        numbered = len(buttons) >= 3
+
+        # Build keyboard (one button per row)
+        limited = buttons[:10]  # MAX API limit ~10 buttons per message
+        keyboard: List[List[Dict[str, str]]] = []
+        for i, btn in enumerate(limited, 1):
+            b = dict(btn)
+            # Remove label from the button payload (MAX API doesn't use it)
+            b.pop("label", None)
+            if numbered:
+                prefix = f"{i}. "
+                if not b.get("text", "").startswith(prefix):
+                    b["text"] = f"{prefix}{b['text']}"
+            keyboard.append([b])
+
+        # Build fallback text from full labels (untruncated)
+        fallback_lines: List[str] = []
+        for i, btn in enumerate(limited, 1):
+            desc = btn.get("label") or btn.get("text", "")
+            if numbered:
+                fallback_lines.append(f"{i}. {desc}")
+            else:
+                fallback_lines.append(f"• {desc}")
+        fallback_text = "\n".join(fallback_lines)
+
+        full_text = f"{text}\n\n{fallback_text}" if fallback_lines else text
+        if len(full_text) > MAX_MESSAGE_LENGTH - 200:
+            full_text = full_text[:MAX_MESSAGE_LENGTH - 200]
+
+        return await self._post_interactive(chat_id, full_text, keyboard, reply_to=reply_to)
 
     async def send_exec_approval(
         self,
@@ -1995,9 +2314,9 @@ class MaxAdapter(BasePlatformAdapter):
             buttons: List[List[Dict[str, str]]] = []
             row: List[Dict[str, str]] = []
             for i, choice in enumerate(choices):
-                btn_text = str(choice)[:30]
-                if len(str(choice)) > 30:
-                    btn_text = btn_text[:27] + "..."
+                btn_text = str(choice)[:40]
+                if len(str(choice)) > 40:
+                    btn_text = btn_text[:37] + "..."
                 row.append({
                     "type": "callback",
                     "text": btn_text,
@@ -2297,9 +2616,9 @@ class MaxAdapter(BasePlatformAdapter):
         row: List[Dict[str, str]] = []
         for p in providers[:20]:  # Max 20 providers
             slug = p.get("slug", "")
-            name = str(p.get("name", slug))[:25]
+            name = str(p.get("name", slug))[:38]
             tag = " ✅" if p.get("is_current") else ""
-            btn_text = f"{name}{tag}"[:30]
+            btn_text = f"{name}{tag}"[:40]
             row.append({
                 "type": "callback",
                 "text": btn_text,
@@ -2348,12 +2667,12 @@ class MaxAdapter(BasePlatformAdapter):
         # Build model buttons (1 per row for readability)
         buttons: List[List[Dict[str, str]]] = []
         for m in models:
-            name = str(m)[:30]
+            name = str(m)[:38]
             is_current = (
                 state.get("current_model") == m
                 and state.get("current_provider") == provider_slug
             )
-            label = f"{'✅ ' if is_current else ''}{name}"[:35]
+            label = f"{'✅ ' if is_current else ''}{name}"[:40]
             buttons.append([{
                 "type": "callback",
                 "text": label,
@@ -2434,11 +2753,11 @@ class MaxAdapter(BasePlatformAdapter):
         row: List[Dict[str, str]] = []
         for p in providers[:20]:
             slug = p.get("slug", "")
-            name = p.get("name", slug)[:30]
+            name = p.get("name", slug)[:38]
             tag = " ✅" if p.get("is_current") else ""
             row.append({
                 "type": "callback",
-                "text": f"{name}{tag}"[:64],
+                "text": f"{name}{tag}"[:40],
                 "payload": f"model:provider:{slug}",
             })
             if len(row) >= 2:
@@ -2450,8 +2769,99 @@ class MaxAdapter(BasePlatformAdapter):
         await self._post_interactive(chat_id, text, buttons)
 
     # ═════════════════════════════════════════════════════════════════════
-    # Policy properties (for authz_mixin)
+    # Cross-platform session commands
     # ═════════════════════════════════════════════════════════════════════
+
+    async def _handle_cross_sessions(self, text: str, chat_id: str) -> None:
+        """Handle /sessions and /resume (no-arg) — list sessions from ALL platforms.
+
+        Bypasses the core gateway's per-platform scoping so the user can see
+        CLI, Telegram, Discord, WebUI and other sessions directly from MAX.
+        """
+        try:
+            from hermes_state import SessionDB
+        except ImportError:
+            await self.send(chat_id, "⚠️ Session store not available")
+            return
+
+        args = text[len('/sessions'):].strip()
+        search = None
+        if args.lower().startswith('search '):
+            search = args[6:].strip()
+            if not search:
+                await self.send(chat_id, "Usage: `/sessions search <query>`")
+                return
+
+        db = SessionDB()
+
+        try:
+            if search:
+                rows = db.list_sessions_rich(
+                    limit=20,
+                    include_archived=False,
+                    order_by_last_active=True,
+                    search_query=search,
+                )
+            else:
+                rows = db.list_sessions_rich(
+                    limit=15,
+                    include_archived=False,
+                    order_by_last_active=True,
+                )
+        except Exception as e:
+            logger.warning("MAX: SessionDB query failed: %s", e)
+            await self.send(chat_id, f"⚠️ Failed to query sessions: {e}")
+            return
+
+        if not rows:
+            await self.send(chat_id, "📭 **No sessions found**")
+            return
+
+        # Emoji map for known sources
+        source_emoji = {
+            'cli': '💻', 'telegram': '📱', 'max': '🟣',
+            'discord': '🎮', 'webui': '🌐', 'api_server': '🔌',
+            'cron': '⏰', 'slack': '💬', 'matrix': '🧩',
+        }
+
+        max_preview = 45
+
+        if search:
+            header = f"🔍 **Sessions matching \"{search}\":**"
+        else:
+            header = f"📋 **Recent Sessions** (all platforms):"
+
+        lines = [header]
+        for i, s in enumerate(rows[:15], 1):
+            source = str(s.get('source', '') or '?')
+            emoji = source_emoji.get(source, '📄')
+            title = str(s.get('title') or '').strip() or '(unnamed)'
+            sid = str(s.get('id', ''))[:12]
+            preview = str(s.get('preview', '') or '')[:max_preview].replace('\n', ' ').strip()
+            lines.append(
+                f"{i}. {emoji} **{source}** — {title[:40]}"
+            )
+            if preview:
+                lines.append(f"   _{preview}..._")
+            lines.append(f"   `{sid}...`")
+
+        total = len(rows)
+        if total > 15:
+            lines.append(f"\n...and {total - 15} more sessions")
+
+        msg = '\n'.join(lines)
+
+        # MAX has 4000 char limit — chunk if needed
+        if len(msg) > MAX_MESSAGE_LENGTH - 100:
+            msg = '\n'.join(lines[:1] + lines[1:11])  # Keep header + first 10
+            msg += f'\n\n...truncated ({total} total)'
+
+        await self.send(chat_id, msg)
+        await self.send(
+            chat_id,
+            "`/resume <id>` — переключиться на сессию\n"
+            "`/sessions search <query>` — поиск по сессиям"
+        )
 
     @property
     def dm_policy(self) -> str:
@@ -2546,6 +2956,10 @@ def _env_enablement() -> Optional[dict]:
             "name": os.getenv("MAX_HOME_CHANNEL_NAME", "Max Home") or "Max Home",
         }
 
+    cross = os.getenv("MAX_CROSS_SESSION", "").strip()
+    if cross:
+        extra["cross_session"] = _coerce_bool(cross, True)
+
     return extra
 
 
@@ -2568,6 +2982,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
         "home_channel": "MAX_HOME_CHANNEL",
         "stt_enabled": "MAX_STT_ENABLED",
         "group_policy": "MAX_GROUP_POLICY",
+        "cross_session": "MAX_CROSS_SESSION",
     }
 
     for key, env_name in mapping.items():
@@ -2740,20 +3155,206 @@ async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str)
         return SendResult(success=False, error="Standalone send failed (see logs)")
 
 
+def _standalone_get_token(pconfig: PlatformConfig) -> str:
+    """Extract MAX bot token from config/env in the standalone path."""
+    extra = getattr(pconfig, "extra", {}) or {}
+    return (os.getenv("MAX_BOT_TOKEN") or getattr(pconfig, "token", "") or extra.get("token", "") or "").strip()
+
+
 async def _standalone_send(
     pconfig: PlatformConfig,
     chat_id: str,
     message: str,
     *,
     thread_id: Optional[str] = None,
-    media_files: Optional[List[str]] = None,
+    media_files: Optional[List[Tuple[str, bool]]] = None,
     force_document: bool = False,
 ) -> dict:
-    """Standalone sender contract for send_message/cron delivery."""
+    """Standalone sender contract for send_message/cron delivery.
+
+    Supports native file delivery: extracts MEDIA: paths from ``message``,
+    uploads each file via the 3-step MAX protocol, and attaches them to the
+    outgoing message. Works with or without a running gateway adapter.
+    """
     del thread_id, force_document
-    if media_files:
-        logger.warning("MAX: standalone send currently ignores media_files=%s", media_files)
-    result = await _send_max_message(pconfig, chat_id, message)
-    if result.success:
-        return {"success": True, "message_id": result.message_id}
-    return {"error": result.error or "Max send failed"}
+
+    token = _standalone_get_token(pconfig)
+    if not token:
+        return {"error": "MAX_BOT_TOKEN not configured"}
+
+    headers = {"Authorization": token, "Content-Type": "application/json"}
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+            # 1. Send text message first
+            last_message_id: Optional[str] = None
+            if message and message.strip():
+                parts = chat_id.split(":", 1)
+                target_type = parts[0] if len(parts) > 1 else "user"
+                target_id = parts[1] if len(parts) > 1 else chat_id
+                params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+                body = {"text": message[:MAX_MESSAGE_LENGTH], "format": "markdown"}
+                resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                last_message_id = str(data.get("message", {}).get("message_id", "") or data.get("message", {}).get("body", {}).get("mid", ""))
+
+            # 2. Upload and send each media file
+            for media_item in (media_files or []):
+                media_path, is_voice = media_item if isinstance(media_item, (list, tuple)) else (media_item, False)
+                if not os.path.exists(media_path):
+                    logger.warning("MAX: standalone media file not found: %s", media_path)
+                    continue
+
+                # Determine attachment type from extension (for native playback)
+                _ATTACH_TYPES = {
+                    ".jpg": "image", ".jpeg": "image", ".png": "image",
+                    ".webp": "image", ".gif": "image", ".bmp": "image",
+                    ".mp4": "video", ".mov": "video", ".avi": "video",
+                    ".mkv": "video", ".webm": "video",
+                    ".mp3": "audio", ".wav": "audio", ".ogg": "audio",
+                    ".opus": "audio", ".m4a": "audio", ".flac": "audio",
+                }
+                _ext = os.path.splitext(media_path)[1].lower()
+                _attach_type = _ATTACH_TYPES.get(_ext, "file")
+                _upload_token = ""
+
+                # Step 1: get upload URL
+                # For audio/video: use proper type so /uploads returns a token
+                # For file/image: use type=file for reliability
+                _upload_type = _attach_type if _attach_type in ("audio", "video") else "file"
+                try:
+                    resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": _upload_type}, headers=headers)
+                    if resp.status_code != 200:
+                        logger.warning("MAX: upload URL request failed for %s (status %d)", media_path, resp.status_code)
+                        # Fall back to type=file for audio/video
+                        if _upload_type in ("audio", "video"):
+                            resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": "file"}, headers=headers)
+                            if resp.status_code != 200:
+                                continue
+                            _upload_type = "file"
+                        else:
+                            continue
+                    upload_json = resp.json()
+                    upload_url = upload_json.get("url", "")
+                    if not upload_url:
+                        logger.warning("MAX: upload URL response missing 'url' for %s", media_path)
+                        continue
+                    # For audio/video: token comes from /uploads response itself
+                    if _upload_type in ("audio", "video"):
+                        _upload_token = upload_json.get("token", "")
+                        if _upload_token:
+                            logger.info("MAX: audio/video token obtained from /uploads for %s", media_path)
+                except Exception as e:
+                    logger.warning("MAX: upload URL parse failed for %s: %s", media_path, e)
+                    continue
+
+                logger.info("MAX: upload url obtained for %s: %s", media_path, upload_url[:80])
+
+                # SSRF protection: only upload to known MAX/CDN domains
+                from urllib.parse import urlparse as _urlparse_upload
+                parsed_upload = _urlparse_upload(upload_url)
+                if not parsed_upload.hostname or not (
+                    parsed_upload.hostname in _ALLOWED_UPLOAD_HOSTS
+                    or parsed_upload.hostname.endswith(".max.ru")
+                    or parsed_upload.hostname.endswith(".oneme.ru")
+                    or parsed_upload.hostname.endswith(".okcdn.ru")
+                    or parsed_upload.hostname.endswith(".cdn-max.ru")
+                ):
+                    logger.warning("MAX: upload URL rejected (SSRF): %s", upload_url[:80])
+                    continue
+
+                # Step 2: upload file as multipart
+                try:
+                    import aiohttp as _aiohttp
+                    async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
+                        with open(media_path, "rb") as f:
+                            form = _aiohttp.FormData()
+                            form.add_field("data", f, filename=os.path.basename(media_path))
+                            async with aio_session.post(upload_url, data=form) as r:
+                                if r.status != 200:
+                                    try:
+                                        err_body = await r.text()
+                                        logger.warning("MAX: CDN upload failed for %s (status %d): %s", media_path, r.status, err_body[:200])
+                                    except Exception:
+                                        logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
+                                    # For audio/video with token from /uploads: even if CDN fails, we might still try
+                                    if _upload_type in ("audio", "video") and _upload_token:
+                                        logger.info("MAX: CDN failed but using token from /uploads anyway for %s", media_path)
+                                        file_token = _upload_token
+                                    else:
+                                        continue
+                                else:
+                                    # For audio/video: use token from /uploads (CDN just returns <retval>1</retval>)
+                                    if _upload_type in ("audio", "video") and _upload_token:
+                                        file_token = _upload_token
+                                    else:
+                                        # For file/image: parse CDN JSON response for token
+                                        try:
+                                            upload_data = await r.json()
+                                        except Exception:
+                                            logger.warning("MAX: CDN returned non-JSON for %s", media_path)
+                                            continue
+                                        file_token = upload_data.get("token")
+                                        if not file_token:
+                                            # type=image returns: {"photos": {"id": {"token": "..."}}}
+                                            photos = upload_data.get("photos", {})
+                                            if isinstance(photos, dict):
+                                                for _pid, _pdata in photos.items():
+                                                    if isinstance(_pdata, dict) and _pdata.get("token"):
+                                                        file_token = _pdata["token"]
+                                                        break
+                                        if not file_token:
+                                            logger.warning("MAX: CDN response missing token for %s", media_path)
+                                            continue
+                except Exception as e:
+                    logger.warning("MAX: CDN upload error for %s: %s", media_path, e)
+                    continue
+
+                # Wait for MAX to process the file
+                await asyncio.sleep(UPLOAD_DELAY)
+
+                # Step 3: send message with attachment (with retry for attachment.not.ready)
+                parts = chat_id.split(":", 1)
+                target_type = parts[0] if len(parts) > 1 else "user"
+                target_id = parts[1] if len(parts) > 1 else chat_id
+                params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+                body = {
+                    "text": os.path.basename(media_path),
+                    "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
+                }
+                _sent_ok = False
+                for _retry in range(3):
+                    try:
+                        resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
+                        if resp.status_code in (200, 201):
+                            data = resp.json()
+                            if data.get("ok", True) or "message" in data:
+                                last_message_id = str(
+                                    data.get("message", {}).get("body", {}).get("mid", "")
+                                    or data.get("message", {}).get("message_id", "")
+                                    or ""
+                                )
+                                _sent_ok = True
+                                break
+                        elif resp.status_code == 400:
+                            err_body = resp.json()
+                            if err_body.get("code") == "attachment.not.ready":
+                                logger.info("MAX: attachment not ready for %s, retrying...", media_path)
+                                await asyncio.sleep(5.0)
+                                continue
+                            logger.warning("MAX: message rejected for %s: %s", media_path, err_body)
+                            break
+                        else:
+                            logger.warning("MAX: send failed for %s (status %d)", media_path, resp.status_code)
+                            break
+                    except Exception as _exc:
+                        logger.warning("MAX: send exception for %s: %s", media_path, _exc)
+                        break
+                if not _sent_ok:
+                    continue
+
+            return {"success": True, "message_id": last_message_id}
+    except Exception as exc:
+        logger.error("MAX: standalone send failed: %s", exc)
+        return {"error": f"Max standalone send failed: {exc}"}

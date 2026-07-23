@@ -1,62 +1,62 @@
-# Max STT plugin installed
+# Плагин Max STT установлен
 
-Next steps:
+Что делать дальше:
 
-1. **Install runtime dependencies:**
+1. **Установите зависимости времени выполнения:**
    ```bash
    pip install aiohttp httpx
-   # For STT voice transcription:
+   # Для STT-транскрипции голоса:
    pip install faster-whisper
    ```
 
-2. **Configure the platform:**
+2. **Настройте платформу:**
    ```bash
    hermes gateway setup
    ```
-   Choose **Max (STT)**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and optional secret.
+   Выберите **Max (STT)**, вставьте `MAX_BOT_TOKEN`, укажите host/port/path вебхука и опциональный секрет.
 
-3. **Set up voice transcription (optional):**
+3. **Настройте транскрипцию голоса (опционально):**
    ```bash
    python3 -m venv ~/.hermes/stt-venv
    ~/.hermes/stt-venv/bin/pip install faster-whisper
    cp scripts/transcribe_audio.py ~/.hermes/scripts/
    ```
 
-4. **Choose connection mode:**
+4. **Выберите режим подключения:**
 
-   **Long polling (simpler, no HTTPS):**
-   - Just set `MAX_BOT_TOKEN` and restart. The adapter auto-uses long-polling.
-   - No public URL needed. Good for development.
+   **Long polling (проще, без HTTPS):**
+   - Просто установите `MAX_BOT_TOKEN` и перезапустите. Адаптер автоматически использует long-polling.
+   - Публичный URL не нужен. Подходит для разработки.
 
-   **Webhook (production):**
-   - Expose the local webhook server as public HTTPS:
+   **Webhook (продакшен):**
+   - Откройте локальный webhook-сервер через публичный HTTPS:
      ```bash
      cloudflared tunnel --url http://localhost:8646
-     # or: ngrok http 8646
+     # или: ngrok http 8646
      ```
-   - Register the public URL with Max:
+   - Зарегистрируйте публичный URL в MAX:
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \
-       -H "Authorization: $MAX_BOT_TOKEN" \
+       -H "Authorization: ***" \
        -H "Content-Type: application/json" \
        -d '{"url":"https://YOUR-DOMAIN/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"CHANGE_ME_5_256_CHARS"}'
      ```
 
-5. **Restart Hermes gateway:**
+5. **Перезапустите шлюз Hermes:**
    ```bash
    hermes gateway restart
    ```
 
-6. **Verify:**
+6. **Проверьте:**
    ```bash
    hermes gateway status
    curl http://localhost:8646/health
-   # Expected: {"status":"ok"}
+   # Ожидается: {"status":"ok"}
    ```
 
-## Official Max docs
+## Официальная документация MAX
 
-Checked on 2026-06-22:
+Проверено 2026-06-22:
 - https://dev.max.ru/docs/chatbots/bots-create
 - https://dev.max.ru/docs/chatbots/bots-coding/prepare
 - https://dev.max.ru/docs-api/methods/POST/subscriptions

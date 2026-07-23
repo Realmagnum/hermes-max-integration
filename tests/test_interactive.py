@@ -1,4 +1,4 @@
-"""Tests for interactive buttons (approval, slash-confirm, clarify)."""
+"""Tests for interactive buttons (approval, slash-confirm, clarify, send_action, send_buttons)."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,191 +28,254 @@ class TestPostInteractive:
         buttons = [[
             {"type": "callback", "text": "Btn", "payload": "btn:1"},
         ]]
-
         result = await a._post_interactive("user:42", "Test message", buttons)
         assert result.success is True
         assert result.message_id == "mid-123"
-
-        # Verify the request body
-        call_args = a._http_client.post.call_args
-        body = call_args[1]["json"]
-        assert body["text"] == "Test message"
-        assert body["attachments"][0]["type"] == "inline_keyboard"
-        assert body["attachments"][0]["payload"]["buttons"] == buttons
+        a._http_client.post.assert_called_once_with(
+            f"{adapter.MAX_API_BASE}/messages",
+            params={"user_id": "42"},
+            json={
+                "text": "Test message",
+                "format": "markdown",
+                "attachments": [{
+                    "type": "inline_keyboard",
+                    "payload": {"buttons": buttons},
+                }],
+            },
+        )
 
     @pytest.mark.asyncio
     async def test_post_interactive_no_client(self):
-        from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token")
-        a = adapter.MaxAdapter(cfg)
+        a = self._make_adapter()
         a._http_client = None
+        buttons = [[{"type": "callback", "text": "X", "payload": "x"}]]
         result = await a._post_interactive("user:42", "Test", [])
         assert result.success is False
 
 
-class TestSendExecApproval:
-    """Tests for send_exec_approval."""
+class TestSendAction:
+    """Tests for send_action (extended chat actions)."""
 
     def _make_adapter(self):
         from gateway.config import PlatformConfig
         cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
         a = adapter.MaxAdapter(cfg)
         a._http_client = AsyncMock()
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"message": {"body": {"mid": "mid-456"}}}
-        a._http_client.post = AsyncMock(return_value=mock_resp)
         return a
 
     @pytest.mark.asyncio
-    async def test_sends_buttons_and_stores_state(self):
+    async def test_send_typing_delegates_to_send_action(self):
         a = self._make_adapter()
-        result = await a.send_exec_approval(
-            chat_id="user:42",
-            command="rm -rf /test",
-            session_key="test-session",
-            description="test command",
-        )
-        assert result.success is True
-        # State should be stored
-        assert len(a._exec_approval_state) == 1
-        approval_id = list(a._exec_approval_state.keys())[0]
-        assert a._exec_approval_state[approval_id] == "test-session"
+        a.send_action = AsyncMock()
+        await a.send_typing("user:42")
+        a.send_action.assert_called_once_with("user:42", "typing")
 
-        # Verify buttons
-        call_args = a._http_client.post.call_args
-        body = call_args[1]["json"]
-        buttons = body["attachments"][0]["payload"]["buttons"]
-        assert len(buttons) == 2  # 2 rows
-        assert buttons[0][0]["text"] == "✅ Approve Once"
-        assert buttons[0][1]["text"] == "🔄 Session"
-        assert buttons[1][0]["text"] == "🔒 Always"
-        assert buttons[1][1]["text"] == "❌ Deny"
+    @pytest.mark.asyncio
+    async def test_send_action_typing(self):
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        await a.send_action("user:42", "typing")
+        a._http_client.post.assert_called_once()
+        call_body = a._http_client.post.call_args[1]["json"]
+        assert call_body["action"] == "typing_on"
+
+    @pytest.mark.asyncio
+    async def test_send_action_all_types(self):
+        a = self._make_adapter()
+        expected = {
+            "typing": "typing_on", "typing_on": "typing_on",
+            "typing_off": "typing_off", "sending_photo": "sending_photo",
+            "sending_video": "sending_video", "sending_audio": "sending_audio",
+            "sending_file": "sending_file", "read": "read",
+        }
+        for action, expected_api in expected.items():
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            a._http_client.post = AsyncMock(return_value=mock_resp)
+            await a.send_action("chat:123", action)
+            body = a._http_client.post.call_args[1]["json"]
+            assert body["action"] == expected_api, f"{action} → {body['action']}"
+
+    @pytest.mark.asyncio
+    async def test_send_action_chat_id_scoping(self):
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        await a.send_action("chat:123", "typing")
+        url = a._http_client.post.call_args[0][0]
+        assert "chats/123/actions" in url
+
+    @pytest.mark.asyncio
+    async def test_send_action_no_client(self):
+        a = self._make_adapter()
+        a._http_client = None
+        await a.send_action("user:1", "typing")
+        await a.send_action("user:1", "sending_file")
 
 
-class TestSendSlashConfirm:
-    """Tests for send_slash_confirm."""
+class TestSendButtons:
+    """Tests for send_buttons (generic inline buttons)."""
 
     def _make_adapter(self):
         from gateway.config import PlatformConfig
         cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
         a = adapter.MaxAdapter(cfg)
         a._http_client = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"message": {"body": {"mid": "mid-789"}}}
-        a._http_client.post = AsyncMock(return_value=mock_resp)
         return a
 
     @pytest.mark.asyncio
-    async def test_sends_three_buttons_and_stores_state(self):
+    async def test_send_buttons_link_type(self):
+        """2 buttons → no numbering, one row each."""
         a = self._make_adapter()
-        result = await a.send_slash_confirm(
-            chat_id="user:42",
-            title="Test Confirm",
-            message="Are you sure?",
-            session_key="test-session",
-            confirm_id="c001",
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"body": {"mid": "mid-link"}}}
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        result = await a.send_buttons(
+            chat_id="user:42", text="Links:",
+            buttons=[
+                {"type": "link", "text": "GitHub", "url": "https://github.com"},
+                {"type": "link", "text": "Docs", "url": "https://hermes-agent.ai"},
+            ],
         )
         assert result.success is True
-        assert a._slash_confirm_state["c001"] == "test-session"
+        call_args = a._http_client.post.call_args[1]
+        body = call_args["json"]
 
-        call_args = a._http_client.post.call_args
-        body = call_args[1]["json"]
-        buttons = body["attachments"][0]["payload"]["buttons"]
-        assert len(buttons) == 1  # 1 row of 3
-        assert buttons[0][0]["text"] == "✅ Approve Once"
-        assert buttons[0][1]["text"] == "🔒 Always"
-        assert buttons[0][2]["text"] == "❌ Cancel"
+        # One button per row
+        rows = body["attachments"][0]["payload"]["buttons"]
+        assert len(rows) == 2
+        assert rows[0] == [{"type": "link", "text": "GitHub", "url": "https://github.com"}]
+        assert rows[1] == [{"type": "link", "text": "Docs", "url": "https://hermes-agent.ai"}]
 
-
-class TestOnCallback:
-    """Tests for _on_callback message_callback handling."""
-
-    def _make_adapter(self):
-        from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
-        return adapter.MaxAdapter(cfg)
+        # Fallback text appended (bullet points for 1-2 buttons)
+        assert "• GitHub" in body["text"]
+        assert "• Docs" in body["text"]
 
     @pytest.mark.asyncio
-    async def test_exec_callback(self):
+    async def test_send_buttons_label_field(self):
+        """label field provides full fallback text, button text stays short."""
         a = self._make_adapter()
-        a._exec_approval_state["apr001"] = "test-session"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"body": {"mid": "m"}}}
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        result = await a.send_buttons(
+            chat_id="user:1", text="Choose:",
+            buttons=[
+                {"type": "callback", "text": "Basic", "label": "Basic plan — 500/mo, 10GB", "payload": "b"},
+                {"type": "callback", "text": "Pro", "label": "Pro plan — 1500/mo, 100GB", "payload": "p"},
+            ],
+        )
+        assert result.success is True
+        body = a._http_client.post.call_args[1]["json"]
 
-        from tools.approval import _ApprovalEntry, _gateway_queues
-        _gateway_queues["test-session"] = [_ApprovalEntry({"command": "test"})]
+        # Button text stays short
+        rows = body["attachments"][0]["payload"]["buttons"]
+        assert rows[0][0]["text"] == "Basic"
+        assert rows[1][0]["text"] == "Pro"
 
-        try:
-            payload = {
-                "update_type": "message_callback",
-                "callback": {
-                    "payload": "exec:session:apr001",
-                    "user": {"user_id": 42, "name": "Test"},
-                },
-            }
-            result = await a._on_callback(payload)
-            assert result is not None
-            assert "Approved" in result.text or "session" in result.text.lower()
-        finally:
-            _gateway_queues.pop("test-session", None)
+        # label is NOT in the button payload
+        assert "label" not in rows[0][0]
+        assert "label" not in rows[1][0]
+
+        # Fallback uses the full label text
+        assert "Basic plan — 500/mo, 10GB" in body["text"]
+        assert "Pro plan — 1500/mo, 100GB" in body["text"]
 
     @pytest.mark.asyncio
-    async def test_exec_callback_unknown_id(self):
+    async def test_send_buttons_numbered(self):
+        """3+ buttons → auto-numbered 1. 2. 3. ..."""
         a = self._make_adapter()
-        payload = {
-            "update_type": "message_callback",
-            "callback": {
-                "payload": "exec:once:unknown_id",
-                "user": {"user_id": 42},
-            },
-        }
-        result = await a._on_callback(payload)
-        assert result is None  # Unknown ID → no event
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"body": {"mid": "m"}}}
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        result = await a.send_buttons(
+            chat_id="user:1", text="Pick:",
+            buttons=[
+                {"type": "callback", "text": "First", "payload": "1"},
+                {"type": "callback", "text": "Second", "payload": "2"},
+                {"type": "callback", "text": "Third", "payload": "3"},
+            ],
+        )
+        assert result.success is True
+        body = a._http_client.post.call_args[1]["json"]
+        rows = body["attachments"][0]["payload"]["buttons"]
+
+        # 3 buttons → 3 rows, one each, numbered
+        assert len(rows) == 3
+        assert rows[0][0]["text"] == "1. First"
+        assert rows[1][0]["text"] == "2. Second"
+        assert rows[2][0]["text"] == "3. Third"
+
+        # Fallback with numbers
+        assert "1. First" in body["text"]
+        assert "2. Second" in body["text"]
+        assert "3. Third" in body["text"]
 
     @pytest.mark.asyncio
-    async def test_unknown_prefix(self):
+    async def test_send_buttons_mixed_types(self):
+        """Callback + link + request_contact in one call."""
         a = self._make_adapter()
-        payload = {
-            "update_type": "message_callback",
-            "callback": {
-                "payload": "unknown:data:here",
-                "user": {"user_id": 42},
-            },
-        }
-        result = await a._on_callback(payload)
-        assert result is None
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"body": {"mid": "m"}}}
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        result = await a.send_buttons(
+            chat_id="chat:99", text="Actions:",
+            buttons=[
+                {"type": "link", "text": "Site", "label": "Open our website", "url": "https://x.com"},
+                {"type": "callback", "text": "Ok", "label": "Confirm and proceed", "payload": "ok"},
+                {"type": "request_contact", "text": "Contact"},
+            ],
+        )
+        assert result.success is True
+        body = a._http_client.post.call_args[1]["json"]
+        rows = body["attachments"][0]["payload"]["buttons"]
+
+        # 3 buttons → 3 rows, one each, numbered
+        assert len(rows) == 3
+        assert all(len(row) == 1 for row in rows)
+        assert rows[0][0]["text"] == "1. Site"
+        assert rows[1][0]["text"] == "2. Ok"
+
+        # label removed from button payload
+        assert "label" not in rows[0][0]
+        assert "label" not in rows[1][0]
+
+        # Fallback uses label if available, text otherwise
+        assert "Open our website" in body["text"]    # label
+        assert "Confirm and proceed" in body["text"]  # label
+        assert "3. Contact" in body["text"]           # no label → falls back to text
 
     @pytest.mark.asyncio
-    async def test_no_payload(self):
+    async def test_send_buttons_max_10(self):
         a = self._make_adapter()
-        payload = {
-            "update_type": "message_callback",
-            "callback": {
-                "user": {"user_id": 42},
-            },
-        }
-        result = await a._on_callback(payload)
-        assert result is None
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"message": {"body": {"mid": "m"}}}
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+        many = [{"type": "callback", "text": f"Btn {i}", "payload": str(i)} for i in range(15)]
+        result = await a.send_buttons("user:1", "Max:", many)
+        assert result.success is True
+        body = a._http_client.post.call_args[1]["json"]
+        rows = body["attachments"][0]["payload"]["buttons"]
+
+        # Only 10 buttons, each numbered
+        assert sum(len(r) for r in rows) == 10
+        assert rows[0][0]["text"] == "1. Btn 0"
+
+        # Fallback text with numbers
+        assert "10. Btn 9" in body["text"]
+        assert "Btn 10" not in body["text"]  # 11th not included
 
     @pytest.mark.asyncio
-    async def test_callback_clears_state(self):
+    async def test_send_buttons_no_client(self):
         a = self._make_adapter()
-        a._exec_approval_state["apr002"] = "test-session-2"
-
-        from tools.approval import _ApprovalEntry, _gateway_queues
-        _gateway_queues["test-session-2"] = [_ApprovalEntry({"command": "test"})]
-
-        try:
-            payload = {
-                "update_type": "message_callback",
-                "callback": {
-                    "payload": "exec:once:apr002",
-                    "user": {"user_id": 42},
-                },
-            }
-            await a._on_callback(payload)
-            # State should be cleared
-            assert "apr002" not in a._exec_approval_state
-        finally:
-            _gateway_queues.pop("test-session-2", None)
+        a._http_client = None
+        result = await a.send_buttons("user:1", "text", [])
+        assert result.success is False

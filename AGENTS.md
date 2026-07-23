@@ -1,66 +1,71 @@
-# Instructions for AI agents using this repository
+# Инструкции для AI-агентов, работающих с этим репозиторием
 
-This repository contains a Hermes Agent platform plugin that adds Max messenger as a gateway channel with STT voice transcription.
+## Языковая политика
 
-When a user gives you this repository and asks to connect Hermes to Max:
+> **⚠️ Двуязычный проект:** Все `*.md` файлы документации пишутся на **русском языке** (основной). Для каждого файла должен существовать перевод на английский в формате `*_EN.md`. Любое изменение в оригинале **обязательно** синхронизируется с переводом. Английская версия — точный перевод русской, с идентичной структурой и содержанием.
 
-1. **Do not invent** Max bot setup steps. Use the fact-checked sources in `README.md` (Russian) or `README_EN.md` (English); if available, re-open the official pages under `https://dev.max.ru/` and prefer current official docs.
+Этот репозиторий содержит плагин платформы Hermes Agent, добавляющий мессенджер MAX как канал шлюза с STT-транскрипцией голоса.
 
-> **⚠️ Bilingual READMEs:** This repo has two READMEs — `README.md` (Russian) and `README_EN.md` (English). When updating documentation, **always update both files in sync** with identical structure and content. The English version is the canonical source; the Russian version is its translation. Do not add a section to one without porting it to the other.
+Когда пользователь даёт вам этот репозиторий и просит подключить Hermes к MAX:
 
-2. Install Hermes first if it is missing: https://hermes-agent.nousresearch.com/docs
-3. Install this plugin with:
+1. **Не выдумывайте** шаги настройки MAX-бота. Используйте проверенные источники в `README.md` (русский) или `README_EN.md` (английский); при наличии открывайте официальные страницы на `https://dev.max.ru/` и отдавайте предпочтение актуальной официальной документации.
+2. Сначала установите Hermes, если он отсутствует: https://hermes-agent.nousresearch.com/docs
+3. Установите этот плагин:
    ```bash
    hermes plugins install Realmagnum/hermes-max-integration --enable
    ```
-4. Ensure `aiohttp` and `httpx` are installed in the same Python environment that runs Hermes.
-5. Help the user obtain `MAX_BOT_TOKEN` from Max for Partners.
-   Current checked path: `Chat-bots → Go → Advanced settings → Configure → Token` after bot moderation.
-6. Treat `MAX_BOT_TOKEN` and `MAX_WEBHOOK_SECRET` as secrets. Do not print them back to the chat.
-7. Configure a public HTTPS webhook URL that points to the local Hermes gateway server, default local URL `http://localhost:8646/max/webhook`.
-   Or use long-polling mode (no HTTPS needed) — just set the token and restart.
-8. For webhook mode, register through Max Bot API:
+4. Убедитесь, что `aiohttp` и `httpx` установлены в том же окружении Python, где работает Hermes.
+5. Помогите пользователю получить `MAX_BOT_TOKEN` от Max для партнёров.
+   Актуальный путь: `Чат-боты → Перейти → Расширенные настройки → Настроить → Токен` после модерации бота.
+6. Обращайтесь с `MAX_BOT_TOKEN` и `MAX_WEBHOOK_SECRET` как с секретами. Не выводите их обратно в чат.
+7. Настройте публичный HTTPS-URL вебхука, указывающий на локальный сервер шлюза Hermes, локальный URL по умолчанию `http://localhost:8646/max/webhook`.
+   Или используйте режим long-polling (HTTPS не нужен) — просто установите токен и перезапустите.
+8. Для режима вебхука зарегистрируйтесь через MAX Bot API:
    ```bash
    curl -X POST "https://platform-api.max.ru/subscriptions" \
-     -H "Authorization: <token>" \
+     -H "Authorization: ***" \
      -H "Content-Type: application/json" \
      -d '{"url":"https://your-domain/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"your-secret"}'
    ```
-9. Restart Hermes gateway and verify:
+9. Перезапустите шлюз Hermes и проверьте:
    ```bash
    hermes gateway restart
    hermes gateway status
    curl http://localhost:8646/health
    ```
-10. For STT (voice transcription), install faster-whisper:
+10. Для STT (транскрипция голоса) установите faster-whisper:
     ```bash
     python3 -m venv ~/.hermes/stt-venv
     ~/.hermes/stt-venv/bin/pip install faster-whisper
     cp scripts/transcribe_audio.py ~/.hermes/scripts/
     ```
-11. When the agent receives a voice message (marked as `[Audio: /path/to/file.ogg]`), transcribe it:
+11. Когда агент получает голосовое сообщение (отмечено как `[Audio: /path/to/file.ogg]`), транскрибируйте его:
     ```bash
     ~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
     ```
 
-**Important current Max API facts** (checked 2026-07-17):
-- Bot API requests use `Authorization: *** header; token in query parameters is no longer supported.
-- Webhook requires public HTTPS; HTTP and self-signed certificates are not supported for webhooks.
-- Webhook `secret` is sent back by Max as the raw `X-Max-Bot-Api-Secret` header value, not as an HMAC signature.
-- For production, Max recommends Webhook, not Long Polling; both cannot be used simultaneously.
-- `POST /messages` accepts `user_id` or `chat_id`; message `text` is up to 4000 characters and `format` can be `markdown` or `html`.
-- This plugin supports **both** long-polling (default, no HTTPS needed) and webhook (requires HTTPS). Long-polling is ideal for development and testing.
-- **Callback updates (`message_callback`)** contain a `message` object; the chat_id for routing lives at `message.recipient.chat_id`, NOT at `chat.chat_id` or top-level `chat_id`.
+**Важные текущие факты о MAX API** (проверено 2026-07-21):
+- Запросы к Bot API используют заголовок `Authorization: ***`; токен в параметрах запроса больше не поддерживается.
+- Вебхук требует общедоступного HTTPS; HTTP и самоподписанные сертификаты не поддерживаются для вебхуков.
+- Секрет вебхука отправляется MAX как сырое значение заголовка `X-Max-Bot-Api-Secret`, а не как HMAC-подпись.
+- **КРИТИЧНО: Вебхук и long polling взаимоисключающи.** Если существует подписка вебхука, MAX API направляет ВСЕ обновления на URL вебхука, и `/updates` возвращает пустой ответ. Даже после удаления `MAX_WEBHOOK_URL` из `.env` и перезапуска в режиме long-polling, устаревшая подписка вебхука сохраняется в MAX API и блокирует доставку сообщений. **Всегда удаляйте старую подписку вебхука при переключении режимов:**
+  ```bash
+  curl -X DELETE "https://platform-api.max.ru/subscriptions?url=..." -H "Authorization: ***"
+  ```
+  Плагин теперь имеет автоочистку при запуске (с v2.1.4+), но ручная очистка может всё ещё потребоваться, если вебхук был зарегистрирован извне.
+- `POST /messages` принимает `user_id` или `chat_id`; текст сообщения до 4000 символов, `format` может быть `markdown` или `html`.
+- Этот плагин поддерживает **оба** режима: long-polling (по умолчанию, HTTPS не нужен) и вебхук (требуется HTTPS). Long-polling идеален для разработки и тестирования.
+- **Обновления колбэков (`message_callback`)** содержат объект `message`; chat_id для маршрутизации находится в `message.recipient.chat_id`, НЕ в `chat.chat_id` или верхнеуровневом `chat_id`.
 
-**STT-specific:**
-- Voice messages from Max come as audio attachments with `payload.url` for direct download.
-- The adapter auto-downloads them to `~/.hermes/audio_cache/max_audio_{message_id}.ogg` when `MAX_STT_ENABLED=true`.
-- Use the `scripts/transcribe_audio.py` script with faster-whisper for transcription.
-- Default model: `base` (best speed/accuracy trade-off on CPU).
+**STT-специфично:**
+- Голосовые сообщения от MAX приходят как аудиовложения с `payload.url` для прямой загрузки.
+- Адаптер автоматически загружает их в `~/.hermes/audio_cache/max_audio_{message_id}.ogg` когда `MAX_STT_ENABLED=true`.
+- Используйте скрипт `scripts/transcribe_audio.py` с faster-whisper для транскрипции.
+- Модель по умолчанию: `base` (лучший баланс скорости/качества на CPU).
 
-**Tables as Images (`MAX_TABLE_AS_IMAGE=true`):**
-- Pipe markdown tables (`| A | B |\n|---|---|`) are rendered as Pillow-generated PNG images.
-- Emoji status icons (✅❌⚠️⏳) are replaced with Unicode symbols (✓✗⚠◷▶) in semantic colors.
-- Images are uploaded via two-step API (`POST /uploads` → PUT → token → POST /messages`).
-- If Pillow is not installed, falls back to inline `` `code` `` text rendering.
-- Generated PNGs are cached in `~/.hermes/table_images/`.
+**Таблицы как изображения (`MAX_TABLE_AS_IMAGE=true`):**
+- Markdown-таблицы (`| A | B |\n|---|---|`) рендерятся как PNG-изображения, сгенерированные Pillow.
+- Эмодзи статусов (✅❌⚠️⏳) заменяются на Unicode-символы (✓✗⚠◷▶) в семантических цветах.
+- Изображения загружаются через двухшаговое API (`POST /uploads` → PUT → токен → POST /messages`).
+- Если Pillow не установлен, используется текстовый рендеринг в `` `code` ``.
+- Сгенерированные PNG кэшируются в `~/.hermes/table_images/`.

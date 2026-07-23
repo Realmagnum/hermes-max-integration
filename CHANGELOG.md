@@ -1,66 +1,157 @@
-# Changelog
+# Список изменений
 
-All notable changes to the hermes-max-integration plugin.
+Все заметные изменения в плагине hermes-max-integration.
+
+## [2.4.0] — 2026-07-22
+
+### Добавлено
+
+- **`send_multiple_images()`** — пакетная отправка изображений одним сообщением. Загружает все картинки параллельно, затем отправляет одно сообщение со всеми токенами. При ошибке — fallback на последовательную отправку через `send_image_file()`.
+- **`_standalone_send()` — нативная доставка файлов.** `hermes send MEDIA:/path/file` теперь загружает файлы через 3-шаговый протокол MAX (POST /uploads → POST multipart → POST /messages с токеном). Поддерживает image, video, audio, file.
+- **`_standalone_get_token()`** — выделенная функция извлечения токена для standalone-пути.
+
+### Исправлено
+
+- **`_upload_send()` — ретрай при `attachment.not.ready`.** Exponential backoff (2/4/6с), до 3 попыток. Заменяет статический `UPLOAD_DELAY`.
+- **`_upload()` — добавлен SSRF whitelist для `fu.oneme.ru`.** Фактический CDN для загрузки файлов MAX.
+- **`_standalone_send()`** — теперь не игнорирует `media_files` (было `logger.warning` + сброс).
+
+### Изменено
+
+- `_upload_send()` — жёсткая задержка `UPLOAD_DELAY` заменена на адаптивный ретрай
+
+## [2.3.0] — 2026-07-22
+
+### Добавлено
+
+- **Двуязычная политика документации** — все `*.md` файлы теперь следуют схеме RU-основной + EN-перевод (`*_EN.md`):
+  - `AGENTS.md` + `AGENTS_EN.md`
+  - `CHANGELOG.md` + `CHANGELOG_EN.md`
+  - `README.md` + `README_EN.md`
+  - `docs/webhook.md` + `docs/webhook_EN.md`
+  - `after-install.md` + `after-install_EN.md`
+  - `skills/max-gateway/SKILL.md` + `skills/max-gateway/SKILL_EN.md`
+
+### Исправлено
+
+- `send_buttons()` теперь размещает одну кнопку на ряд (полная ширина) вместо 2 в ряд
+- Текст кнопок автоматически обрезается до лимитов MAX API (40 символов для callback, 64 для link)
+- `send_buttons()` — исправлен баг двойной сериализации JSON в `send_typing`
+
+### Изменено
+
+- `send_buttons()` — текст дублируется в теле сообщения как запасной вариант (читаемость на мобильных)
+- `send_buttons()` — авто-нумерация (`1.`, `2.`, `3.`...) при 3+ кнопках
+- `send_buttons()` — опциональное поле `label`: полное описание в теле сообщения, короткий `text` на кнопке
+
+## [2.2.0] — 2026-07-22
+
+### Добавлено
+
+- **Кросс-платформенные команды сессий** — `/sessions` теперь показывает сессии со ВСЕХ платформ (💻CLI, 📱Telegram, 🟣MAX, 🎮Discord, 🌐WebUI, 🔌API Server), не только MAX:
+  - Богатый вывод с эмодзи платформы, превью заголовка и сокращённым ID сессии
+  - `/sessions search <query>` — полнотекстовый поиск по всем платформам
+  - `/resume <id>` автоматически использует флаг `--all` — возобновление любой сессии с любой платформы
+  - Настраивается через `MAX_CROSS_SESSION=true|false` (по умолчанию: true)
+  - Требует `allow_admin_from` в config.yaml для платформы `max` (добавляет MAX ID пользователя), чтобы работал core-флаг `--all`
+- **`send_action()`** — расширенные действия чата: `typing`, `typing_off`, `sending_photo`, `sending_video`, `sending_audio`, `sending_file`, `read`. Заменяет старый `send_typing()`, который теперь делегирует выполнение `send_action()`.
+- **`send_buttons()`** — публичный метод для отправки сообщений с inline-кнопками любых типов: `callback`, `link`, `message`, `request_contact`, `request_geo_location`.
+  - Одна кнопка на ряд (полная ширина)
+  - Текст кнопок автоматически обрезается до лимитов MAX API (40 символов для callback, 64 для link)
+  - Авто-нумерация (`1.`, `2.`, `3.`...) при 3+ кнопках
+  - Опциональное поле `label`: полный текст описания в теле сообщения (никогда не обрезается)
+  - Запасной текст с содержимым кнопок дублируется в теле сообщения
+- **`plugin.yaml`** — добавлена опциональная env-переменная `MAX_CROSS_SESSION`
+
+### Исправлено
+
+- `send_typing` содержал баг двойной сериализации JSON (`json.dumps` оборачивал словарь, который затем снова сериализовал `httpx`) — исправлено передачей словаря напрямую в `json=`.
+
+### Примечания
+
+- Когда `MAX_CROSS_SESSION=false`, `/sessions` и `/resume` возвращаются к стандартному поведению ядра (только сессии MAX)
+- Кросс-платформенное возобновление (`/resume --all`) требует, чтобы MAX ID пользователя был указан в `platforms.max.extra.allow_admin_from` в config.yaml
 
 ## [2.1.3] — 2026-07-17
 
-### Security (audit finalization)
+### Безопасность (завершение аудита)
 
-- **MEDIUM:** Sanitized 5 remaining `error=str(e)` returns in: `edit_message`, `send_image`, `_upload_send`, `_post_interactive`, `_standalone_send` (token/URL leak prevention in outbound methods)
-- **MEDIUM:** Added per-IP rate limiting to webhook handler — 30 req/10s window, auto-cleanup at 1000+ entries
-- **MEDIUM:** Hard 5000-entry cap on `_seen_msgs` dedup dictionary (memory exhaustion prevention under DDoS)
-- **MEDIUM:** Strict validation of clarify callback `choice_idx`: `isdigit()` guard + bounds check (0–256)
-- **LOW:** Removed unused `import hmac` (superseded by `secrets.compare_digest`)
+- **MEDIUM:** Очищены 5 оставшихся `error=str(e)` в: `edit_message`, `send_image`, `_upload_send`, `_post_interactive`, `_standalone_send` (предотвращение утечки токенов/URL в исходящих методах)
+- **MEDIUM:** Добавлено per-IP ограничение скорости для webhook-обработчика — 30 запросов/10с, автоочистка при 1000+ записей
+- **MEDIUM:** Жёсткий лимит в 5000 записей для словаря дедубликации `_seen_msgs` (предотвращение истощения памяти при DDoS)
+- **MEDIUM:** Строгая валидация `choice_idx` в clarify-колбэке: проверка `isdigit()` + проверка границ (0–256)
+- **LOW:** Удалён неиспользуемый `import hmac` (заменён на `secrets.compare_digest`)
 
 ## [2.1.2] — 2026-07-17
 
-### Added
+### Добавлено
 
-- **Tables as Images** (`MAX_TABLE_AS_IMAGE=true`): render pipe-markdown tables as Pillow-generated PNG images with colored status icons:
-  - ✓ Done (green), ✗ Failed (red), ⚠ In review (orange), ◷ Pending (amber), ▶ Scheduled (blue)
-  - Emoji variation selector normalization (U+FE0F/U+FE0E stripping)
-  - Dark header (#1e293b) with white text, alternating row colors
-  - Auto-fallback to text rendering when Pillow is missing
-  - Image upload via two-step API (`POST /uploads` → PUT → token → send)
+- **Таблицы как изображения** (`MAX_TABLE_AS_IMAGE=true`): рендеринг markdown-таблиц как PNG-изображений с цветными иконками статусов:
+  - ✓ Готово (зелёный), ✗ Ошибка (красный), ⚠ На проверке (оранжевый), ◷ Ожидание (янтарный), ▶ Запланировано (синий)
+  - Нормализация вариативных селекторов эмодзи (U+FE0F/U+FE0E)
+  - Тёмный заголовок (#1e293b) с белым текстом, чередующиеся цвета строк
+  - Автоматическое запасное текстовое отображение при отсутствии Pillow
+  - Загрузка изображений через двухшаговое API (`POST /uploads` → PUT → токен → отправка)
 
-### Fixed
+### Исправлено
 
-- **Markdown table rendering:** removed unsupported fenced code blocks (```) and `<pre>` tags — MAX supports neither. Tables now render as inline `code` spans for monospace text, or as PNG images when `MAX_TABLE_AS_IMAGE=true`
-- **Upload domain whitelist:** added `iu.oneme.ru` and `*.oneme.ru` to SSRF allowlist (MAX image CDN)
-- **Emoji rendering in table images:** replaced emoji with proper Unicode symbols that DejaVu Sans renders clearly (16×15px vs 8×8px blobs)
+- **Рендеринг Markdown-таблиц:** удалены неподдерживаемые блоки кода (```) и теги `<pre>` — MAX не поддерживает ни то, ни другое. Таблицы теперь отображаются как inline-блоки `code` для моноширинного текста или как PNG-изображения при `MAX_TABLE_AS_IMAGE=true`
+- **Белый список доменов загрузки:** добавлены `iu.oneme.ru` и `*.oneme.ru` в SSRF-разрешительный список (CDN изображений MAX)
+- **Рендеринг эмодзи в таблицах:** эмодзи заменены на соответствующие Unicode-символы, которые DejaVu Sans отображает чётко (16×15px вместо 8×8px)
 
 ## [2.1.1] — 2026-07-17
 
-### Security (audit + hardening)
+### Безопасность (аудит + усиление защиты)
 
-- **CRITICAL:** Fixed command injection vector in STT subprocess — path now escaped via `shlex.quote()`
-- **CRITICAL:** Added SSRF protection — file upload URLs validated against `*.max.ru` domain whitelist
-- **HIGH:** Disabled `follow_redirects` on authenticated HTTP client (token leak prevention)
-- **HIGH:** Removed `follow_redirects=True` from attachment download methods
-- **HIGH:** Sanitized error messages returned to gateway (no raw exception strings with URLs)
-- **HIGH:** Renamed `_verify_secret` → `_verify_raw_secret`, uses `secrets.compare_digest` for clarity
-- **MEDIUM:** Removed `os.environ` mutation in `_apply_yaml_config` (side-effect risk)
-- **LOW:** Audio cache created with `0700` permissions (voice message privacy)
-- **LOW:** Health endpoint no longer discloses platform name
-- **LOW:** `transcribe_audio.py`: `shlex.quote(model_name)` for defense-in-depth
+- **CRITICAL:** Исправлен вектор внедрения команд в STT-подпроцессе — путь теперь экранируется через `shlex.quote()`
+- **CRITICAL:** Добавлена защита от SSRF — URL загружаемых файлов проверяются по белому списку доменов `*.max.ru`
+- **HIGH:** Отключено `follow_redirects` в аутентифицированном HTTP-клиенте (предотвращение утечки токена)
+- **HIGH:** Удалён `follow_redirects=True` из методов загрузки вложений
+- **HIGH:** Очищены сообщения об ошибках, возвращаемые шлюзу (без сырых строк исключений с URL)
+- **HIGH:** Переименован `_verify_secret` → `_verify_raw_secret`, использует `secrets.compare_digest` для ясности
+- **MEDIUM:** Удалена мутация `os.environ` в `_apply_yaml_config` (риск побочных эффектов)
+- **LOW:** Кэш аудио создаётся с правами `0700` (приватность голосовых сообщений)
+- **LOW:** Health-эндпоинт больше не раскрывает имя платформы
+- **LOW:** `transcribe_audio.py`: `shlex.quote(model_name)` для защиты в глубину
 
 ### CI
 
-- Added `bandit` SAST scan job
-- Added `pip-audit` dependency vulnerability scan job
+- Добавлен SAST-сканер `bandit`
+- Добавлен сканер уязвимостей зависимостей `pip-audit`
 
 ## [2.1.0] — 2026-07-15
 
-### Added
+### Добавлено
 
-- Initial release: MAX messenger platform adapter with STT voice transcription
-- Dual mode: long polling + webhook
-- Recursive media extraction and caching
-- Two-step file upload
-- Message streaming via `edit_message`
-- Smart 4000-char message chunking
-- Inline keyboard buttons (approval, clarify, model picker)
-- Group access control policies
-- Interactive `hermes gateway setup` flow
-- Standalone sender for cron/send_message
-- faster-whisper STT integration
+- Первый релиз: адаптер платформы MAX messenger с STT-транскрипцией голоса
+- Два режима: long polling + webhook
+- Рекурсивное извлечение и кэширование медиа
+- Двухшаговая загрузка файлов
+- Стриминг сообщений через `edit_message`
+- Умное чанкование сообщений по 4000 символов
+- Inline-клавиатуры (approval, clarify, выбор модели)
+- Политики контроля доступа для групп
+- Интерактивный `hermes gateway setup`
+- Самостоятельный отправитель для cron/send_message
+| - Интеграция faster-whisper STT
+
+## [2.5.0] — 2026-07-23
+
+### Добавлено
+
+- **Нативная отправка аудио и видео.** `_standalone_send()` теперь использует `type=audio`/`type=video` для `POST /uploads`. Токен для audio/video приходит в ответе на `/uploads` (не от CDN), что позволяет MAX нативно воспроизводить файлы в чате.
+- **CDN fallback для аудио/видео.** `_upload()` при ошибке CDN (аудио/видео) падает на `type=file` — файл хотя бы доставляется как скачиваемый.
+- **Ретрай при `attachment.not.ready`.** В `_standalone_send()` — до 3 попыток с паузой 5с (видео нужно время на транскодинг).
+- **SSRF whitelist.** Защита загрузок: проверка URL по белому списку `.okcdn.ru`, `.cdn-max.ru`, `.oneme.ru`, `.max.ru`.
+
+### Исправлено
+
+- **`_upload()` — токен для аудио/видео.** Раньше метод ждал токен от CDN (который возвращает XML `<retval>1</retval>`). Теперь корректно использует `token` из ответа `POST /uploads`.
+- **Проверка ответа MAX API.** Сообщения с `ok=false` больше не игнорируются — проверяется наличие поля `message`.
+- **CDN token extraction.** Для `type=image` CDN возвращает токен в `photos[photoId][token]`, а не в плоском `token`. Добавлен парсинг обоих форматов.
+
+### Изменено
+
+- **plugin.yaml** bumped to `2.5.0`
+- README.md / README_EN.md — новый раздел «Нативная доставка файлов» с протоколом и ограничениями.
+- **Новый API-домен:** документация MAX теперь рекомендует `platform-api2.max.ru` (обратно совместимо).
