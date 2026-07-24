@@ -300,6 +300,44 @@ class MaxAdapter(BasePlatformAdapter):
         self._model_picker_state: Dict[str, dict] = {}    # chat_id → picker state
 
     # ═════════════════════════════════════════════════════════════════════
+    # Bot commands (PATCH /me/commands)
+    # ═════════════════════════════════════════════════════════════════════
+
+    async def _set_bot_commands(self) -> bool:
+        """Register slash commands via MAX API PATCH /me/commands.
+
+        Analogous to Telegram's setMyCommands.
+        MAX supports up to 32 commands.
+        """
+        commands = [
+            {"name": "start", "description": "Запустить бота"},
+            {"name": "new", "description": "Новая сессия"},
+            {"name": "status", "description": "Статус сессии"},
+            {"name": "model", "description": "Выбрать модель"},
+            {"name": "resume", "description": "Возобновить сессию"},
+            {"name": "sessions", "description": "Список сессий"},
+            {"name": "help", "description": "Помощь"},
+            {"name": "stop", "description": "Остановить процессы"},
+            {"name": "config", "description": "Конфигурация"},
+            {"name": "restart", "description": "Перезапустить gateway"},
+        ]
+        try:
+            resp = await self._http_client.patch(
+                f"{MAX_API_BASE}/me/commands",
+                json={"commands": commands},
+                timeout=httpx.Timeout(10.0),
+            )
+            if resp.status_code == 200:
+                logger.info("MAX: registered %d slash commands", len(commands))
+                return True
+            else:
+                logger.warning("MAX: failed to set commands: %s", resp.status_code)
+                return False
+        except Exception as e:
+            logger.warning("MAX: error setting commands: %s", e)
+            return False
+
+    # ═════════════════════════════════════════════════════════════════════
     # Connection lifecycle
     # ═════════════════════════════════════════════════════════════════════
 
@@ -330,6 +368,11 @@ class MaxAdapter(BasePlatformAdapter):
             if resp.status_code == 200:
                 d = resp.json()
                 logger.info("MAX: connected as @%s (id=%s)", d.get("username", "?"), d.get("user_id"))
+                # Register slash commands via PATCH /me/commands
+                try:
+                    await self._set_bot_commands()
+                except Exception as cmd_err:
+                    logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
             else:
                 logger.warning("MAX: /me returned %s", resp.status_code)
         except Exception as e:
