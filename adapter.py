@@ -1936,6 +1936,21 @@ class MaxAdapter(BasePlatformAdapter):
             logger.error("MAX: edit_message failed: %s", e)
             return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
 
+    async def delete_message(self, chat_id: str, message_id: str) -> SendResult:
+        """Delete a message by ID."""
+        if not self._http_client:
+            return SendResult(success=False, error="Not connected")
+        try:
+            resp = await self._http_client.delete(
+                f"{MAX_API_BASE}/messages",
+                params={"message_id": message_id},
+            )
+            resp.raise_for_status()
+            return SendResult(success=True, message_id=message_id)
+        except Exception as e:
+            logger.error("MAX: delete_message failed: %s", e)
+            return SendResult(success=False, error="Delete failed (see logs)", retryable=True)
+
     async def send_image(
         self, chat_id: str, image_url: str,
         caption: Optional[str] = None,
@@ -2740,6 +2755,7 @@ class MaxAdapter(BasePlatformAdapter):
         Formats:
           model:provider:{slug}  — provider selected, show models
           model:pick:{model}:{provider} — model selected, switch
+          model:page:{provider}:{page} — page navigation
           model:back — back to provider list
         """
         # Build the correct scoped_chat matching how send_model_picker stores state.
@@ -2750,22 +2766,36 @@ class MaxAdapter(BasePlatformAdapter):
         else:
             scoped_chat = f"user:{user_id}"
 
-        parts = data.split(":", 2)
+        parts = data.split(":", 3)
 
         if len(parts) >= 3 and parts[1] == "provider":
             # Provider selected
             provider_slug = parts[2]
             state = self._model_picker_state.get(scoped_chat)
 
-            msg_id = state.get("msg_id", "") if state else ""
+            msg_id = state.get("provider_msg_id", "") if state else ""
             await self._on_model_provider_selected(scoped_chat, provider_slug, msg_id)
             return None
 
-        if len(parts) >= 3 and parts[1] == "pick" and len(parts) == 3:
-            # Model selected — parts[2] = "{model}:{provider}"
-            rest = parts[2].rsplit(":", 1)
-            if len(rest) == 2:
-                model_id, provider_slug = rest
+        if len(parts) >= 4 and parts[1] == "page":
+            # Page navigation
+            provider_slug = parts[2]
+            try:
+                page = int(parts[3])
+            except ValueError:
+                page = 0
+            state = self._model_picker_state.get(scoped_chat)
+            if state:
+                await self._on_model_page_selected(scoped_chat, provider_slug, page)
+            return None
+
+        if len(parts) >= 3 and parts[1] == "pick":
+            # Model selected
+            # Format: model:pick:{model}:{provider}
+            # parts[2] = model, parts[3] = provider (if present)
+            model_id = parts[2]
+            provider_slug = parts[3] if len(parts) >= 4 else ""
+            if provider_slug:
                 return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
 
         if data == "model:back":
@@ -2835,7 +2865,7 @@ class MaxAdapter(BasePlatformAdapter):
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
             self._model_picker_state[str(chat_id)] = {
-                "msg_id": result.message_id,
+                "provider_msg_id": result.message_id,  # ID сообщения с провайдерами (текст+кнопки)
                 "providers": providers,
                 "session_key": session_key,
                 "on_model_selected": on_model_selected,
@@ -2845,9 +2875,9 @@ class MaxAdapter(BasePlatformAdapter):
         return result
 
     async def _on_model_provider_selected(
-        self, chat_id: str, provider_slug: str, message_id: str
+        self, chat_id: str, provider_slug: str, message_id: str, page: int = 0, is_pagination: bool = False
     ) -> None:
-        """Step 2: Show models for the selected provider."""
+        """Step 2: Show models for the selected provider (with pagination)."""
         state = self._model_picker_state.get(str(chat_id))
         if not state:
             return
@@ -2857,11 +2887,26 @@ class MaxAdapter(BasePlatformAdapter):
         if not provider:
             return
 
-        models = provider.get("models", [])[:15]  # Max 15 models
+        all_models = provider.get("models", [])
         provider_name = provider.get("name", provider_slug)
 
+        # Pagination: 15 models per page
+        PAGE_SIZE = 15
+        total_pages = max(1, (len(all_models) + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pages - 1))
+        start = page * PAGE_SIZE
+        models = all_models[start:start + PAGE_SIZE]
+
+        # Update state with current page
+        state["selected_provider"] = provider_slug
+        state["model_page"] = page
+        state["model_total_pages"] = total_pages
+        self._model_picker_state[str(chat_id)] = state
+
+        # Header with page indicator
+        page_info = f" (стр. {page + 1}/{total_pages})" if total_pages > 1 else ""
         text = (
-            f"⚙ **{provider_name}** models\n\n"
+            f"⚙ **{provider_name}** models{page_info}\n\n"
             f"Select a model:"
         )[:MAX_MESSAGE_LENGTH]
 
@@ -2880,6 +2925,24 @@ class MaxAdapter(BasePlatformAdapter):
                 "payload": f"model:pick:{m}:{provider_slug}",
             }])
 
+        # Pagination buttons
+        if total_pages > 1:
+            nav_row: List[Dict[str, str]] = []
+            if page > 0:
+                nav_row.append({
+                    "type": "callback",
+                    "text": "⬅ Prev",
+                    "payload": f"model:page:{provider_slug}:{page - 1}",
+                })
+            if page < total_pages - 1:
+                nav_row.append({
+                    "type": "callback",
+                    "text": "Next ➡",
+                    "payload": f"model:page:{provider_slug}:{page + 1}",
+                })
+            if nav_row:
+                buttons.append(nav_row)
+
         # Add "← Back" button
         buttons.append([{
             "type": "callback",
@@ -2888,13 +2951,48 @@ class MaxAdapter(BasePlatformAdapter):
         }])
 
         # Edit the original message to show models
-        await self.edit_message(chat_id, message_id, text)
-        # Send new message with model buttons
-        await self._post_interactive(chat_id, "\u200b", buttons)  # zero-width space as body
+        if is_pagination:
+            # Pagination: delete old model message, send new one with updated page counter
+            model_msg_id = state.get("model_msg_id", "")
+            if model_msg_id:
+                # Delete old model message (text + buttons)
+                await self.delete_message(chat_id, model_msg_id)
+                # Send new message with models (text + buttons together)
+                result = await self._post_interactive(chat_id, text, buttons)
+                if result.success:
+                    state["model_msg_id"] = result.message_id
+                    self._model_picker_state[str(chat_id)] = state
+            else:
+                # Fallback: send new message
+                result = await self._post_interactive(chat_id, text, buttons)
+                if result.success:
+                    state["model_msg_id"] = result.message_id
+                    self._model_picker_state[str(chat_id)] = state
+        else:
+            # Initial display: send new message with models (text + buttons together)
+            model_msg_result = await self._post_interactive(chat_id, text, buttons)
+            # Store model message ID for pagination (this message has both text and buttons)
+            if model_msg_result.success:
+                state["model_msg_id"] = model_msg_result.message_id
+                self._model_picker_state[str(chat_id)] = state
 
-        # Update state
-        state["selected_provider"] = provider_slug
-        self._model_picker_state[str(chat_id)] = state
+    async def _on_model_page_selected(
+        self, chat_id: str, provider_slug: str, page: int
+    ) -> None:
+        """Handle page navigation in model picker."""
+        state = self._model_picker_state.get(str(chat_id))
+        if not state:
+            return
+
+        # Get model message ID
+        model_msg_id = state.get("model_msg_id", "")
+        if not model_msg_id:
+            # Fallback: show from scratch
+            await self._on_model_provider_selected(chat_id, provider_slug, "", page)
+            return
+
+        # Pass model_msg_id as message_id and is_pagination=True
+        await self._on_model_provider_selected(chat_id, provider_slug, model_msg_id, page, is_pagination=True)
 
     async def _on_model_picked(
         self, chat_id: str, model_id: str, provider_slug: str, user_id: str,
@@ -2903,6 +3001,15 @@ class MaxAdapter(BasePlatformAdapter):
         state = self._model_picker_state.pop(str(chat_id), None)
         if not state:
             return None
+
+        # Delete both model and provider messages
+        model_msg_id = state.get("model_msg_id", "")
+        if model_msg_id:
+            await self.delete_message(chat_id, model_msg_id)
+
+        provider_msg_id = state.get("provider_msg_id", "")
+        if provider_msg_id:
+            await self.delete_message(chat_id, provider_msg_id)
 
         on_model_selected = state.get("on_model_selected")
         if not on_model_selected:
@@ -2913,19 +3020,10 @@ class MaxAdapter(BasePlatformAdapter):
         except Exception as e:
             result_text = f"❌ Error switching model: {e}"
 
-        source = self.build_source(
-            chat_id=f"user:{user_id}",
-            chat_name=user_id,
-            chat_type="dm",
-            user_id=user_id,
-            user_name=user_id,
-        )
-        return MessageEvent(
-            text=result_text,
-            message_type=MessageType.TEXT,
-            source=source,
-            internal=True,
-        )
+        # Send confirmation message to user
+        await self.send(chat_id, result_text)
+
+        return None
 
     async def _on_model_back(self, chat_id: str, user_id: str) -> None:
         """Go back to provider selection."""
@@ -2967,7 +3065,22 @@ class MaxAdapter(BasePlatformAdapter):
         if row:
             buttons.append(row)
 
-        await self._post_interactive(chat_id, text, buttons)
+        # Delete old messages (provider + model buttons)
+        model_msg_id = state.get("model_msg_id", "")
+        if model_msg_id:
+            await self.delete_message(chat_id, model_msg_id)
+
+        provider_msg_id = state.get("provider_msg_id", "")
+        if provider_msg_id:
+            await self.delete_message(chat_id, provider_msg_id)
+
+        # Send fresh provider message
+        result = await self._post_interactive(chat_id, text, buttons)
+
+        # Store new provider message ID for next cleanup
+        if result.success:
+            state["provider_msg_id"] = result.message_id
+            self._model_picker_state[str(chat_id)] = state
 
     # ═════════════════════════════════════════════════════════════════════
     # Cross-platform session commands
