@@ -1387,6 +1387,8 @@ class MaxAdapter(BasePlatformAdapter):
             """Convert raw cell text to (display_text, color).
 
             Emoji → Unicode symbols that DejaVu Sans renders properly.
+            Markdown styling (**bold**, *italic*, `code`) is preserved
+            and rendered at draw time via segment parser.
             Status cells get semantic colors.
 
             NOTE: MAX may append U+FE0F (emoji VS-16) to emoji chars.
@@ -1435,6 +1437,7 @@ class MaxAdapter(BasePlatformAdapter):
 
         try:
             from PIL import Image, ImageDraw, ImageFont
+            from wcwidth import wcswidth
         except ImportError:
             logger.warning("MAX: Pillow not installed, cannot render table as image")
             return None
@@ -1443,7 +1446,6 @@ class MaxAdapter(BasePlatformAdapter):
         CELL_PAD_X = 22
         CELL_PAD_Y = 14
         LINE_WIDTH = 2
-        MIN_COL_WIDTH = 85
         FONT_SIZE = 18
         HEADER_FONT_SIZE = 20
 
@@ -1454,37 +1456,234 @@ class MaxAdapter(BasePlatformAdapter):
             font_bold = ImageFont.truetype(
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", HEADER_FONT_SIZE
             )
+            font_italic = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", FONT_SIZE
+            )
+            font_code = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", FONT_SIZE - 2
+            )
         except (IOError, OSError):
             font = ImageFont.load_default()
             font_bold = font
+            font_italic = font
+            font_code = font
 
-        # Measure cell widths in pixels
-        data_rows = cells_info[1:]
-        header = cells_info[0]  # list of (text, color) tuples
+        from PIL import ImageDraw as _ImageDraw
+        _tmp_img = Image.new("RGB", (1, 1))
+        _tmp_draw = _ImageDraw.Draw(_tmp_img)
 
-        px_widths = [MIN_COL_WIDTH] * ncols
-        for row in cells_info:
-            for i, (cell_text, _color) in enumerate(row):
-                if i >= ncols:
+        import re as _md_re
+
+        def _strip_md_plain(text: str) -> str:
+            """Strip markdown formatting, return plain text for measurement."""
+            t = _md_re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+            t = _md_re.sub(r'\*(.+?)\*', r'\1', t)
+            t = _md_re.sub(r'`(.+?)`', r'\1', t)
+            return t
+
+        def _parse_md_segments(text: str) -> list:
+            """Parse inline markdown into [(text, style_key), ...].
+            style_key: 'bold', 'italic', 'code', or 'plain'.
+            """
+            pattern = r'(\*\*.+?\*\*|`.+?`|(?<!\*)\*.+?\*(?!\*))'
+            parts = _md_re.split(pattern, text)
+            result = []
+            for p in parts:
+                if not p:
                     continue
-                bbox = font.getbbox(cell_text[:40])
-                cw = (bbox[2] - bbox[0]) + CELL_PAD_X * 2
-                px_widths[i] = max(px_widths[i], cw)
+                if p.startswith('**') and p.endswith('**'):
+                    result.append((p[2:-2], 'bold'))
+                elif p.startswith('*') and p.endswith('*') and not p.startswith('**'):
+                    result.append((p[1:-1], 'italic'))
+                elif p.startswith('`') and p.endswith('`'):
+                    result.append((p[1:-1], 'code'))
+                else:
+                    result.append((p, 'plain'))
+            return result
 
-        # Cap total width at 860px for mobile retina
+        def _seg_font(style_key: str):
+            """Return the font for a given style key."""
+            if style_key == 'bold':
+                return font_bold
+            elif style_key == 'italic':
+                return font_italic
+            elif style_key == 'code':
+                return font_code
+            return font
+
+        def _seg_width(text: str, style_key: str) -> int:
+            """Measure pixel width of a styled segment."""
+            return int(_tmp_draw.textlength(text, font=_seg_font(style_key)))
+
+        def _tokenize_md(text: str) -> list:
+            """Split markdown text into [(word, style_key), ...] tokens."""
+            tokens = []
+            for seg_text, style_key in _parse_md_segments(text):
+                for i, w in enumerate(seg_text.split()):
+                    tokens.append((w, style_key))
+            return tokens
+
+        def _wrap_md_text(cell_text: str, max_px_width: int) -> list:
+            """Soft-wrap markdown text by tokens.
+            Returns list of token lists: [[(word, style), ...], ...]
+            """
+            tokens = _tokenize_md(cell_text)
+            if not tokens:
+                return [[('', 'plain')]]
+            avail = max(10, max_px_width - CELL_PAD_X * 2)
+            lines = []
+            cur = []
+            cur_w = 0
+            for word, sty in tokens:
+                ww = _seg_width(word, sty)
+                if not cur:
+                    cur = [(word, sty)]
+                    cur_w = ww
+                elif cur_w + _seg_width(' ', 'plain') + ww <= avail:
+                    cur.append((word, sty))
+                    cur_w += _seg_width(' ', 'plain') + ww
+                else:
+                    lines.append(cur)
+                    cur = [(word, sty)]
+                    cur_w = ww
+            if cur:
+                lines.append(cur)
+            return lines if lines else [[('', 'plain')]]
+
+        def _text_px_width(text: str, font: ImageFont.FreeTypeFont) -> int:
+            """Get pixel width of text using draw.textlength (Pillow 8+).
+            Falls back to wcswidth*0.6 only as last resort."""
+            try:
+                # Create a temporary draw to measure accurately
+                from PIL import ImageDraw
+                tmp_img = Image.new("RGB", (1, 1))
+                tmp_draw = ImageDraw.Draw(tmp_img)
+                return int(tmp_draw.textlength(text, font=font))
+            except Exception:
+                try:
+                    raw_width = wcswidth(text)
+                    return int(raw_width * 0.6)
+                except Exception:
+                    bbox = font.getbbox(text)
+                    return bbox[2] - bbox[0]
+
+        def _get_line_height(this_font: ImageFont.FreeTypeFont) -> int:
+            """Get single line height in pixels for a font."""
+            try:
+                bbox = this_font.getbbox("Ag")
+                return bbox[3] - bbox[1]
+            except Exception:
+                return 18
+
+        line_h = _get_line_height(font)
+        line_h_bold = _get_line_height(font_bold)
+
+        def _wrap_cell_text(cell_text: str, max_px_width: int, use_font=None) -> list:
+            """Soft-wrap cell text by words to fit max_px_width.
+
+            Args:
+                cell_text: Text to wrap
+                max_px_width: Available pixel width for the cell (including padding)
+                use_font: Font to use for measurement (default: font for data, font_bold for header)
+
+            Returns list of strings (wrapped lines). Empty input -> [''].
+            """
+            this_font = use_font or font
+            if not cell_text.strip():
+                return [cell_text]
+
+            words = cell_text.split()
+            lines = []
+            current = ""
+            current_w = 0
+            avail = max(10, max_px_width - CELL_PAD_X * 2)
+
+            for word in words:
+                ww = _text_px_width(word, this_font)
+                if not current:
+                    if ww <= avail:
+                        current = word
+                        current_w = ww
+                    else:
+                        lines.append(word)
+                        current = ""
+                        current_w = 0
+                    continue
+                if current_w + _text_px_width(" ", this_font) + ww <= avail:
+                    current += " " + word
+                    current_w += _text_px_width(" " + word, this_font)
+                else:
+                    lines.append(current)
+                    if ww <= avail:
+                        current = word
+                        current_w = ww
+                    else:
+                        lines.append(word)
+                        current = ""
+                        current_w = 0
+            if current:
+                lines.append(current)
+            return lines or [""]
+
+        # Measure each column width by its widest text in pixels.
+        # Header → font_bold, data → font (regular). Cap at 300px.
+        data_rows = cells_info[1:]
+        header = cells_info[0]
+
+        px_widths = []
+        for ci in range(ncols):
+            max_px = 0
+            for ri, row in enumerate(cells_info):
+                if ci < len(row):
+                    cell_text = row[ci][0]
+                    plain_text = _strip_md_plain(cell_text)
+                    this_font = font_bold if ri == 0 else font
+                    txt_w = int(_tmp_draw.textlength(plain_text, font=this_font))
+                    max_px = max(max_px, txt_w)
+            col_w = min(max_px + CELL_PAD_X * 2 + 5, 300)
+            px_widths.append(col_w)
+        # Cap total width at 1200px for mobile retina
         total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
-        if total_w > 860:
-            scale = 860 / total_w
-            px_widths = [max(MIN_COL_WIDTH, int(w * scale)) for w in px_widths]
+        if total_w > 1200:
+            scale = 1200 / total_w
+            px_widths = [max(px_widths[i], int(w * scale)) for i, w in enumerate(px_widths)]
             total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
 
-        # Row heights
-        row_h = int(CELL_PAD_Y * 2 + font.getbbox("Ag")[3] - font.getbbox("Ag")[1])
-        header_h = int(
-            CELL_PAD_Y * 2 + font_bold.getbbox("Ag")[3] - font_bold.getbbox("Ag")[1]
-        )
+        # Calculate row heights with soft-wrap (multi-line support)
+        # Also wrap header — it can have long text too
 
-        img_h = int(header_h + LINE_WIDTH + row_h * len(data_rows) + LINE_WIDTH + 6)
+        # Pre-compute wrapped lines for header
+        hdr_wrapped = []
+        hdr_max_l = 1
+        for ci in range(ncols):
+            cell_text = header[ci][0] if ci < len(header) else ""
+            col_w = px_widths[ci] if ci < len(px_widths) else 100
+            wrapped = _wrap_md_text(cell_text, col_w)
+            hdr_wrapped.append(wrapped)
+            hdr_max_l = max(hdr_max_l, len(wrapped))
+
+        header_h = int(CELL_PAD_Y * 2 + line_h_bold * hdr_max_l)
+
+        # Pre-compute wrapped lines for each data row cell
+        wrapped_data = []  # list of lists of lists: [row_index][col_index] = [line_str, ...]
+        row_max_lines = []
+        for row in data_rows:
+            row_wrapped = []
+            max_l = 1
+            for ci in range(ncols):
+                cell_text = row[ci][0] if ci < len(row) else ""
+                # Use the column's pixel width for wrapping
+                col_w = px_widths[ci] if ci < len(px_widths) else 100
+                wrapped = _wrap_md_text(cell_text, col_w)
+                row_wrapped.append(wrapped)
+                max_l = max(max_l, len(wrapped))
+            wrapped_data.append(row_wrapped)
+            row_max_lines.append(max_l)
+
+        # Row heights: line count + padding
+        row_heights = [int(CELL_PAD_Y * 2 + line_h * ml) for ml in row_max_lines]
+
+        img_h = int(header_h + LINE_WIDTH + sum(row_heights) + LINE_WIDTH + 6)
 
         # ── Draw ──────────────────────────────────────────────────────
         img = Image.new("RGB", (total_w, img_h), "#ffffff")
@@ -1501,17 +1700,20 @@ class MaxAdapter(BasePlatformAdapter):
 
         y = 0
 
-        # --- Header row ---
+        # --- Header row (multi-line markdown) ---
         draw.rectangle([(0, y), (total_w, y + header_h)], fill=HDR_BG)
         cx = LINE_WIDTH
         for ci in range(ncols):
-            cell_text = header[ci][0] if ci < len(header) else ""
-            draw.text(
-                (cx + CELL_PAD_X, y + int((header_h - font_bold.getbbox("Ag")[3]) / 2)),
-                cell_text[:40],
-                font=font_bold,
-                fill=HDR_TEXT,
-            )
+            wrapped_token_lines = hdr_wrapped[ci]
+            nlines = len(wrapped_token_lines)
+            th = line_h_bold * nlines
+            ty = y + int((header_h - th) / 2)
+            for li, token_line in enumerate(wrapped_token_lines):
+                sx = cx + CELL_PAD_X
+                for word, sty in token_line:
+                    f = _seg_font(sty)
+                    draw.text((sx, ty + line_h_bold * li), word, font=f, fill=HDR_TEXT)
+                    sx += draw.textlength(word + ' ', font=f)
             # Vertical divider
             draw.line([(cx, y), (cx, y + header_h)], fill=BORDER, width=LINE_WIDTH)
             cx += px_widths[ci] + LINE_WIDTH
@@ -1522,20 +1724,25 @@ class MaxAdapter(BasePlatformAdapter):
         # Header-bottom separator
         draw.line([(0, y), (total_w, y)], fill=BORDER, width=LINE_WIDTH)
 
-        # --- Data rows ---
+        # --- Data rows (multi-line markdown) ---
         for ri, row in enumerate(data_rows):
+            row_h = row_heights[ri]
             bg = ROW_EVEN if ri % 2 == 0 else ROW_ODD
             draw.rectangle([(0, y), (total_w, y + row_h)], fill=bg)
             cx = LINE_WIDTH
             for ci in range(ncols):
                 cell_text, cell_color = row[ci] if ci < len(row) else ("", None)
                 fill_color = cell_color or TEXT_COLOR
-                draw.text(
-                    (cx + CELL_PAD_X, y + int((row_h - font.getbbox("Ag")[3]) / 2)),
-                    cell_text[:40],
-                    font=font,
-                    fill=fill_color,
-                )
+                wrapped_token_lines = wrapped_data[ri][ci]
+                n_lines = len(wrapped_token_lines)
+                total_text_h = line_h * n_lines
+                text_y_offset = y + int((row_h - total_text_h) / 2)
+                for li, token_line in enumerate(wrapped_token_lines):
+                    sx = cx + CELL_PAD_X
+                    for word, sty in token_line:
+                        f = _seg_font(sty)
+                        draw.text((sx, text_y_offset + line_h * li), word, font=f, fill=fill_color)
+                        sx += draw.textlength(word + ' ', font=f)
                 # Vertical divider
                 draw.line(
                     [(cx, y), (cx, y + row_h)], fill=SEP, width=1,
