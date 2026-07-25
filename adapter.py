@@ -1226,10 +1226,9 @@ class MaxAdapter(BasePlatformAdapter):
                 python = str(Path(venv_path) / "bin" / "python3")
                 if not os.path.exists(python):
                     python = "python3"
-                import shlex
+                script = "import sys; from faster_whisper import WhisperModel; m=WhisperModel('base','cpu','int8'); segs,_=m.transcribe(sys.argv[1],language='ru'); [print(s.text.strip()) for s in segs]"
                 proc = await asyncio.subprocess.create_subprocess_exec(
-                    python, "-c",
-                    f"from faster_whisper import WhisperModel; m=WhisperModel('base','cpu','int8'); segs,_=m.transcribe({shlex.quote(path)},language='ru'); [print(s.text.strip()) for s in segs]",
+                    python, "-c", script, path,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
