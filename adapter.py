@@ -311,7 +311,7 @@ class MaxAdapter(BasePlatformAdapter):
         """
         commands = [
             {"name": "start", "description": "Запустить бота"},
-            {"name": "new", "description": "Новая сессия"},
+            {"name": "new", "description": "Новая сессия (alias: /reset)"},
             {"name": "status", "description": "Статус сессии"},
             {"name": "model", "description": "Выбрать модель"},
             {"name": "resume", "description": "Возобновить сессию"},
@@ -320,6 +320,16 @@ class MaxAdapter(BasePlatformAdapter):
             {"name": "stop", "description": "Остановить процессы"},
             {"name": "config", "description": "Конфигурация"},
             {"name": "restart", "description": "Перезапустить gateway"},
+            {"name": "retry", "description": "Повторить последнее сообщение"},
+            {"name": "undo", "description": "Откатить N ходов (по умолч. 1)"},
+            {"name": "title", "description": "Установить название сессии"},
+            {"name": "branch", "description": "Ветвить сессию (alias: /fork)"},
+            {"name": "compress", "description": "Сжать контекст (alias: /compact)"},
+            {"name": "rollback", "description": "Список или восстановление чекпоинтов"},
+            {"name": "background", "description": "Запустить в фоне (alias: /bg, /btw)"},
+            {"name": "agents", "description": "Активные агенты и задачи (alias: /tasks)"},
+            {"name": "queue", "description": "Очередь промптов (alias: /q)"},
+            {"name": "topic", "description": "Темы в Telegram DM (off|help|session-id)"},
         ]
         try:
             resp = await self._http_client.patch(
