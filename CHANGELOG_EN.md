@@ -2,6 +2,29 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.7.0] — 2026-07-25
+
+### Added
+
+- **MAX Bot API slash commands.** Registration of **20 slash commands** via `PATCH /me/commands` (analogous to Telegram `setMyCommands`). Commands are registered automatically on plugin start after successful token verification.
+  - Core: `/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`
+  - Advanced: `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`
+  - Aliases included in descriptions for discoverability
+  - MAX limit: 32 commands (Telegram: 100)
+
+### Fixed
+
+- **ModelPicker refactor revert.** Removed `model_picker.py`, logic returned to `adapter.py`. The refactor broke plugin initialization — plugin failed to load after extracting ModelPicker to a separate module.
+
+### Documentation
+
+- **README.md / README_EN.md** — new "MAX Slash Commands" section: full list of 20 commands, API limitations, curl example.
+
+### Changed
+
+- `plugin.yaml` bumped to `2.7.0`
+
+
 ## [2.6.0] — 2026-07-23
 
 ### 🐛 Bug Fixes
