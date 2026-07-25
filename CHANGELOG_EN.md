@@ -12,6 +12,20 @@ All notable changes to the hermes-max-integration plugin.
   - Aliases included in descriptions for discoverability
   - MAX limit: 32 commands (Telegram: 100)
 
+- **Improved model picker.** Interactive two-step model selection:
+  - Step 1: provider selection (buttons in row, current marked with ✅)
+  - Step 2: model selection (1 button per row, current marked with ✅)
+  - "← Back" button to return to provider list
+  - Pagination for lists >15 models (counter "p. X/Y")
+
+- **Dynamic column widths for tables.** Calculation MIN_COL_WIDTH = `textlength("abcdefghijklmnopqrst") + 44px` (~240px). Guarantees 20 non-wrappable characters per cell for any font (including bold header).
+
+- **Inline markdown rendering in tables.** Support for `**bold**`, `*italic*`, `` `code` `` in table cells via MAX inline formatting.
+
+- **diagnose.sh — MAX webhook diagnostic script.** Automatic mode detection (webhook vs long polling), port 8646 check, health endpoint, subscription status, token validity, reasoning configuration.
+
+- **Reasoning display configuration.** `fresh_final_after_seconds` parameter (default: 10) — time to display reasoning before final response.
+
 ### Fixed
 
 - **ModelPicker refactor revert.** Removed `model_picker.py`, logic returned to `adapter.py`. The refactor broke plugin initialization — plugin failed to load after extracting ModelPicker to a separate module.
@@ -19,10 +33,14 @@ All notable changes to the hermes-max-integration plugin.
 ### Documentation
 
 - **README.md / README_EN.md** — new "MAX Slash Commands" section: full list of 20 commands, API limitations, curl example.
+- **README.md / README_EN.md** — updated "Tables as Images" section with dynamic column widths and inline markdown descriptions.
+- **README.md / README_EN.md** — added "Webhook Diagnostics" section with `diagnose.sh` reference.
+- **README.md / README_EN.md** — documentation for `fresh_final_after_seconds` reasoning display setting.
 
 ### Changed
 
 - `plugin.yaml` bumped to `2.7.0`
+- `tests/` — added tests for model picker and diagnose.sh
 
 
 ## [2.6.0] — 2026-07-23
