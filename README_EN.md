@@ -29,6 +29,55 @@ Voice transcription (STT), interactive buttons (model picker, approval, clarify)
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
 | 🧪 **Tested** | pytest + pytest-asyncio, **126 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
+| 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
+
+## MAX Slash Commands
+
+The bot supports **20 slash commands**, registered via MAX Bot API (`PATCH /me/commands`). Analogous to Telegram `setMyCommands`.
+
+### Core Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Start the bot |
+| `/new` | New session (alias: `/reset`) |
+| `/status` | Session status |
+| `/model` | Select model |
+| `/resume` | Resume session |
+| `/sessions` | List sessions |
+| `/help` | Help |
+| `/stop` | Stop processes |
+| `/config` | Configuration |
+| `/restart` | Restart gateway |
+
+### Advanced Commands
+
+| Command | Description |
+|---------|-------------|
+| `/retry` | Retry last message |
+| `/undo [N]` | Undo N turns (default 1) |
+| `/title [name]` | Set session title |
+| `/branch [name]` | Branch session (alias: `/fork`) |
+| `/compress` | Compress context (alias: `/compact`) |
+| `/rollback [number]` | List or restore checkpoints |
+| `/background <prompt>` | Run in background (alias: `/bg`, `/btw`) |
+| `/agents` | Active agents and tasks (alias: `/tasks`) |
+| `/queue <prompt>` | Queue prompts (alias: `/q`) |
+| `/topic [off\|help\|session-id]` | Telegram DM topics |
+
+### MAX Limitations
+
+- Maximum **32 commands** (Telegram: 100)
+- Commands are registered automatically on plugin start
+- Registration failures are non-fatal — bot works without commands
+
+### Example
+
+```bash
+# Check registered commands via API
+curl -H "Authorization: $MAX_BOT_TOKEN" \
+  https://platform-api2.max.ru/me/commands
+```
 
 ## Tables as Images in Action
 

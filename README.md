@@ -32,6 +32,55 @@
 | 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. Включено по умолчанию (`MAX_CROSS_SESSION=true`) |
 | 🧪 **Тесты** | pytest + pytest-asyncio, **126 тестов** |
 | 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
+| 📋 **Слеш-команды** | 20 команд (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) через MAX API `PATCH /me/commands` |
+
+## Слеш-команды MAX
+
+Бот поддерживает **20 слеш-команд**, зарегистрированных через MAX Bot API (`PATCH /me/commands`). Аналог Telegram `setMyCommands`.
+
+### Основные команды
+
+| Команда | Описание |
+|---------|----------|
+| `/start` | Запустить бота |
+| `/new` | Новая сессия (alias: `/reset`) |
+| `/status` | Статус сессии |
+| `/model` | Выбрать модель |
+| `/resume` | Возобновить сессию |
+| `/sessions` | Список сессий |
+| `/help` | Помощь |
+| `/stop` | Остановить процессы |
+| `/config` | Конфигурация |
+| `/restart` | Перезапустить gateway |
+
+### Продвинутые команды
+
+| Команда | Описание |
+|---------|----------|
+| `/retry` | Повторить последнее сообщение |
+| `/undo [N]` | Откатить N ходов (по умолч. 1) |
+| `/title [name]` | Установить название сессии |
+| `/branch [name]` | Ветвить сессию (alias: `/fork`) |
+| `/compress` | Сжать контекст (alias: `/compact`) |
+| `/rollback [number]` | Список или восстановление чекпоинтов |
+| `/background <prompt>` | Запустить в фоне (alias: `/bg`, `/btw`) |
+| `/agents` | Активные агенты и задачи (alias: `/tasks`) |
+| `/queue <prompt>` | Очередь промптов (alias: `/q`) |
+| `/topic [off\|help\|session-id]` | Темы в Telegram DM |
+
+### Ограничения MAX
+
+- Максимум **32 команды** (Telegram: 100)
+- Команды регистрируются автоматически при старте плагина
+- Ошибки регистрации не критичны — бот работает без команд
+
+### Пример
+
+```bash
+# Проверить зарегистрированные команды через API
+curl -H "Authorization: $MAX_BOT_TOKEN" \
+  https://platform-api2.max.ru/me/commands
+```
 
 ## Пример: таблицы-картинки в деле
 
