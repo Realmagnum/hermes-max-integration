@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional, Set
+from typing import Any, Dict, List, Optional
 
 import httpx
+from gateway.config import PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent
 
 logger = logging.getLogger(__name__)
@@ -22,10 +23,5 @@ class MaxBaseMixin(BasePlatformAdapter):
     _running: bool
     _stop: asyncio.Event
     _background_tasks: set[asyncio.Task]
-    
-    @property
-    def http_client(self) -> httpx.AsyncClient:
-        """Get the HTTP client."""
-        if self._http_client is None:
-            raise RuntimeError("HTTP client not initialized")
-        return self._http_client
+
+    # Shared properties and utilities can be added here
