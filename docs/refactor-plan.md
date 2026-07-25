@@ -1,56 +1,44 @@
-# План рефакторинга adapter.py
+# План рефакторинга adapter.py и Roadmap (v2.7.0+)
 
-## Цель
+Этот документ содержит актуализированный план рефакторинга монолита `adapter.py` (~3700 строк кода) и дорожную карту развития (Roadmap). Документ служит контекстом для ИИ-агентов, чтобы продолжать работу в новых сессиях.
 
-Разделить монолитный `adapter.py` (~3100 строк) на модульную структуру. Каждый модуль отвечает за свою зону ответственности.
+## Прогресс (Что уже сделано)
+- [x] **Изоляция баз и структуры:** Создана директория `mixins/`, базовое состояние вынесено в `mixins/base.py`. (Ветка: `feature/refactor-mixins-base`)
+- [x] **Уязвимость STT:** Исправлена критическая логическая уязвимость (использование `shlex.quote` заменено на безопасный `sys.argv[1]`) в `stt_processor.py`. (Ветка: `feature/stt-security-fix`)
+- [x] **Вынесение Table Renderer:** 500 строк логики конвертации Markdown-таблиц в картинки вынесено в `mixins/table_renderer.py`. (Ветка: `feature/refactor-table-renderer`)
+- [x] **Скелеты модулей:** Созданы начальные заготовки для `webhook.py`, `media_upload.py`, `buttons.py`.
 
-## Стратегия: единая feature-ветка
-
-Ветка `feature/refactor-adapter` от `main`. Каждый коммит — один выделенный модуль. После завершения — merge в `main` с тегом.
-
-## План модулей
+## План модулей (Ожидает переноса логики)
 
 ```
 hermes-max-integration/
-├── adapter.py              # тонкая прослойка: импорты + общая логика
+├── adapter.py              # тонкая прослойка (множественное наследование миксинов)
 ├── mixins/
 │   ├── __init__.py
-│   ├── upload.py           # протокол загрузки файлов (POST /uploads, CDN, retry)
-│   ├── buttons.py          # send_buttons, send_action, _post_interactive
-│   ├── sessions.py         # кросс-платформенные сессии (/sessions, /resume)
-│   └── standalone.py       # standalone sender (_standalone_send, _get_token)
-├── tests/
-│   ├── test_upload.py       # тесты вынесены из test_file_send.py
-│   ├── test_buttons.py      # тесты из test_interactive.py
-│   └── ...                  # остальные тесты остаются
+│   ├── base.py             # MaxBaseMixin: базовое состояние (httpx, токен, очереди)
+│   ├── webhook.py          # Обработка aiohttp вебхуков, защита от тайминг-атак
+│   ├── media_upload.py     # POST /uploads, работа с CDN, защита от SSRF
+│   ├── buttons.py          # интерактивные кнопки, выбор моделей (ModelPicker)
+│   ├── stt_processor.py    # faster-whisper STT-распознавание
+│   └── table_renderer.py   # генерация PNG из Markdown-таблиц
 ```
 
-## Очерёдность коммитов
+## Ключевые принципы разработки агентом
 
-| Шаг | Коммит | Что делает | Тесты |
-|-----|--------|-----------|-------|
-| 1 | `refactor: copy adapter.py for blame preservation` | Копия `adapter.py` → временно сохранить | — |
-| 2 | `refactor: extract upload protocol to mixins/upload.py` | POST /uploads, CDN, retry, SSRF whitelist | `pytest tests/` ✅ |
-| 3 | `refactor: extract button logic to mixins/buttons.py` | send_buttons, send_action, _post_interactive | `pytest tests/` ✅ |
-| 4 | `refactor: extract session commands to mixins/sessions.py` | /sessions, /resume, cross-platform | `pytest tests/` ✅ |
-| 5 | `refactor: extract standalone sender to mixins/standalone.py` | _standalone_send, _get_token, media handling | `pytest tests/` ✅ |
-| 6 | `refactor: strip adapter.py to thin facade` | Оставить только общую логику + импорты из mixins | `pytest tests/` ✅ |
-| 7 | `chore: cleanup old adapter.py copy` | Удалить временную копию | — |
+1. **Единая feature-ветка:** Каждый модуль выделяется в своей ветке (например, `feature/refactor-buttons`). Вливание в main происходит через Pull Request.
+2. **Безопасный перенос:** Не переносить код "вслепую". Выделять по одной логической группе, проверять прохождение тестов `pytest tests/`.
+3. **Blame preservation:** При полном разделении файлов стараться сохранять историю строк.
+4. **Тесты:** Синхронно с вынесением логики обновлять соответствующие unit-тесты.
 
-## Ключевые принципы
+## Roadmap (Дорожная карта будущих доработок)
 
-1. **Blame preservation** — `cp` перед вырезанием, не `git mv`. Каждый файл наследует историю своих строк.
-2. **Каждый коммит зелёный** — `pytest tests/` должен проходить после каждого шага.
-3. **Миксины/композиция** — `MaxAdapter` наследует или использует mixins. Миксины предпочтительнее для минимизации изменений в adapter.py.
-4. **Никакого изменения логики** — рефакторинг без изменения поведения. Чистый перенос кода.
-5. **Тесты переносятся вместе с кодом** — если тесты для upload-логики разбросаны, сгруппировать в конце.
+Ниже представлены фичи, которые сделают плагин Enterprise-ready после завершения рефакторинга:
 
-## Формат коммитов
+- [ ] **Рендеринг таблиц 2.0:** Отказ от хардкода путей к системным шрифтам (`/usr/share/fonts/...`). Добавление шрифтов (Inter, Roboto) в `assets/fonts/` и интеграция библиотеки `pilmoji` для автоматической отрисовки нативных Apple-эмодзи вместо текстовых костылей `[OK]`, `[WARN]`.
+- [ ] **Голосовые ответы (TTS):** Добавление возможности агенту отвечать голосовыми сообщениями (генерация аудио через внешние TTS-провайдеры и отправка через метод `send_voice`).
+- [ ] **Реакции (Виртуальные):** Эмуляция реакций на сообщения (так как MAX API их не поддерживает) через временные сообщения (например, эмодзи ⏳), которые удаляются после получения ответа.
+- [ ] **Оптимизация STT (Hardware):** Добавление в README явных требований к ОЗУ (минимум 2-4 ГБ) для `faster-whisper` во избежание OOM.
+- [ ] **Изоляция Тредов (Sessions):** Доработка логики управления сессиями — строгая привязка "Один тред (topic) = Одна сессия агента", чтобы в одном чате можно было вести параллельные дискуссии.
 
-Все коммиты в ветке — `refactor: ...`. Финальный — `chore: cleanup`. Merge в main — без squash (сохранить историю рефакторинга).
-
-## После рефакторинга
-
-```bash
-bash scripts/release.sh v2.5.0
-```
+---
+*Примечание для Агента:* При запуске новой сессии прочитайте этот файл для понимания текущего этапа рефакторинга и вектора развития.
