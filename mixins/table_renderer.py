@@ -262,6 +262,23 @@ class TableRendererMixin(MaxBaseMixin):
                     tokens.append((w, style_key))
             return tokens
 
+        def _break_word(word: str, sty: str, avail: int) -> list:
+            """Break a single word into character-level token lines when it overflows avail."""
+            lines = []
+            cur = []
+            cur_w = 0
+            for ch in word:
+                cw = _seg_width(ch, sty)
+                if cur_w + cw > avail and cur:
+                    lines.append(cur)
+                    cur = []
+                    cur_w = 0
+                cur.append((ch, sty))
+                cur_w += cw
+            if cur:
+                lines.append(cur)
+            return lines
+
         def _wrap_md_text(cell_text: str, max_px_width: int) -> list:
             """Soft-wrap markdown text by tokens.
             Returns list of token lists: [[(word, style), ...], ...]
@@ -276,15 +293,27 @@ class TableRendererMixin(MaxBaseMixin):
             for word, sty in tokens:
                 ww = _seg_width(word, sty)
                 if not cur:
-                    cur = [(word, sty)]
-                    cur_w = ww
+                    if ww > avail:
+                        broken = _break_word(word, sty, avail)
+                        lines.extend(broken[:-1])
+                        cur = broken[-1]
+                        cur_w = sum(_seg_width(ch, sty) for ch, _ in broken[-1])
+                    else:
+                        cur = [(word, sty)]
+                        cur_w = ww
                 elif cur_w + _seg_width(' ', 'plain') + ww <= avail:
                     cur.append((word, sty))
                     cur_w += _seg_width(' ', 'plain') + ww
                 else:
                     lines.append(cur)
-                    cur = [(word, sty)]
-                    cur_w = ww
+                    if ww > avail:
+                        broken = _break_word(word, sty, avail)
+                        lines.extend(broken[:-1])
+                        cur = broken[-1]
+                        cur_w = sum(_seg_width(ch, sty) for ch, _ in broken[-1])
+                    else:
+                        cur = [(word, sty)]
+                        cur_w = ww
             if cur:
                 lines.append(cur)
             return lines if lines else [[('', 'plain')]]
@@ -506,4 +535,3 @@ class TableRendererMixin(MaxBaseMixin):
 
         token = await self._upload(str(out_path), "image")
         return token
-
