@@ -408,7 +408,7 @@ class TableRendererMixin(MaxBaseMixin):
                     this_font = font_bold if ri == 0 else font
                     txt_w = int(_tmp_draw.textlength(plain_text, font=this_font))
                     max_px = max(max_px, txt_w)
-            col_w = min(max_px + CELL_PAD_X * 2 + 5, 300)
+            col_w = min(max_px + CELL_PAD_X * 2 + 5, 400)
             px_widths.append(col_w)
         # Cap total width at 1200px for mobile retina
         total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
@@ -478,10 +478,13 @@ class TableRendererMixin(MaxBaseMixin):
             ty = y + int((header_h - th) / 2)
             for li, token_line in enumerate(wrapped_token_lines):
                 sx = cx + CELL_PAD_X
-                for word, sty in token_line:
+                for idx, (word, sty) in enumerate(token_line):
                     f = _seg_font(sty)
                     draw.text((sx, ty + line_h_bold * li), word, font=f, fill=HDR_TEXT)
-                    sx += draw.textlength(word + ' ', font=f)
+                    if idx < len(token_line) - 1:
+                        sx += draw.textlength(word + ' ', font=f)
+                    else:
+                        sx += draw.textlength(word, font=f)
             # Vertical divider
             draw.line([(cx, y), (cx, y + header_h)], fill=BORDER, width=LINE_WIDTH)
             cx += px_widths[ci] + LINE_WIDTH
@@ -507,10 +510,13 @@ class TableRendererMixin(MaxBaseMixin):
                 text_y_offset = y + int((row_h - total_text_h) / 2)
                 for li, token_line in enumerate(wrapped_token_lines):
                     sx = cx + CELL_PAD_X
-                    for word, sty in token_line:
+                    for idx, (word, sty) in enumerate(token_line):
                         f = _seg_font(sty)
                         draw.text((sx, text_y_offset + line_h * li), word, font=f, fill=fill_color)
-                        sx += draw.textlength(word + ' ', font=f)
+                        if idx < len(token_line) - 1:
+                            sx += draw.textlength(word + ' ', font=f)
+                        else:
+                            sx += draw.textlength(word, font=f)
                 # Vertical divider
                 draw.line(
                     [(cx, y), (cx, y + row_h)], fill=SEP, width=1,
