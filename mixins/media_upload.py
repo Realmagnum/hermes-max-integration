@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from mixins.base import MaxBaseMixin
+from .base import MaxBaseMixin
 
 logger = logging.getLogger(__name__)
 

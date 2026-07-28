@@ -5,7 +5,7 @@ import logging
 import asyncio.subprocess
 from pathlib import Path
 from typing import Optional
-from mixins.base import MaxBaseMixin
+from .base import MaxBaseMixin
 
 logger = logging.getLogger(__name__)
 
