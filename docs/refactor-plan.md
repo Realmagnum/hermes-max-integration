@@ -7,8 +7,7 @@
 ## Текущий статус
 
 **Ветка разработки:** `feature/refactor-mixins-base`
-**Сделано:** базовая структура mixins (базовый класс + заглушки для всех модулей)
-**В процессе:** перенос реализации из `adapter.py` в соответствующие mixins
+**Сделано:** базовая структура mixins, table_renderer (543 строк), media_upload (197 строк со всей логикой upload/CDN), stt_processor (46 строк с реализацией)
 
 ## Стратегия: единая feature-ветка
 
@@ -22,10 +21,10 @@ hermes-max-integration/
 ├── mixins/
 │   ├── __init__.py
 │   ├── base.py             # ✅ MaxBaseMixin — базовое состояние, http_client
-│   ├── table_renderer.py   # ⏳ Рендеринг таблиц (заглушка → из adapter.py)
-│   ├── media_upload.py     # ⏳ Загрузка файлов (POST /uploads, CDN, retry)
+│   ├── table_renderer.py   # ✅ Рендеринг таблиц (543 строк, полная реализация)
+│   ├── media_upload.py     # ✅ Загрузка файлов (POST /uploads, CDN, retry, SSRF)
 │   ├── buttons.py          # ⏳ send_buttons, send_action, _post_interactive
-│   ├── stt_processor.py    # ⏳ Обработка голосовых сообщений (STT)
+│   ├── stt_processor.py    # ✅ Обработка голосовых сообщений (STT, 46 строк)
 │   ├── webhook.py          # ⏳ Вебхук-сервер (aiohttp, подписки)
 │   ├── sessions.py         # ❌ TODO /sessions, /resume, cross-platform
 │   └── standalone.py       # ❌ TODO standalone sender (_standalone_send)
@@ -42,10 +41,10 @@ hermes-max-integration/
 | 1 | `refactor: add base mixin structure for adapter.py` | MaxBaseMixin — базовое состояние, core props | ✅ |
 | 2 | `refactor: add stubs for remaining mixins` | Заглушки для всех модулей с корректными импортами | ✅ |
 | 3 | `fix: use relative imports in all mixins` | `from mixins.base` → `from .base` во всех mixins | ✅ |
-| 4 | `refactor: extract table rendering to table_renderer.py` | Перенос рендеринга таблиц из adapter.py | ❌ |
-| 5 | `refactor: extract upload protocol to media_upload.py` | POST /uploads, CDN, retry, SSRF whitelist | ❌ |
+| 4 | `refactor: extract table rendering to table_renderer.py` | Перенос рендеринга таблиц из adapter.py | ✅ |
+| 5 | `refactor: extract upload protocol to media_upload.py` | POST /uploads, CDN, retry, SSRF whitelist | ✅ |
 | 6 | `refactor: extract button logic to buttons.py` | send_buttons, send_action, _post_interactive | ❌ |
-| 7 | `refactor: extract STT logic to stt_processor.py` | Транскрипция голосовых сообщений | ❌ |
+| 7 | `refactor: extract STT logic to stt_processor.py` | Транскрипция голосовых сообщений | ✅ |
 | 8 | `refactor: extract webhook server to webhook.py` | aiohttp вебхук, подписки | ❌ |
 | 9 | `refactor: extract session commands to sessions.py` | /sessions, /resume, cross-platform | ❌ |
 | 10 | `refactor: extract standalone sender to standalone.py` | _standalone_send, _get_token, media handling | ❌ |

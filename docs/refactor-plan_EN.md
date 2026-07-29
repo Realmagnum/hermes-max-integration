@@ -7,8 +7,7 @@ Split the monolithic `adapter.py` (~3100 lines) into a modular structure. Each m
 ## Current Status
 
 **Dev branch:** `feature/refactor-mixins-base`
-**Done:** base mixin structure (base class + stubs for all modules)
-**In progress:** moving logic from `adapter.py` into respective mixins
+**Done:** base mixin structure, table_renderer (543 lines), media_upload (197 lines with full upload/CDN logic), stt_processor (46 lines with impl)
 
 ## Strategy: single feature branch
 
@@ -22,10 +21,10 @@ hermes-max-integration/
 ├── mixins/
 │   ├── __init__.py
 │   ├── base.py             # ✅ MaxBaseMixin — core state, http_client
-│   ├── table_renderer.py   # ⏳ Table rendering (stub → from adapter.py)
-│   ├── media_upload.py     # ⏳ File upload (POST /uploads, CDN, retry)
+│   ├── table_renderer.py   # ✅ Table rendering (543 lines, full impl)
+│   ├── media_upload.py     # ✅ File upload (POST /uploads, CDN, retry, SSRF)
 │   ├── buttons.py          # ⏳ send_buttons, send_action, _post_interactive
-│   ├── stt_processor.py    # ⏳ Voice message processing (STT)
+│   ├── stt_processor.py    # ✅ Voice message processing (STT, 46 lines)
 │   ├── webhook.py          # ⏳ Webhook server (aiohttp, subscriptions)
 │   ├── sessions.py         # ❌ TODO /sessions, /resume, cross-platform
 │   └── standalone.py       # ❌ TODO standalone sender (_standalone_send)
@@ -42,10 +41,10 @@ hermes-max-integration/
 | 1 | `refactor: add base mixin structure for adapter.py` | MaxBaseMixin — core state, core props | ✅ |
 | 2 | `refactor: add stubs for remaining mixins` | Stubs for all modules with correct imports | ✅ |
 | 3 | `fix: use relative imports in all mixins` | `from mixins.base` → `from .base` across all mixins | ✅ |
-| 4 | `refactor: extract table rendering to table_renderer.py` | Move table rendering from adapter.py | ❌ |
-| 5 | `refactor: extract upload protocol to media_upload.py` | POST /uploads, CDN, retry, SSRF whitelist | ❌ |
+| 4 | `refactor: extract table rendering to table_renderer.py` | Move table rendering from adapter.py | ✅ |
+| 5 | `refactor: extract upload protocol to media_upload.py` | POST /uploads, CDN, retry, SSRF whitelist | ✅ |
 | 6 | `refactor: extract button logic to buttons.py` | send_buttons, send_action, _post_interactive | ❌ |
-| 7 | `refactor: extract STT logic to stt_processor.py` | Voice transcription | ❌ |
+| 7 | `refactor: extract STT logic to stt_processor.py` | Voice transcription | ✅ |
 | 8 | `refactor: extract webhook server to webhook.py` | aiohttp webhook, subscriptions | ❌ |
 | 9 | `refactor: extract session commands to sessions.py` | /sessions, /resume, cross-platform | ❌ |
 | 10 | `refactor: extract standalone sender to standalone.py` | _standalone_send, _get_token, media handling | ❌ |
