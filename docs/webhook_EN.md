@@ -240,7 +240,7 @@ async def webhook_handler(req):
     # 3. JSON parse
     payload = json.loads(body)
 
-    # 4. Build event (dedup, access control, media extraction, STT)
+    # 4. Build event (dedup, access control, media extraction)
     event = await self._build_event(payload)
     if event is None:  # duplicate, bot, unauthorized...
         return 200      # silently ignore

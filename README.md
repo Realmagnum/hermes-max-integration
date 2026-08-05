@@ -3,7 +3,7 @@
 > **⚠️ Двуязычный проект:** Основной язык документации — **русский**. Английский перевод — `README_EN.md`. При изменении этого файла **обязательно** синхронизируйте изменения с `README_EN.md`.
 
 **Плагин-шлюз для подключения Hermes Agent к мессенджеру MAX.**  
-Голосовая транскрипция (STT), интерактивные кнопки (выбор модели, подтверждение команд), отрисовка таблиц в PNG-картинки с цветными иконками, стриминг ответов, загрузка файлов, контроль доступа.
+Голосовая транскрипция (STT ядра Hermes), интерактивные кнопки (выбор модели, подтверждение команд), отрисовка таблиц в PNG-картинки с цветными иконками, стриминг ответов, загрузка файлов, контроль доступа.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Hermes](https://img.shields.io/badge/Hermes-Agent-8A2BE2)](https://hermes-agent.nousresearch.com/docs)
@@ -16,7 +16,7 @@
 |---------|----------|
 | 🟣 **MAX Messenger** | Полная интеграция шлюза с max.ru |
 | 📡 **Два режима** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
-| 🎤 **STT Голос** | Автозагрузка голосовых сообщений → faster-whisper транскрипция |
+| 🎤 **STT Голос** | Автозагрузка голосовых → транскрипция ядром Hermes (core STT) |
 | 🖼️ **Таблицы-картинки** | Отрисовка markdown-таблиц в PNG с цветными иконками статусов |
 | 📝 **Стриминг** | `edit_message` через `PUT /messages` для вывода токенов в реальном времени |
 | 🔘 **Интерактивные кнопки** | callback + link + message + request_contact/geo + модель/approval/clarify |
@@ -133,7 +133,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 |---|---|---|
 | Архитектура | Плагин ✅ | Плагин ✅ |
 | Long Polling | ❌ Только Webhook | ✅ Оба режима |
-| STT Голос | ❌ | ✅ Встроен |
+| STT Голос | ❌ | ✅ Ядро Hermes |
 | Стриминг (edit_message) | ❌ | ✅ |
 | **Таблицы-картинки (PNG)** | ❌ | ✅ **Уникально** |
 | **Интерактивные кнопки** | ❌ | ✅ model picker, approval, clarify |
@@ -142,7 +142,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 | Извлечение медиа | ✅ | ✅ Расширено |
 | Дедупликация сообщений | ❌ | ✅ 300 сек |
 | Тесты | ✅ Базовые | ✅ 94 теста |
-| Настройка | ✅ | ✅ + STT + табл. |
+| Настройка | ✅ | ✅ + табл. |
 
 ## Как это работает (архитектура)
 
@@ -160,7 +160,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
                                             │  │       G   │  │    → PUT → token
                                             │  └───────────┘  │    → POST /messages
                                             │  ┌───────────┐  │
-                                            │  │ STT (опц.) │──┼── faster-whisper
+                                            │  │ STT (ядро) │──┼── core STT (config.yaml)
                                             │  └───────────┘  │
                                             └─────────────────┘
 ```
@@ -182,7 +182,7 @@ hermes plugins install Realmagnum/hermes-max-integration --enable
 
 ```bash
 hermes gateway setup
-# Выбрать: Max (STT)
+# Выбрать: Max
 ```
 
 Или вручную в `~/.hermes/.env`:
@@ -299,8 +299,6 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper (опционально; по умолчанию — интерпретатор шлюза) |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG через Pillow |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
@@ -485,16 +483,25 @@ MAX использует сертификаты Минцифры РФ. Для т
 
 ### Голос не транскрибируется
 
+STT выполняет **ядро Hermes** (не плагин). Проверьте:
+
 ```bash
-grep MAX_STT_ENABLED ~/.hermes/.env
-# Windows:
-~/.hermes/stt-venv/Scripts/pip list | grep faster-whisper
-# Linux/macOS:
-~/.hermes/stt-venv/bin/pip list | grep faster-whisper
-python scripts/transcribe_audio.py --latest
+# 1. Секция stt в конфиге ядра (провайдер, язык)
+grep -A4 "^stt:" ~/.hermes/config.yaml
+# 2. Категория STT в интерактивной настройке
+hermes tools
 ```
 
-> ⚠️ На Windows не вызывайте `python3` напрямую — это заглушка Microsoft Store («Python was not found»). Используйте `python`. Отдельный STT-venv не обязателен: адаптер использует интерпретатор шлюза, где faster-whisper обычно уже установлен.
+Для русского языка задайте в `config.yaml`:
+
+```yaml
+stt:
+  enabled: true
+  language: ru      # дефолт ядра — "en"
+  provider: local   # или openai (gpt-transcribe), groq, xai...
+```
+
+> Аудио скачивает и кэширует адаптер плагина; транскрибирует ядро. При первом использовании провайдера `local` модель (~150 МБ) скачивается автоматически.
 
 ## Структура проекта
 
@@ -505,8 +512,7 @@ hermes-max-integration/
 ├── pyproject.toml           # Python-пакет
 ├── adapter.py               # MaxAdapter (~2600 строк)
 ├── scripts/
-│   ├── apply-core-fix.py      # Опциональный патч core для MEDIA-only
-│   └── transcribe_audio.py  # STT транскрипция
+│   └── apply-core-fix.py      # Опциональный патч core для MEDIA-only
 ├── skills/
 │   └── max-gateway/
 │       └── SKILL.md         # Навык для AI-агента

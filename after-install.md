@@ -1,25 +1,24 @@
-# Плагин Max STT установлен
+# Плагин Max установлен
 
 Что делать дальше:
 
 1. **Установите зависимости времени выполнения:**
    ```bash
    pip install aiohttp httpx
-   # Для STT-транскрипции голоса:
-   pip install faster-whisper
    ```
 
 2. **Настройте платформу:**
    ```bash
    hermes gateway setup
    ```
-   Выберите **Max (STT)**, вставьте `MAX_BOT_TOKEN`, укажите host/port/path вебхука и опциональный секрет.
+   Выберите **Max**, вставьте `MAX_BOT_TOKEN`, укажите host/port/path вебхука и опциональный секрет.
 
-3. **Настройте транскрипцию голоса (опционально):**
-   ```bash
-   python3 -m venv ~/.hermes/stt-venv
-   ~/.hermes/stt-venv/bin/pip install faster-whisper
-   cp scripts/transcribe_audio.py ~/.hermes/scripts/
+3. **Голосовые сообщения:** транскрипция выполняется ядром Hermes (≥ 0.20.0) — плагин только скачивает и кэширует аудио. Для русского языка задайте в `config.yaml`:
+   ```yaml
+   stt:
+     enabled: true
+     language: ru   # дефолт ядра — "en"
+     provider: local
    ```
 
 4. **Выберите режим подключения:**

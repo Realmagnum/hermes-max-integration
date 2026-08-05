@@ -3,7 +3,7 @@
 > **⚠️ Bilingual Project:** The primary documentation language is **Russian**. English translation is in `README_EN.md`. When modifying this file, **always** sync changes with `README.md`.
 
 **Hermes Agent gateway plugin for MAX messenger (max.ru).**  
-Voice transcription (STT), interactive buttons (model picker, approval, clarify), table-as-image rendering (PNG with colored icons), streaming responses, file upload, access control.
+Voice transcription (STT by the Hermes core), interactive buttons (model picker, approval, clarify), table-as-image rendering (PNG with colored icons), streaming responses, file upload, access control.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Hermes](https://img.shields.io/badge/Hermes-Agent-8A2BE2)](https://hermes-agent.nousresearch.com/docs)
@@ -16,7 +16,7 @@ Voice transcription (STT), interactive buttons (model picker, approval, clarify)
 |---------|-------------|
 | 🟣 **Max Messenger** | Full gateway integration with max.ru |
 | 📡 **Dual Mode** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
-| 🎤 **STT Voice** | Auto-download voice messages → faster-whisper transcription |
+| 🎤 **STT Voice** | Auto-download voice → transcription by the Hermes core (core STT) |
 | 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
 | 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
@@ -130,7 +130,7 @@ We tried several approaches before settling on PNG:
 |---|---|---|
 | Architecture | Plugin ✅ | Plugin ✅ |
 | Long Polling | ❌ Webhook only | ✅ Both modes |
-| STT Voice | ❌ | ✅ Built-in |
+| STT Voice | ❌ | ✅ Hermes core |
 | Streaming (edit_message) | ❌ | ✅ |
 | **Tables as Images (PNG)** | ❌ | ✅ **Unique** |
 | **Interactive Buttons** | ❌ | ✅ model picker, approval, clarify |
@@ -139,7 +139,7 @@ We tried several approaches before settling on PNG:
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
 | Tests | ✅ Basic | ✅ 94 tests |
-| Interactive setup | ✅ | ✅ + STT + tables |
+| Interactive setup | ✅ | ✅ + tables |
 
 ## Architecture
 
@@ -157,7 +157,7 @@ We tried several approaches before settling on PNG:
                                             │  │       │   │  │    → PUT → token
                                             │  └───────────┘  │    → POST /messages
                                             │  ┌───────────┐  │
-                                            │  │ STT (opt) │──┼── faster-whisper
+                                            │  │ STT (core) │──┼── core STT (config.yaml)
                                             │  └───────────┘  │
                                             └─────────────────┘
 ```
@@ -179,7 +179,7 @@ Create a bot → pass moderation → **Чат-боты → Перейти → Р
 
 ```bash
 hermes gateway setup
-# Choose: Max (STT)
+# Choose: Max
 ```
 
 Or manually in `~/.hermes/.env`:
@@ -296,8 +296,6 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
-| `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to faster-whisper venv (optional; defaults to the gateway interpreter) |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as Pillow-generated PNG images |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
@@ -399,13 +397,25 @@ Max uses Russian MinCifry CA certificates. For testing: `MAX_INSECURE_SSL=true`
 
 ### Voice not transcribing
 
+STT is performed by the **Hermes core** (not the plugin). Check:
+
 ```bash
-grep MAX_STT_ENABLED ~/.hermes/.env
-~/.hermes/stt-venv/bin/pip list | grep faster-whisper
-python scripts/transcribe_audio.py --latest
+# 1. stt section in the core config (provider, language)
+grep -A4 "^stt:" ~/.hermes/config.yaml
+# 2. STT category in the interactive tools
+hermes tools
 ```
 
-> ⚠️ On Windows, never invoke `python3` directly — it is a Microsoft Store stub ("Python was not found"). Use `python`. A dedicated STT venv is not required: the adapter uses the gateway interpreter, where faster-whisper is usually already installed.
+For Russian, set in `config.yaml`:
+
+```yaml
+stt:
+  enabled: true
+  language: ru      # core default is "en"
+  provider: local   # or openai (gpt-transcribe), groq, xai...
+```
+
+> The plugin adapter downloads and caches audio; the core transcribes it. On first use of the `local` provider the model (~150 MB) is downloaded automatically.
 
 ## Project Structure
 
@@ -416,8 +426,7 @@ hermes-max-integration/
 ├── pyproject.toml           # Python package config
 ├── adapter.py               # MaxAdapter (~2600 lines)
 ├── scripts/
-│   ├── apply-core-fix.py      # Optional core patch for MEDIA-only
-│   └── transcribe_audio.py  # STT transcription
+│   └── apply-core-fix.py      # Optional core patch for MEDIA-only
 ├── skills/
 │   └── max-gateway/
 │       └── SKILL.md         # Agent skill

@@ -2,6 +2,19 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.8.0] — 2026-08-05
+
+### Changed
+
+- **STT moved out of the plugin into the Hermes core (>= 0.20.0).** The plugin no longer transcribes voice itself: the adapter downloads and caches audio, the core transcribes it per the `stt` config in `config.yaml` — providers `local`/`groq`/`openai` (whisper-1, gpt-transcribe)/`mistral`/`xai`/`elevenlabs`, unified language resolution, 🎙️ transcript echo, VAD-based anti-hallucination hardening.
+- Removed `mixins/stt_processor.py` (`STTProcessorMixin`) and `scripts/transcribe_audio.py`; inline transcription removed from `adapter.py` (media is still downloaded and cached for the core).
+- Removed `MAX_STT_ENABLED` / `MAX_STT_VENV` from code, `.env` docs, `plugin.yaml` and the interactive setup; `hermes gateway setup` no longer asks about STT.
+- `plugin.yaml` → `version: 2.8.0`.
+
+### Recommendations
+
+- For Russian, set `stt.language: ru` in `config.yaml` (core default is `"en"`). Configure via `hermes tools` → STT category.
+
 ## [2.7.1] — 2026-08-05
 
 ### Fixed

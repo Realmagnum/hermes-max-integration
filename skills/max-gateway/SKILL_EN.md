@@ -1,15 +1,15 @@
 ---
 name: max-gateway
-description: "Install and configure Hermes Agent access through Max messenger with STT voice transcription."
-version: 2.0.0
+description: "Install and configure Hermes Agent access through Max messenger (voice transcription by the Hermes core)."
+version: 2.1.0
 author: Alexander / Hermes Agent community
 license: MIT
 metadata:
   hermes:
-    tags: [hermes, gateway, messaging, max, chatbot, stt, voice, whisper]
+    tags: [hermes, gateway, messaging, max, chatbot, voice]
 ---
 
-# Max Gateway for Hermes (with STT)
+# Max Gateway for Hermes
 
 Use this skill when a user wants to control Hermes Agent through Max messenger.
 
@@ -31,7 +31,6 @@ If these docs changed, follow the current official docs instead of this skill.
 2. Install plugin dependencies:
    ```bash
    pip install aiohttp httpx
-   pip install faster-whisper  # for STT voice transcription
    ```
 3. Install and enable the plugin:
    ```bash
@@ -69,35 +68,17 @@ If these docs changed, follow the current official docs instead of this skill.
 
 ## Voice Messages (STT)
 
-When the agent receives a message with `[Audio: /path/to/file.ogg]`:
+Transcription is performed by the **Hermes core** (>= 0.20.0) — the plugin only downloads and caches audio:
 
-1. The adapter auto-downloads voice messages to `~/.hermes/audio_cache/`
-2. Transcribe with:
-   ```bash
-   python3 scripts/transcribe_audio.py /path/to/audio.ogg
-   ```
-3. Or for most recent:
-   ```bash
-   python3 scripts/transcribe_audio.py --latest
-   ```
-
-### Models
-
-| Model | Speed (CPU) | Accuracy | Use case |
-|-------|------------|----------|----------|
-| `tiny` | ~0.1s | ★★☆ | Quick test |
-| `base` | ~2-3s | ★★★ | Daily use (default) |
-| `small` | ~5-8s | ★★★★ | Important messages |
-
-Options: `--model tiny|base|small`, `--language ru|auto`
+1. The adapter auto-downloads voice messages to the cache; the core transcribes them per the `stt` config
+2. Core providers: `local` (faster-whisper, free), `groq`, `openai` (whisper-1, gpt-transcribe), `mistral`, `xai`, `elevenlabs`
+3. Setup: `hermes tools` → STT category, or `config.yaml` → `stt` (for Russian — `stt.language: ru`)
 
 ### Pitfalls for STT
 
-- Uses venv at `~/.hermes/stt-venv/` (faster-whisper)
-- `base` model: good accuracy, ~2-3s on CPU. Still mishears complex words.
-- `tiny` model: fast (0.1s), less accurate — expect garbled words
-- Audio files cleaned after 7 days
-- Script timeout: 120s
+- `stt` section in `config.yaml`: `enabled`, `provider`, `language`, `echo_transcripts`
+- The `local` model is downloaded automatically on first use (~150 MB)
+- If no transcript arrives, check `stt.enabled` and the language (`stt.language`); see README → "Voice not transcribing"
 
 ## Pitfalls (general)
 

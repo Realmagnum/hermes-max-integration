@@ -1,25 +1,24 @@
-# Max STT plugin installed
+# Max plugin installed
 
 Next steps:
 
 1. **Install runtime dependencies:**
    ```bash
    pip install aiohttp httpx
-   # For STT voice transcription:
-   pip install faster-whisper
    ```
 
 2. **Configure the platform:**
    ```bash
    hermes gateway setup
    ```
-   Choose **Max (STT)**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and optional secret.
+   Choose **Max**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and optional secret.
 
-3. **Set up voice transcription (optional):**
-   ```bash
-   python3 -m venv ~/.hermes/stt-venv
-   ~/.hermes/stt-venv/bin/pip install faster-whisper
-   cp scripts/transcribe_audio.py ~/.hermes/scripts/
+3. **Voice messages:** transcription is performed by the Hermes core (>= 0.20.0) — the plugin only downloads and caches audio. For Russian, set in `config.yaml`:
+   ```yaml
+   stt:
+     enabled: true
+     language: ru   # core default is "en"
+     provider: local
    ```
 
 4. **Choose connection mode:**
