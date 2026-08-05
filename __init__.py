@@ -1,4 +1,4 @@
-"""Hermes MAX STT Platform Plugin — MAX messenger adapter with voice transcription."""
+"""Hermes MAX Platform Plugin — MAX messenger adapter (voice transcription via Hermes core STT)."""
 try:
     from .adapter import register
 except ImportError:

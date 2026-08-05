@@ -7,7 +7,8 @@ for receiving messages, and the Max Bot REST API for sending responses.
 Architecture:
 - Inbound:  Long polling (GET /updates) OR Webhook (POST /max/webhook) → MessageEvent
 - Outbound: httpx → POST /messages (with chunking for >4000 chars)
-- STT:      Voice messages auto-downloaded → local path → faster-whisper transcription
+- STT:      Voice messages auto-downloaded and cached; transcription is
+            handled by the Hermes core STT pipeline (config.yaml -> stt)
 - Files:    Two-step upload (POST /uploads → PUT file → token → send)
 - Streaming: edit_message via PUT /messages
 
@@ -15,7 +16,6 @@ Configuration in ~/.hermes/.env:
   MAX_BOT_TOKEN (required)
   MAX_WEBHOOK_HOST, MAX_WEBHOOK_PORT, MAX_WEBHOOK_PATH
   MAX_WEBHOOK_SECRET, MAX_ALLOWED_USERS, MAX_ALLOW_ALL_USERS
-  MAX_STT_ENABLED (default: true)
 """
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ import httpx
 from gateway.config import PlatformConfig, Platform
 from .mixins.media_upload import MediaUploadMixin, _ALLOWED_UPLOAD_HOSTS
 from .mixins.table_renderer import TableRendererMixin
-from .mixins.stt_processor import STTProcessorMixin
 from gateway.platforms.base import (
     BasePlatformAdapter,
     MessageEvent,
@@ -67,14 +66,13 @@ DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy rever
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
 
-# STT
+# Audio cache anchor (also parent of table_images dir)
 AUDIO_CACHE_DIR = Path(
     os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))
 ) / "audio_cache"
 
 # Ensure cache dir exists with restricted permissions (voice messages are private)
 AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-DEFAULT_STT_ENABLED = True
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 import json as _json
@@ -169,8 +167,8 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
 
-class MaxAdapter(MediaUploadMixin, TableRendererMixin, STTProcessorMixin, BasePlatformAdapter):
-    """MAX messenger platform adapter with STT voice transcription."""
+class MaxAdapter(MediaUploadMixin, TableRendererMixin, BasePlatformAdapter):
+    """MAX messenger platform adapter (voice transcription via Hermes core STT)."""
 
     def __init__(self, config: PlatformConfig):
         try:
@@ -195,13 +193,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, STTProcessorMixin, BasePl
             os.getenv("MAX_BOT_TOKEN", "")
             or getattr(config, "token", "")
             or extra.get("token", "")
-        )
-
-        # STT
-        self._stt_enabled: bool = _coerce_bool(
-            os.getenv("MAX_STT_ENABLED")
-            or extra.get("stt_enabled", DEFAULT_STT_ENABLED),
-            DEFAULT_STT_ENABLED,
         )
 
         # Table-as-image (requires Pillow)
@@ -793,28 +784,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, STTProcessorMixin, BasePl
             len(media_urls), media_types,
         )
 
-        # Auto-transcribe audio when STT is enabled
-        if self._stt_enabled and media_urls:
-            logger.info(
-                "MAX: STT starting for %s audio file(s) of types %s",
-                len(media_urls), media_types,
-            )
-            stt_text = await self._transcribe_media(media_urls, media_types)
-            if stt_text:
-                text = (text + "\n\n" + stt_text).strip() if text else stt_text
-                logger.info("MAX: audio auto-transcribed: %s...", stt_text[:80])
-            else:
-                logger.warning("MAX: STT returned empty transcription")
-        elif self._stt_enabled and not media_urls and not text:
-            logger.warning(
-                "MAX: empty message with no media — possible undetected voice. "
-                "update_type=%r Update keys: %s, Message keys: %s",
-                update.get("update_type"),
-                list(update.keys()), list(message.keys()),
-            )
-            # Fallback: try direct audio extraction from MAX voice format.
-            # MAX may send voice as message.attachments, message.voice, or
-            # at the update root level instead of body.attachments.
+        # Voice messages: cache any audio attachments so the Hermes core STT
+        # pipeline (config.yaml -> stt) can transcribe them. MAX may send
+        # voice as message.attachments, message.voice, or at the update root
+        # level instead of body.attachments.
+        if not media_urls and not text:
             voice_url = _find_audio_url_direct(update)
             if voice_url:
                 logger.info("MAX: found audio via fallback: %s", _safe_url_for_log(voice_url))
@@ -823,13 +797,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, STTProcessorMixin, BasePl
                 )
                 if cached:
                     audio_path, audio_mtype = cached
-                    stt_text = await self._transcribe_media(
-                        [audio_path], [audio_mtype]
-                    )
-                    if stt_text:
-                        text = stt_text
-                        logger.info("MAX: audio auto-transcribed: %s...", stt_text[:80])
-            if not text:
+                    media_urls.append(audio_path)
+                    media_types.append(audio_mtype)
+                    logger.info("MAX: audio cached (fallback) to %s", audio_path)
+            if not media_urls and not text:
                 logger.warning("MAX: raw update payload: %s",
                     _json.dumps(update, ensure_ascii=False, default=str)[:2048])
 
@@ -844,7 +815,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, STTProcessorMixin, BasePl
                     text = (text + f"\n[Image: {url}]").strip() if text else f"[Image: {url}]"
                 elif atype == "audio":
                     audio_url = payload_att.get("url", "")
-                    if audio_url and self._stt_enabled:
+                    if audio_url:
                         pseudo_att = {"type": "audio", "payload": {"url": audio_url}}
                         cached = await self._cache_audio_attachment(pseudo_att, "audio")
                         if cached:
@@ -2617,10 +2588,6 @@ def _env_enablement() -> Optional[dict]:
     if allow_all:
         extra["allow_all_users"] = _coerce_bool(allow_all, True)
 
-    stt_enabled = os.getenv("MAX_STT_ENABLED", "").strip()
-    if stt_enabled:
-        extra["stt_enabled"] = _coerce_bool(stt_enabled, True)
-
     home = os.getenv("MAX_HOME_CHANNEL", "").strip()
     if home:
         extra["home_channel"] = {
@@ -2652,7 +2619,6 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
         "allowed_users": "MAX_ALLOWED_USERS",
         "allow_all_users": "MAX_ALLOW_ALL_USERS",
         "home_channel": "MAX_HOME_CHANNEL",
-        "stt_enabled": "MAX_STT_ENABLED",
         "group_policy": "MAX_GROUP_POLICY",
         "cross_session": "MAX_CROSS_SESSION",
     }
@@ -2697,7 +2663,7 @@ def interactive_setup() -> None:
         logger.warning("MAX: hermes_cli.setup not available for interactive setup")
         return
 
-    print_header("Max (max.ru) with STT")
+    print_header("Max (max.ru)")
 
     existing_token = get_env_value("MAX_BOT_TOKEN")
     if existing_token:
@@ -2743,9 +2709,8 @@ def interactive_setup() -> None:
             save_env_value("MAX_ALLOWED_USERS", allowed.replace(" ", ""))
 
     print()
-    print_info("🎤 Voice messages (STT)")
-    stt = prompt_yes_no("Enable voice message download for transcription?", True)
-    save_env_value("MAX_STT_ENABLED", "true" if stt else "false")
+    print_info("🎤 Voice messages")
+    print_info("Transcription is handled by the Hermes core STT pipeline (config.yaml → stt); no plugin setting needed.")
 
     print()
     print_success("Max configuration saved to ~/.hermes/.env")
@@ -2758,13 +2723,13 @@ def register(ctx) -> None:
 
     ctx.register_platform(
         name="max",
-        label="Max (STT)",
+        label="Max",
         adapter_factory=lambda cfg: MaxAdapter(cfg),
         check_fn=check_max_requirements,
         validate_config=validate_config,
         is_connected=is_connected,
         required_env=["MAX_BOT_TOKEN"],
-        install_hint="pip install aiohttp httpx; pip install faster-whisper  # for STT",
+        install_hint="pip install aiohttp httpx",
         setup_fn=interactive_setup,
         env_enablement_fn=_env_enablement,
         apply_yaml_config_fn=_apply_yaml_config,
@@ -2790,7 +2755,7 @@ def register(ctx) -> None:
         ctx.register_skill(
             "max-gateway",
             skill_path,
-            description="Install and configure Hermes Agent gateway access through Max messenger with STT.",
+            description="Install and configure Hermes Agent gateway access through Max messenger (voice transcription via Hermes core STT).",
         )
 
 

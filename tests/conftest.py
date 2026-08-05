@@ -20,7 +20,6 @@ def max_config():
         token="test-token",
         extra={
             "token": "test-token",
-            "stt_enabled": True,
         },
     )
 

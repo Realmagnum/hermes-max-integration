@@ -1,12 +1,12 @@
 name: max-platform
-label: Max (STT)
+label: Max
 kind: platform
-version: 2.7.0
+version: 2.8.0
 description: >
-  MAX messenger (max.ru) gateway adapter for Hermes Agent with built-in STT
-  voice transcription and cross-platform session management. Supports both
-  long-polling and webhook. Downloads voice messages and provides local paths
-  for faster-whisper transcription.
+  MAX messenger (max.ru) gateway adapter for Hermes Agent with cross-platform
+  session management. Supports both long-polling and webhook. Downloads and
+  caches voice messages; transcription is provided by the Hermes core STT
+  pipeline (config.yaml → stt), not by the plugin.
 author: Alexander / Hermes Agent community
 license: MIT
 homepage: https://gitea.rmg7.com/agent/hermes-max-integration
@@ -41,9 +41,6 @@ optional_env:
   - name: MAX_HOME_CHANNEL
     description: "Default Max delivery target for cron/send_message, e.g. user:123 or chat:456"
     prompt: "Home channel (e.g. user:95825064)"
-  - name: MAX_STT_ENABLED
-    description: "Enable voice message auto-download for STT transcription (true/false, default: true)"
-    prompt: "Voice message download enabled"
   - name: MAX_TABLE_AS_IMAGE
     description: "Render markdown tables as images via Pillow (true/false, default: false)"
     prompt: "Render tables as images"

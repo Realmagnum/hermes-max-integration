@@ -18,7 +18,6 @@ class MaxBaseMixin(BasePlatformAdapter):
 
     _http_client: Optional[httpx.AsyncClient]
     _token: str
-    _stt_enabled: bool
     _message_queue: asyncio.Queue[MessageEvent]
     _running: bool
     _stop: asyncio.Event
