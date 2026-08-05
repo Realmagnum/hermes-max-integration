@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import os
 from typing import Optional
 from .base import MaxBaseMixin
 
@@ -47,7 +48,7 @@ class TableRendererMixin(MaxBaseMixin):
 
                 if has_separator and len(table_lines) >= 2:
                     # This is a table — convert it
-                    converted = MaxAdapter._render_table(table_lines)
+                    converted = TableRendererMixin._render_table(table_lines)
                     result_lines.append(converted)
                 else:
                     # Not a valid table — keep as-is
@@ -59,31 +60,99 @@ class TableRendererMixin(MaxBaseMixin):
         return '\n'.join(result_lines)
 
     @staticmethod
-    def _render_table(lines: list) -> str:
-        """Render a list of pipe-delimited lines as a monospace table."""
-        # Parse rows (skip separator lines)
-        rows = []
+    def _parse_table_rows(lines: list) -> tuple:
+        """Parse pipe-delimited table lines into rows, handling embedded pipes.
+
+        Strategy: use the first data row (typically the header) to determine
+        the canonical column count, then rejoin any extra splits so all data
+        rows match the header width.
+        Returns (rows: list[list[str]], ncols: int).
+        """
+        import re as _re
+
+        raw_rows = []
         for line in lines:
             if not line.strip():
                 continue
-            # Skip separator rows (|---|---|)
             if all(c in '|-: ' for c in line):
                 continue
-            cells = [c.strip() for c in line.strip('|').split('|')]
-            rows.append(cells)
+            # Split on | that are actual column separators
+            cells_raw = [c.strip() for c in line.strip('|').split('|')]
+            raw_rows.append(cells_raw)
 
-        if not rows:
-            return '\n'.join(lines)
+        if not raw_rows:
+            return [], 0
 
-        # Calculate column widths (cap at 25 chars for mobile)
-        ncols = max(len(r) for r in rows) if rows else 0
+        # Canonical column count = first row's count (should be header)
+        ncols = len(raw_rows[0])
         if ncols == 0:
+            return [], 0
+
+        # Normalize: if a row has MORE cells than ncols, merge extras into the last cell
+        # If a row has FEWER, pad with empty strings
+        rows = []
+        for r in raw_rows:
+            if len(r) == ncols:
+                rows.append(r)
+            elif len(r) > ncols:
+                # Merge excess cells into the last column
+                merged = r[:ncols - 1] + [' | '.join(r[ncols - 1:])]
+                rows.append(merged)
+            else:
+                # Pad with empty strings if fewer
+                rows.append(r + [''] * (ncols - len(r)))
+
+        return rows, ncols
+
+    @staticmethod
+    def _sanitize_cell(text: str) -> str:
+        """Sanitize cell content: escape HTML brackets, replace problematic chars."""
+        t = text.replace('<', '\u2039').replace('>', '\u203a')
+        t = t.replace('|', '\u23d0')  # broken bar as visible pipe alternative
+        t = t.replace('\n', ' ')
+        t = t.replace('\r', '')
+        return t
+
+    @staticmethod
+    def _truncate_cell(text: str, max_len: int = 38) -> str:
+        """Truncate text to max_len with … indicator."""
+        if len(text) <= max_len:
+            return text
+        return text[:max_len - 1] + '…'
+
+    @staticmethod
+    def _insert_soft_breaks(text: str, max_span: int = 15) -> str:
+        """Insert ZWSP (zero-width space) in long strings without spaces.
+
+        Browsers/MAX can break lines at ZWSP points, solving the overflow
+        of URLs, JSON, long numbers without actual truncation.
+        Strings that already contain whitespace are returned as-is.
+        """
+        if ' ' in text or '\t' in text:
+            return text
+        # Don't bother with short strings
+        if len(text) <= max_span:
+            return text
+        # Insert ZWSP every max_span characters
+        parts = []
+        for i in range(0, len(text), max_span):
+            parts.append(text[i:i + max_span])
+        return '\u200b'.join(parts)
+
+    @staticmethod
+    def _render_table(lines: list) -> str:
+        """Render a list of pipe-delimited lines as a monospace table."""
+        rows, ncols = TableRendererMixin._parse_table_rows(lines)
+        if not rows or ncols == 0:
             return '\n'.join(lines)
+
+        # Calculate column widths (cap at 38 chars for mobile)
         widths = [3] * ncols  # minimum width
         for row in rows:
             for i, cell in enumerate(row):
                 if i < ncols:
-                    widths[i] = max(widths[i], min(len(cell), 25))
+                    safe = TableRendererMixin._sanitize_cell(cell)
+                    widths[i] = max(widths[i], min(len(safe), 38))
 
         # Build formatted table.
         # MAX supports inline `code` for monospace. Each line is its own
@@ -95,8 +164,10 @@ class TableRendererMixin(MaxBaseMixin):
             padded = []
             for i in range(ncols):
                 cell = row[i] if i < len(row) else ''
-                cell = cell[:25]
-                padded.append(cell.ljust(widths[i]))
+                safe = TableRendererMixin._sanitize_cell(cell)
+                # Insert soft breaks for long unbroken strings instead of truncating
+                display = TableRendererMixin._insert_soft_breaks(safe, 15)
+                padded.append(display.ljust(widths[i]))
             result.append('`| ' + ' | '.join(padded) + ' |`')
         result.append('`' + sep + '`')
         return '\n'.join(result)
@@ -107,19 +178,8 @@ class TableRendererMixin(MaxBaseMixin):
         Returns upload token on success, None on failure.
         """
         # ── Parse rows ────────────────────────────────────────────────
-        rows = []
-        for line in table_lines:
-            if not line.strip():
-                continue
-            if all(c in '|-: ' for c in line):
-                continue
-            cells = [c.strip() for c in line.strip('|').split('|')]
-            rows.append(cells)
-        if not rows or not rows[0]:
-            return None
-
-        ncols = max(len(r) for r in rows)
-        if ncols == 0:
+        rows, ncols = TableRendererMixin._parse_table_rows(table_lines)
+        if not rows or ncols == 0:
             return None
 
         def _prepare_cell(val: str) -> tuple:
@@ -188,20 +248,43 @@ class TableRendererMixin(MaxBaseMixin):
         FONT_SIZE = 18
         HEADER_FONT_SIZE = 20
 
-        try:
-            font = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE
-            )
-            font_bold = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", HEADER_FONT_SIZE
-            )
-            font_italic = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", FONT_SIZE
-            )
-            font_code = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", FONT_SIZE - 2
-            )
-        except (IOError, OSError):
+        # ── Font resolution: try multiple locations ──
+        # 1) Linux standard path (Debian/Ubuntu dejavu-fonts package)
+        # 2) matplotlib-bundled DejaVu (lazy — avoids ImportError if absent)
+        # 3) Windows system fonts (Segoe UI + Consolas, ship with Windows)
+        # 4) Pillow built-in default (no Cyrillic support)
+        _font_candidates = [
+            ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+             "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+            None,  # placeholder for lazy matplotlib path
+            ("C:\\Windows\\Fonts\\segoeui.ttf",
+             "C:\\Windows\\Fonts\\segoeuib.ttf",
+             "C:\\Windows\\Fonts\\segoeuii.ttf",
+             "C:\\Windows\\Fonts\\consola.ttf"),
+        ]
+        font = font_bold = font_italic = font_code = None
+        for candidate in _font_candidates:
+            try:
+                if candidate is None:
+                    # Lazy: only try matplotlib import now
+                    import matplotlib as _mpl
+                    _mpl_dir = os.path.dirname(_mpl.__file__)
+                    candidate = (
+                        os.path.join(_mpl_dir, "mpl-data", "fonts", "ttf", "DejaVuSans.ttf"),
+                        os.path.join(_mpl_dir, "mpl-data", "fonts", "ttf", "DejaVuSans-Bold.ttf"),
+                        os.path.join(_mpl_dir, "mpl-data", "fonts", "ttf", "DejaVuSerif.ttf"),
+                        os.path.join(_mpl_dir, "mpl-data", "fonts", "ttf", "DejaVuSansMono.ttf"),
+                    )
+                font = ImageFont.truetype(candidate[0], FONT_SIZE)
+                font_bold = ImageFont.truetype(candidate[1], HEADER_FONT_SIZE)
+                font_italic = ImageFont.truetype(candidate[2], FONT_SIZE)
+                font_code = ImageFont.truetype(candidate[3], FONT_SIZE - 2)
+                break  # all four loaded successfully
+            except (IOError, OSError, ImportError):
+                continue
+        if font is None:
             font = ImageFont.load_default()
             font_bold = font
             font_italic = font
@@ -345,53 +428,6 @@ class TableRendererMixin(MaxBaseMixin):
 
         line_h = _get_line_height(font)
         line_h_bold = _get_line_height(font_bold)
-
-        def _wrap_cell_text(cell_text: str, max_px_width: int, use_font=None) -> list:
-            """Soft-wrap cell text by words to fit max_px_width.
-
-            Args:
-                cell_text: Text to wrap
-                max_px_width: Available pixel width for the cell (including padding)
-                use_font: Font to use for measurement (default: font for data, font_bold for header)
-
-            Returns list of strings (wrapped lines). Empty input -> [''].
-            """
-            this_font = use_font or font
-            if not cell_text.strip():
-                return [cell_text]
-
-            words = cell_text.split()
-            lines = []
-            current = ""
-            current_w = 0
-            avail = max(10, max_px_width - CELL_PAD_X * 2)
-
-            for word in words:
-                ww = _text_px_width(word, this_font)
-                if not current:
-                    if ww <= avail:
-                        current = word
-                        current_w = ww
-                    else:
-                        lines.append(word)
-                        current = ""
-                        current_w = 0
-                    continue
-                if current_w + _text_px_width(" ", this_font) + ww <= avail:
-                    current += " " + word
-                    current_w += _text_px_width(" " + word, this_font)
-                else:
-                    lines.append(current)
-                    if ww <= avail:
-                        current = word
-                        current_w = ww
-                    else:
-                        lines.append(word)
-                        current = ""
-                        current_w = 0
-            if current:
-                lines.append(current)
-            return lines or [""]
 
         # Measure each column width by its widest text in pixels.
         # Header → font_bold, data → font (regular). Cap at 300px.
