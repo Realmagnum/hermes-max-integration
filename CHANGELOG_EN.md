@@ -2,6 +2,19 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.7.1] — 2026-08-05
+
+### Fixed
+
+- **STT on Windows: fixed 3 voice-transcription bugs** (in `mixins/stt_processor.py` and `scripts/transcribe_audio.py`):
+  - `python3` on Windows is a Microsoft Store stub ("Python was not found"). Now `Scripts/python.exe` (Windows) / `bin/python3` (Linux) is looked up, then the gateway's own interpreter (`sys.executable`) — a dedicated STT venv is no longer required
+  - `WhisperModel('base','cpu','int8')` — in faster-whisper >=1.x the 3rd positional arg is `device_index`, not `compute_type` → TypeError; fixed with keyword args `device='cpu', compute_type='int8'`
+  - Audio path is passed via `argv` (adapter) / env var instead of embedding into the `-c` source: on Windows `C:\Users\...` broke parsing as a Unicode escape (`unicodeescape` SyntaxError). Command-injection protection preserved — evolution of the `shlex.quote` fix from 2.1.1
+
+### Refactoring
+
+- **Step 7 complete:** STT logic extracted to `mixins/stt_processor.py` (`STTProcessorMixin`) and wired into `MaxAdapter`; the inline `_transcribe_media` method removed from `adapter.py`
+
 ## [2.7.0] — 2026-07-25
 
 ### Added

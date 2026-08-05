@@ -7,7 +7,7 @@ Split the monolithic `adapter.py` (~3100 lines) into a modular structure. Each m
 ## Current Status
 
 **Dev branch:** `feature/refactor-mixins-base`
-**Done:** base mixin structure, table_renderer (543 lines), media_upload (197 lines with full upload/CDN logic), stt_processor (46 lines with impl)
+**Done:** base mixin structure, table_renderer (543 lines), media_upload (197 lines with full upload/CDN logic), stt_processor (46 lines with impl); **step 7 complete** — `STTProcessorMixin` wired into `MaxAdapter`, Windows STT fixes synced (2026-08-05)
 
 ## Strategy: single feature branch
 
@@ -44,7 +44,7 @@ hermes-max-integration/
 | 4 | `refactor: extract table rendering to table_renderer.py` | Move table rendering from adapter.py | ✅ |
 | 5 | `refactor: extract upload protocol to media_upload.py` | POST /uploads, CDN, retry, SSRF whitelist | ✅ |
 | 6 | `refactor: extract button logic to buttons.py` | send_buttons, send_action, _post_interactive | ❌ |
-| 7 | `refactor: extract STT logic to stt_processor.py` | Voice transcription | ✅ |
+| 7 | `refactor: extract STT logic to stt_processor.py` | Voice transcription | ✅ (wired into MaxAdapter, 2026-08-05) |
 | 8 | `refactor: extract webhook server to webhook.py` | aiohttp webhook, subscriptions | ❌ |
 | 9 | `refactor: extract session commands to sessions.py` | /sessions, /resume, cross-platform | ❌ |
 | 10 | `refactor: extract standalone sender to standalone.py` | _standalone_send, _get_token, media handling | ❌ |

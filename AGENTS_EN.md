@@ -33,9 +33,12 @@ When a user gives you this repository and asks to connect Hermes to Max:
    hermes gateway status
    curl http://localhost:8646/health
    ```
-10. For STT (voice transcription), install faster-whisper:
+10. For STT (voice transcription), install faster-whisper. A dedicated venv is **optional** — the adapter automatically falls back to the gateway's own interpreter (`sys.executable`), where faster-whisper is usually already installed:
     ```bash
-    python3 -m venv ~/.hermes/stt-venv
+    python -m venv ~/.hermes/stt-venv
+    # Windows:
+    ~/.hermes/stt-venv/Scripts/pip install faster-whisper
+    # Linux/macOS:
     ~/.hermes/stt-venv/bin/pip install faster-whisper
     cp scripts/transcribe_audio.py ~/.hermes/scripts/
     ```
@@ -43,6 +46,7 @@ When a user gives you this repository and asks to connect Hermes to Max:
     ```bash
     ~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
     ```
+    ⚠️ On Windows, never invoke `python3` directly — it is a Microsoft Store stub ("Python was not found"). Use `python` or the venv interpreter path.
 
 **Important current Max API facts** (checked 2026-07-21):
 - Bot API requests use `Authorization: ***` header; token in query parameters is no longer supported.

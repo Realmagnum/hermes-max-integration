@@ -2,6 +2,19 @@
 
 Все заметные изменения в плагине hermes-max-integration.
 
+## [2.7.1] — 2026-08-05
+
+### Исправлено
+
+- **STT на Windows: исправлены 3 бага транскрибации голосовых сообщений** (в `mixins/stt_processor.py` и `scripts/transcribe_audio.py`):
+  - `python3` на Windows — заглушка Microsoft Store («Python was not found»). Теперь ищется `Scripts/python.exe` (Windows) / `bin/python3` (Linux), затем интерпретатор шлюза (`sys.executable`) — отдельный STT-venv больше не обязателен
+  - `WhisperModel('base','cpu','int8')` — в faster-whisper ≥1.x третий позиционный аргумент это `device_index`, а не `compute_type` → TypeError; исправлено на keyword-аргументы `device='cpu', compute_type='int8'`
+  - Путь к аудио передаётся через `argv` (в адаптере) / env-переменную вместо встраивания в исходник `-c`: на Windows путь `C:\Users\...` ломал разбор как Unicode-escape (`unicodeescape` SyntaxError). Защита от инъекций команд сохранена — эволюция `shlex.quote` из 2.1.1
+
+### Рефакторинг
+
+- **Шаг 7 завершён:** STT-логика вынесена в `mixins/stt_processor.py` (`STTProcessorMixin`) и подключена к `MaxAdapter`; инлайн-метод `_transcribe_media` удалён из `adapter.py`
+
 ## [2.7.0] — 2026-07-25
 
 ### Добавлено

@@ -33,9 +33,12 @@
    hermes gateway status
    curl http://localhost:8646/health
    ```
-10. Для STT (транскрипция голоса) установите faster-whisper:
+10. Для STT (транскрипция голоса) установите faster-whisper. Отдельный venv **опционален** — адаптер автоматически использует интерпретатор шлюза (`sys.executable`), где faster-whisper обычно уже установлен:
     ```bash
-    python3 -m venv ~/.hermes/stt-venv
+    python -m venv ~/.hermes/stt-venv
+    # Windows:
+    ~/.hermes/stt-venv/Scripts/pip install faster-whisper
+    # Linux/macOS:
     ~/.hermes/stt-venv/bin/pip install faster-whisper
     cp scripts/transcribe_audio.py ~/.hermes/scripts/
     ```
@@ -43,6 +46,7 @@
     ```bash
     ~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
     ```
+    ⚠️ На Windows не вызывайте `python3` напрямую — это заглушка Microsoft Store («Python was not found»). Используйте `python` или путь к интерпретатору venv.
 
 **Важные текущие факты о MAX API** (проверено 2026-07-21):
 - Запросы к Bot API используют заголовок `Authorization: ***`; токен в параметрах запроса больше не поддерживается.

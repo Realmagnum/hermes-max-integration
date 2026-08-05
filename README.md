@@ -300,7 +300,7 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
 | `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
+| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper (опционально; по умолчанию — интерпретатор шлюза) |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG через Pillow |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
@@ -487,9 +487,14 @@ MAX использует сертификаты Минцифры РФ. Для т
 
 ```bash
 grep MAX_STT_ENABLED ~/.hermes/.env
+# Windows:
+~/.hermes/stt-venv/Scripts/pip list | grep faster-whisper
+# Linux/macOS:
 ~/.hermes/stt-venv/bin/pip list | grep faster-whisper
-python3 scripts/transcribe_audio.py --latest
+python scripts/transcribe_audio.py --latest
 ```
+
+> ⚠️ На Windows не вызывайте `python3` напрямую — это заглушка Microsoft Store («Python was not found»). Используйте `python`. Отдельный STT-venv не обязателен: адаптер использует интерпретатор шлюза, где faster-whisper обычно уже установлен.
 
 ## Структура проекта
 

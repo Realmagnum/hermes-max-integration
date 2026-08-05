@@ -297,7 +297,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
 | `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to faster-whisper venv |
+| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to faster-whisper venv (optional; defaults to the gateway interpreter) |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as Pillow-generated PNG images |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
@@ -402,8 +402,10 @@ Max uses Russian MinCifry CA certificates. For testing: `MAX_INSECURE_SSL=true`
 ```bash
 grep MAX_STT_ENABLED ~/.hermes/.env
 ~/.hermes/stt-venv/bin/pip list | grep faster-whisper
-python3 scripts/transcribe_audio.py --latest
+python scripts/transcribe_audio.py --latest
 ```
+
+> ⚠️ On Windows, never invoke `python3` directly — it is a Microsoft Store stub ("Python was not found"). Use `python`. A dedicated STT venv is not required: the adapter uses the gateway interpreter, where faster-whisper is usually already installed.
 
 ## Project Structure
 

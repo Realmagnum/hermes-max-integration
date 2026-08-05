@@ -37,6 +37,7 @@ import httpx
 from gateway.config import PlatformConfig, Platform
 from .mixins.media_upload import MediaUploadMixin, _ALLOWED_UPLOAD_HOSTS
 from .mixins.table_renderer import TableRendererMixin
+from .mixins.stt_processor import STTProcessorMixin
 from gateway.platforms.base import (
     BasePlatformAdapter,
     MessageEvent,
@@ -168,7 +169,7 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
 
-class MaxAdapter(MediaUploadMixin, TableRendererMixin, BasePlatformAdapter):
+class MaxAdapter(MediaUploadMixin, TableRendererMixin, STTProcessorMixin, BasePlatformAdapter):
     """MAX messenger platform adapter with STT voice transcription."""
 
     def __init__(self, config: PlatformConfig):
@@ -1203,45 +1204,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, BasePlatformAdapter):
         except Exception as exc:
             logger.warning("MAX: failed to cache document: %s", exc)
             return None
-
-    async def _transcribe_media(self, media_urls: list, media_types: list) -> Optional[str]:
-        """Run STT on cached audio files and return combined transcription."""
-        if not self._stt_enabled:
-            return None
-
-        import asyncio.subprocess
-        transcriptions = []
-        for path, mtype in zip(media_urls, media_types):
-            if not mtype.startswith("audio/"):
-                continue
-            try:
-                venv_path = os.getenv("MAX_STT_VENV",
-                                     str(Path.home() / ".hermes" / "stt-venv"))
-                python = str(Path(venv_path) / "bin" / "python3")
-                if not os.path.exists(python):
-                    python = "python3"
-                import shlex
-                proc = await asyncio.subprocess.create_subprocess_exec(
-                    python, "-c",
-                    f"from faster_whisper import WhisperModel; m=WhisperModel('base','cpu','int8'); segs,_=m.transcribe({shlex.quote(path)},language='ru'); [print(s.text.strip()) for s in segs]",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=120.0
-                )
-                if proc.returncode == 0 and stdout:
-                    transcriptions.append(stdout.decode().strip())
-                elif stderr:
-                    logger.warning("MAX: STT failed: %s", stderr.decode()[:200])
-            except asyncio.TimeoutError:
-                logger.warning("MAX: STT timed out for %s", path)
-            except Exception as e:
-                logger.error("MAX: STT error: %s", e)
-
-        if transcriptions:
-            return "\n".join(transcriptions)
-        return None
 
     @staticmethod
     def _derive_message_type(text: str, media_types: List[str]) -> MessageType:

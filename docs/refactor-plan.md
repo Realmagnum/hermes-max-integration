@@ -7,7 +7,7 @@
 ## Текущий статус
 
 **Ветка разработки:** `feature/refactor-mixins-base`
-**Сделано:** базовая структура mixins, table_renderer (543 строк), media_upload (197 строк со всей логикой upload/CDN), stt_processor (46 строк с реализацией)
+**Сделано:** базовая структура mixins, table_renderer (543 строк), media_upload (197 строк со всей логикой upload/CDN), stt_processor (46 строк с реализацией); **шаг 7 завершён** — `STTProcessorMixin` подключён к `MaxAdapter`, Windows-фиксы STT синхронизированы (2026-08-05)
 
 ## Стратегия: единая feature-ветка
 
@@ -44,7 +44,7 @@ hermes-max-integration/
 | 4 | `refactor: extract table rendering to table_renderer.py` | Перенос рендеринга таблиц из adapter.py | ✅ |
 | 5 | `refactor: extract upload protocol to media_upload.py` | POST /uploads, CDN, retry, SSRF whitelist | ✅ |
 | 6 | `refactor: extract button logic to buttons.py` | send_buttons, send_action, _post_interactive | ❌ |
-| 7 | `refactor: extract STT logic to stt_processor.py` | Транскрипция голосовых сообщений | ✅ |
+| 7 | `refactor: extract STT logic to stt_processor.py` | Транскрипция голосовых сообщений | ✅ (подключён к MaxAdapter, 2026-08-05) |
 | 8 | `refactor: extract webhook server to webhook.py` | aiohttp вебхук, подписки | ❌ |
 | 9 | `refactor: extract session commands to sessions.py` | /sessions, /resume, cross-platform | ❌ |
 | 10 | `refactor: extract standalone sender to standalone.py` | _standalone_send, _get_token, media handling | ❌ |

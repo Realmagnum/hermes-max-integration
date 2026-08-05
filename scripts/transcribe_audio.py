@@ -29,30 +29,46 @@ def find_latest_audio() -> str | None:
 
 def transcribe(file_path: str, model_name: str = "base", language: str | None = "ru") -> str:
     """Transcribe audio file and return text."""
-    venv_python = STT_VENV / "bin" / "python3"
+    # Windows venvs use Scripts/python.exe, POSIX use bin/python3.
+    win_python = STT_VENV / "Scripts" / "python.exe"
+    unix_python = STT_VENV / "bin" / "python3"
+    if win_python.exists():
+        venv_python = win_python
+    elif unix_python.exists():
+        venv_python = unix_python
+    else:
+        # No dedicated STT venv — fall back to the interpreter running us
+        # (the Hermes venv already ships faster-whisper).
+        import sys as _sys
+        venv_python = Path(_sys.executable)
     if not venv_python.exists():
         print(
             "ERROR: STT venv not found. "
-            "Run: python3 -m venv ~/.hermes/stt-venv && "
-            "~/.hermes/stt-venv/bin/pip install faster-whisper",
+            "Run: python -m venv ~/.hermes/stt-venv && "
+            "~/.hermes/stt-venv/Scripts/pip install faster-whisper "
+            "(Windows) or ~/.hermes/stt-venv/bin/pip (Linux)",
             file=sys.stderr,
         )
         sys.exit(1)
 
     import subprocess
 
-    import shlex
-
+    # Audio path travels via env var — embedding it in the -c source is
+    # unsafe on Windows: C:\Users\... backslashes become string escapes
+    # (unicodeescape SyntaxError). {language!r} is safe (repr escaping).
     script = f"""
 from faster_whisper import WhisperModel
 
-model = WhisperModel({shlex.quote(model_name)}, device='cpu', compute_type='int8')
-segments, info = model.transcribe({shlex.quote(file_path)}, language={language!r})
+model = WhisperModel({model_name!r}, device='cpu', compute_type='int8')
+segments, info = model.transcribe(os.environ['STT_AUDIO_PATH'], language={language!r})
 for seg in segments:
     print(seg.text.strip())
 """
     cmd = [str(venv_python), "-c", script]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=120,
+        env={**os.environ, "STT_AUDIO_PATH": file_path},
+    )
     if result.returncode != 0:
         print(f"ERROR: {result.stderr}", file=sys.stderr)
         sys.exit(1)
