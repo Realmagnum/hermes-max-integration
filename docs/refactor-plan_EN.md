@@ -7,7 +7,7 @@ Split the monolithic `adapter.py` (~3100 lines) into a modular structure. Each m
 ## Current Status
 
 **Dev branch:** `feature/refactor-mixins-base`
-**Done:** base mixin structure, table_renderer (543 lines), media_upload (197 lines with full upload/CDN logic); **step 7 cancelled** — STT delegated to the Hermes core v0.20.0, the `stt_processor.py` mixin was removed (2026-08-05)
+**Done: all 10 plan steps ✅ (2026-08-17).** adapter.py: 2997 → 2250 lines; mixins/ ~1630 lines total. **Step 7 cancelled** — STT delegated to the Hermes core v0.20.0, the `stt_processor.py` mixin was removed (2026-08-05). Tests: 129 green, conftest switched to package import of `max.adapter`.
 
 ## Strategy: single feature branch
 
@@ -23,15 +23,15 @@ hermes-max-integration/
 │   ├── base.py             # ✅ MaxBaseMixin — core state, http_client
 │   ├── table_renderer.py   # ✅ Table rendering (543 lines, full impl)
 │   ├── media_upload.py     # ✅ File upload (POST /uploads, CDN, retry, SSRF)
-│   ├── buttons.py          # ⏳ send_buttons, send_action, _post_interactive
+│   ├── buttons.py          # ✅ Buttons: send_buttons, send_action, _post_interactive, approval/clarify
 │   ├── stt_processor.py    # ❌ removed — STT in the Hermes core (v0.20.0+)
-│   ├── webhook.py          # ⏳ Webhook server (aiohttp, subscriptions)
-│   ├── sessions.py         # ❌ TODO /sessions, /resume, cross-platform
-│   └── standalone.py       # ❌ TODO standalone sender (_standalone_send)
+│   ├── webhook.py          # ✅ Webhook server (aiohttp, subscriptions, _verify_raw_secret)
+│   ├── sessions.py         # ✅ /sessions, /resume, cross-platform
+│   └── standalone.py       # ✅ standalone sender (_standalone_send, media)
 ├── tests/
-│   ├── test_upload.py      # ❌ TODO — moved from test_file_send.py
-│   ├── test_buttons.py     # ❌ TODO — moved from test_interactive.py
-│   └── ...                 # remaining tests stay
+│   ├── test_interactive.py # ✅ buttons/actions (13 tests) — separate test_buttons.py not needed
+│   ├── test_file_send.py   # ✅ upload + standalone sender (incl. SSRF)
+│   └── ...                 # conftest: package import of max.adapter (fixed 2026-08-17)
 ```
 
 ## Commit order
@@ -43,12 +43,12 @@ hermes-max-integration/
 | 3 | `fix: use relative imports in all mixins` | `from mixins.base` → `from .base` across all mixins | ✅ |
 | 4 | `refactor: extract table rendering to table_renderer.py` | Move table rendering from adapter.py | ✅ |
 | 5 | `refactor: extract upload protocol to media_upload.py` | POST /uploads, CDN, retry, SSRF whitelist | ✅ |
-| 6 | `refactor: extract button logic to buttons.py` | send_buttons, send_action, _post_interactive | ❌ |
+| 6 | `refactor: extract button logic to buttons.py` | send_buttons, send_action, _post_interactive | ✅ 56f1ed5 |
 | 7 | `refactor: extract STT logic to stt_processor.py` | Voice transcription | ⏭️ superseded — STT in the Hermes core v0.20.0, mixin removed (2026-08-05) |
-| 8 | `refactor: extract webhook server to webhook.py` | aiohttp webhook, subscriptions | ❌ |
-| 9 | `refactor: extract session commands to sessions.py` | /sessions, /resume, cross-platform | ❌ |
-| 10 | `refactor: extract standalone sender to standalone.py` | _standalone_send, _get_token, media handling | ❌ |
-| 11 | `refactor: strip adapter.py to thin facade` | Keep only orchestration + imports from mixins | ❌ |
+| 8 | `refactor: extract webhook server to webhook.py` | aiohttp webhook, subscriptions | ✅ 1a07f87 |
+| 9 | `refactor: extract session commands to sessions.py` | /sessions, /resume, cross-platform | ✅ 06e02f3 |
+| 10 | `refactor: extract standalone sender to standalone.py` | _standalone_send, _get_token, media handling | ✅ 8db4fb7 |
+| 11 | `refactor: strip adapter.py to thin facade` | Keep only orchestration + imports from mixins | ✅ 3de0cf5 |
 
 ## Key principles
 
