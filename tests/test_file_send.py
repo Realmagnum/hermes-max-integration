@@ -193,7 +193,7 @@ class TestStandaloneSend:
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
 
-        with patch.object(adapter, "_standalone_get_token", return_value="tok"):
+        with patch("max.mixins.standalone._standalone_get_token", return_value="tok"):
             with patch("httpx.AsyncClient") as mock_client_cls:
                 mock_client = AsyncMock()
                 mock_client_cls.return_value.__aenter__.return_value = mock_client
@@ -211,7 +211,7 @@ class TestStandaloneSend:
     async def test_standalone_no_token(self):
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="", extra={})
-        with patch.object(adapter, "_standalone_get_token", return_value=""):
+        with patch("max.mixins.standalone._standalone_get_token", return_value=""):
             result = await adapter._standalone_send(pconfig, "user:1", "hi")
             assert "not configured" in (result.get("error", "")).lower()
 
@@ -221,7 +221,7 @@ class TestStandaloneSend:
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
 
-        with patch.object(adapter, "_standalone_get_token", return_value="tok"):
+        with patch("max.mixins.standalone._standalone_get_token", return_value="tok"):
             with patch("httpx.AsyncClient") as mock_client_cls:
                 mock_client = AsyncMock()
                 mock_client_cls.return_value.__aenter__.return_value = mock_client
@@ -251,7 +251,7 @@ class TestStandaloneSSRF:
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
 
-        with patch.object(adapter, "_standalone_get_token", return_value="tok"):
+        with patch("max.mixins.standalone._standalone_get_token", return_value="tok"):
             with patch("httpx.AsyncClient") as mock_client_cls:
                 mock_client = AsyncMock()
                 mock_client_cls.return_value.__aenter__.return_value = mock_client
