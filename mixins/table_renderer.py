@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 import logging
 import os
-from typing import Optional
+
 from .base import MaxBaseMixin
 
 logger = logging.getLogger(__name__)
@@ -170,7 +171,7 @@ class TableRendererMixin(MaxBaseMixin):
         result.append('`' + sep + '`')
         return '\n'.join(result)
 
-    async def _render_table_as_image(self, table_lines: list) -> Optional[str]:
+    async def _render_table_as_image(self, table_lines: list) -> str | None:
         """Render pipe-delimited table lines as a clean PNG and upload to MAX.
 
         Returns upload token on success, None on failure.
@@ -280,7 +281,7 @@ class TableRendererMixin(MaxBaseMixin):
                 font_italic = ImageFont.truetype(candidate[2], FONT_SIZE)
                 font_code = ImageFont.truetype(candidate[3], FONT_SIZE - 2)
                 break  # all four loaded successfully
-            except (IOError, OSError, ImportError):
+            except (OSError, ImportError):
                 continue
         if font is None:
             font = ImageFont.load_default()
@@ -448,7 +449,7 @@ class TableRendererMixin(MaxBaseMixin):
         total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
         if total_w > 1200:
             scale = 1200 / total_w
-            px_widths = [max(px_widths[i], int(w * scale)) for i, w in enumerate(px_widths)]
+            px_widths = [max(w, int(w * scale)) for i, w in enumerate(px_widths)]
             total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
 
         # Calculate row heights with soft-wrap (multi-line support)
@@ -569,7 +570,7 @@ class TableRendererMixin(MaxBaseMixin):
 
         # ── Save & upload ─────────────────────────────────────────────
         import hashlib
-        digest = hashlib.md5(str(table_lines).encode()).hexdigest()[:12]
+        digest = hashlib.md5(str(table_lines).encode(), usedforsecurity=False).hexdigest()[:12]
         out_path = self._table_image_dir / f"table_{digest}.png"
         img.save(out_path, "PNG")
 

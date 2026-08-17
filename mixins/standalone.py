@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
 import httpx
-
 from gateway.config import PlatformConfig
 from gateway.platforms.base import SendResult
 
@@ -67,8 +65,8 @@ async def _standalone_send(
     chat_id: str,
     message: str,
     *,
-    thread_id: Optional[str] = None,
-    media_files: Optional[List[Tuple[str, bool]]] = None,
+    thread_id: str | None = None,
+    media_files: list[tuple[str, bool]] | None = None,
     force_document: bool = False,
 ) -> dict:
     """Standalone sender contract for send_message/cron delivery.
@@ -88,7 +86,7 @@ async def _standalone_send(
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
             # 1. Send text message first
-            last_message_id: Optional[str] = None
+            last_message_id: str | None = None
             if message and message.strip():
                 parts = chat_id.split(":", 1)
                 target_type = parts[0] if len(parts) > 1 else "user"
@@ -102,7 +100,7 @@ async def _standalone_send(
 
             # 2. Upload and send each media file
             for media_item in (media_files or []):
-                media_path, is_voice = media_item if isinstance(media_item, (list, tuple)) else (media_item, False)
+                media_path, _ = media_item if isinstance(media_item, (list, tuple)) else (media_item, False)
                 if not os.path.exists(media_path):
                     logger.warning("MAX: standalone media file not found: %s", media_path)
                     continue
@@ -200,7 +198,7 @@ async def _standalone_send(
                                             # type=image returns: {"photos": {"id": {"token": "..."}}}
                                             photos = upload_data.get("photos", {})
                                             if isinstance(photos, dict):
-                                                for _pid, _pdata in photos.items():
+                                                for _pdata in photos.values():
                                                     if isinstance(_pdata, dict) and _pdata.get("token"):
                                                         file_token = _pdata["token"]
                                                         break

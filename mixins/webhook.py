@@ -5,7 +5,7 @@ import json
 import logging
 import socket as _socket
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
@@ -19,7 +19,7 @@ MAX_API_BASE = "https://platform-api.max.ru"
 WEBHOOK_MAX_BODY_BYTES = 1_048_576  # 1 MB
 
 
-def _verify_raw_secret(body: bytes, secret: str, secret_header: Optional[str]) -> bool:
+def _verify_raw_secret(body: bytes, secret: str, secret_header: str | None) -> bool:
     """Constant-time comparison of webhook secret.
 
     Max sends the raw secret in X-Max-Bot-Api-Secret header (not HMAC).
@@ -73,7 +73,7 @@ class WebhookMixin(MaxBaseMixin):
             return web.json_response({"status": "ok"})
 
         # Rate limiter for webhook (per-IP, in-memory, cleaned every 5 min)
-        _webhook_hits: Dict[str, list] = {}
+        _webhook_hits: dict[str, list] = {}
         _WEBHOOK_LIMIT = 30   # max requests
         _WEBHOOK_WINDOW = 10  # per 10 seconds
 
@@ -129,7 +129,7 @@ class WebhookMixin(MaxBaseMixin):
         # Auto-register webhook if URL is set
         if self._webhook_url:
             try:
-                body: Dict[str, Any] = {
+                body: dict[str, Any] = {
                     "url": self._webhook_url,
                     "update_types": ["message_created", "message_callback", "bot_started", "bot_added"],
                 }

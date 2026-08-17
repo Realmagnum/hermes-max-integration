@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
 
 import httpx
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent
@@ -15,7 +14,7 @@ class MaxBaseMixin(BasePlatformAdapter):
     Holds core state and shared properties.
     """
 
-    _http_client: Optional[httpx.AsyncClient]
+    _http_client: httpx.AsyncClient | None
     _token: str
     _message_queue: asyncio.Queue[MessageEvent]
     _running: bool

@@ -26,27 +26,36 @@ import mimetypes
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-
-from gateway.config import PlatformConfig, Platform
-from .mixins.buttons import ButtonsMixin
-from .mixins.media_upload import MediaUploadMixin, _ALLOWED_UPLOAD_HOSTS  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
-from .mixins.sessions import SessionsMixin
-from .mixins.standalone import _standalone_get_token, _standalone_send  # noqa: F401 — re-export (tests use adapter._standalone_get_token)
-from .mixins.table_renderer import TableRendererMixin
-from .mixins.webhook import WebhookMixin, _verify_raw_secret  # noqa: F401 — re-export (tests use adapter._verify_raw_secret)
+from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
+    SUPPORTED_DOCUMENT_TYPES,
     BasePlatformAdapter,
     MessageEvent,
     MessageType,
     SendResult,
-    SUPPORTED_DOCUMENT_TYPES,
     cache_audio_from_bytes,
-    cache_image_from_bytes,
     cache_document_from_bytes,
+    cache_image_from_bytes,
+)
+
+from .mixins.buttons import ButtonsMixin
+from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
+    _ALLOWED_UPLOAD_HOSTS,
+    MediaUploadMixin,
+)
+from .mixins.sessions import SessionsMixin
+from .mixins.standalone import (  # noqa: F401 — re-export (tests use adapter._standalone_get_token)
+    _standalone_get_token,
+    _standalone_send,
+)
+from .mixins.table_renderer import TableRendererMixin
+from .mixins.webhook import (  # noqa: F401 — re-export (tests use adapter._verify_raw_secret)
+    WebhookMixin,
+    _verify_raw_secret,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,7 +97,7 @@ def _safe_url_for_log(url: str) -> str:
     return url
 
 
-def _find_audio_url_direct(obj: Any, depth: int = 0) -> Optional[str]:
+def _find_audio_url_direct(obj: Any, depth: int = 0) -> str | None:
     """Recursively search for an audio/voice download URL in a MAX update.
 
     Searches common MAX fields: message.attachments, .voice, .audio,
@@ -127,7 +136,7 @@ def _find_audio_url_direct(obj: Any, depth: int = 0) -> Optional[str]:
     return None
 
 
-def _parse_list(value: str) -> List[str]:
+def _parse_list(value: str) -> list[str]:
     """Parse comma-separated string into trimmed list."""
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
@@ -168,7 +177,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 Platform._member_map_["MAX"] = pseudo
                 platform = pseudo
             except Exception:
-                platform = list(Platform)[0]
+                platform = next(iter(Platform))
         super().__init__(config=config, platform=platform)
         extra = getattr(config, "extra", {}) or {}
 
@@ -237,37 +246,37 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         # Group access control
         self._group_policy: str = extra.get("group_policy", "allowlist")
-        self._group_allow_from: List[str] = _parse_list(
+        self._group_allow_from: list[str] = _parse_list(
             os.getenv("MAX_GROUP_ALLOWED_USERS", "")
             or str(extra.get("group_allow_from", ""))
         )
-        self._group_allow_chats: List[str] = _parse_list(
+        self._group_allow_chats: list[str] = _parse_list(
             os.getenv("MAX_GROUP_ALLOWED_CHATS", "")
             or str(extra.get("group_allow_chats", ""))
         )
 
         # Runtime state
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: httpx.AsyncClient | None = None
         self._webhook_runner: Any = None  # aiohttp.web.AppRunner
         self._webhook_site: Any = None
         self._webhook_app: Any = None
         self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
-        self._poll_task: Optional[asyncio.Task] = None
+        self._poll_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
         self._stop: asyncio.Event = asyncio.Event()
         self._running: bool = False
 
         # Dedup: mid → timestamp (max 5000 entries to prevent memory exhaustion)
-        self._seen_msgs: Dict[str, float] = {}
+        self._seen_msgs: dict[str, float] = {}
         self._SEEN_MSGS_MAX = 5000
         # DM routing: chat_id → user_id
-        self._dm_user_ids: Dict[str, str] = {}
+        self._dm_user_ids: dict[str, str] = {}
 
         # Interactive button state tracking
-        self._exec_approval_state: Dict[str, str] = {}   # approval_id → session_key
-        self._slash_confirm_state: Dict[str, str] = {}   # confirm_id → session_key
-        self._clarify_state: Dict[str, str] = {}          # clarify_id → session_key
-        self._model_picker_state: Dict[str, dict] = {}    # chat_id → picker state
+        self._exec_approval_state: dict[str, str] = {}   # approval_id → session_key
+        self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
+        self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
+        self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
 
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
@@ -386,8 +395,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         if self._webhook_runner:
             try:
                 await self._webhook_runner.cleanup()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("MAX: webhook cleanup error: %s", exc)
             self._webhook_runner = None
             self._webhook_app = None
 
@@ -498,7 +507,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         while self._running:
             try:
                 event = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
@@ -515,7 +524,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # Update processing
     # ═════════════════════════════════════════════════════════════════════
 
-    async def _build_event(self, payload: Dict[str, Any]) -> Optional[MessageEvent]:
+    async def _build_event(self, payload: dict[str, Any]) -> MessageEvent | None:
         """Parse a Max Update object into a MessageEvent."""
         update_type = payload.get("update_type", "")
 
@@ -572,7 +581,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         return None
 
-    async def _on_message_created(self, update: dict) -> Optional[MessageEvent]:
+    async def _on_message_created(self, update: dict) -> MessageEvent | None:
         """Process message_created update. Returns MessageEvent or None."""
         message = update.get("message", {}) or {}
         body = message.get("body") or {}
@@ -624,16 +633,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 return None
             self._seen_msgs[mid] = now
             # Prune old entries + hard limit
-            if len(self._seen_msgs) > self._SEEN_MSGS_MAX:
-                self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
-            elif len(self._seen_msgs) > 100:
+            if len(self._seen_msgs) > self._SEEN_MSGS_MAX or len(self._seen_msgs) > 100:
                 self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
 
         # Access control
-        if not self._allow_all_users and self._allowed_users_set:
-            if user_id not in self._allowed_users_set:
-                logger.debug("MAX: ignoring message from unauthorized user %s", user_id)
-                return None
+        if (not self._allow_all_users and self._allowed_users_set
+                and user_id not in self._allowed_users_set):
+            logger.debug("MAX: ignoring message from unauthorized user %s", user_id)
+            return None
 
         # Group access control
         if chat_type == "group":
@@ -752,10 +759,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # ═════════════════════════════════════════════════════════════════════
 
     async def _extract_inbound_media(
-        self, payload: Dict[str, Any], message: Dict[str, Any], body: Dict[str, Any]
-    ) -> Tuple[List[str], List[str]]:
+        self, payload: dict[str, Any], message: dict[str, Any], body: dict[str, Any]
+    ) -> tuple[list[str], list[str]]:
         """Recursively find and cache all media attachments in the payload."""
-        attachments: List[Dict[str, Any]] = []
+        attachments: list[dict[str, Any]] = []
         seen: set[int] = set()
 
         def add_attachment(item: Any) -> None:
@@ -792,8 +799,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         walk(payload)
 
-        media_paths: List[str] = []
-        media_types: List[str] = []
+        media_paths: list[str] = []
+        media_types: list[str] = []
         seen_media_refs: set[str] = set()
 
         for attachment in attachments:
@@ -825,9 +832,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return media_paths, media_types
 
     @staticmethod
-    def _attachment_kind(attachment: Dict[str, Any]) -> str:
+    def _attachment_kind(attachment: dict[str, Any]) -> str:
         """Determine attachment kind from type keys and payload."""
-        values: List[str] = []
+        values: list[str] = []
         for key in ("type", "attachment_type", "kind", "media_type"):
             value = attachment.get(key)
             if value:
@@ -861,7 +868,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return ""
 
     @staticmethod
-    def _find_first_url(data: Any) -> Optional[str]:
+    def _find_first_url(data: Any) -> str | None:
         """Find a plausible download URL inside an attachment payload."""
         if isinstance(data, dict):
             for key in ("url", "download_url", "downloadUrl", "file_url",
@@ -881,7 +888,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     @staticmethod
-    def _find_first_filename(data: Any) -> Optional[str]:
+    def _find_first_filename(data: Any) -> str | None:
         """Find a plausible original filename inside an attachment payload."""
         if isinstance(data, dict):
             for key in ("filename", "file_name", "fileName", "name",
@@ -934,11 +941,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             ip = ipaddress.ip_address(host_l)
         except ValueError:
             ip = None
-        if ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local
-                               or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
-            return False
-        return True
-
+        if ip is None:
+            return True
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
     @staticmethod
     def _detect_image_mime(data: bytes) -> str:
         """Detect image MIME type from magic bytes.
@@ -967,8 +973,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return "image/jpeg"
 
     async def _cache_audio_attachment(
-        self, attachment: Dict[str, Any], kind: str
-    ) -> Optional[Tuple[str, str]]:
+        self, attachment: dict[str, Any], kind: str
+    ) -> tuple[str, str] | None:
         """Download audio attachment and cache it."""
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
@@ -1004,8 +1010,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return cache_audio_from_bytes(resp.content, ext), content_type or "audio/ogg"
 
     async def _cache_image_attachment(
-        self, attachment: Dict[str, Any]
-    ) -> Optional[Tuple[str, str]]:
+        self, attachment: dict[str, Any]
+    ) -> tuple[str, str] | None:
         """Download image attachment and cache it."""
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
@@ -1045,8 +1051,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return None
 
     async def _cache_document_attachment(
-        self, attachment: Dict[str, Any]
-    ) -> Optional[Tuple[str, str]]:
+        self, attachment: dict[str, Any]
+    ) -> tuple[str, str] | None:
         """Download document attachment and cache it."""
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
@@ -1084,7 +1090,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return None
 
     @staticmethod
-    def _derive_message_type(text: str, media_types: List[str]) -> MessageType:
+    def _derive_message_type(text: str, media_types: list[str]) -> MessageType:
         """Derive MessageType from text and media types."""
         if any(mtype.startswith(("application/", "text/"))
                or mtype == "application/octet-stream" for mtype in media_types):
@@ -1099,7 +1105,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # Outbound: send messages
     # ═════════════════════════════════════════════════════════════════════
 
-    def _split_outbound_text(self, content: str) -> List[str]:
+    def _split_outbound_text(self, content: str) -> list[str]:
         """Split long outbound text into Max-sized chunks (≤4000 chars).
 
         Preserves paragraph boundaries where possible; hard-splits long
@@ -1109,7 +1115,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         if len(content) <= limit:
             return [content]
 
-        chunks: List[str] = []
+        chunks: list[str] = []
         current = ""
 
         def flush() -> None:
@@ -1160,8 +1166,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self,
         chat_id: str,
         content: str,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send a text message, automatically chunking if over limit."""
         if not self._http_client:
@@ -1180,7 +1186,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         # ── Handle tables ─────────────────────────────────────────────
         # Table images (MAX_TABLE_AS_IMAGE) or text fallback
-        image_tokens: List[str] = []
+        image_tokens: list[str] = []
 
         if self._table_as_image:
             # Try to render tables as images
@@ -1222,14 +1228,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         # ── Send ───────────────────────────────────────────────────────
         chunks = self._split_outbound_text(content)
-        last_result: Optional[SendResult] = None
+        last_result: SendResult | None = None
 
         for idx, text in enumerate(chunks, start=1):
             if len(chunks) > 1:
                 prefix = f"({idx}/{len(chunks)})\n"
                 text = prefix + text[:max(0, 3900 - len(prefix))]
 
-            body: Dict[str, Any] = {
+            body: dict[str, Any] = {
                 "text": text,
                 "format": "markdown",
                 "notify": True,
@@ -1341,9 +1347,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
     async def send_image(
         self, chat_id: str, image_url: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send an image via URL attachment."""
         if not self._http_client:
@@ -1352,7 +1358,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         target_type = parts[0] if len(parts) > 1 else "user"
         target_id = parts[1] if len(parts) > 1 else chat_id
         params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "text": caption or "",
             "attachments": [{"type": "image", "payload": {"url": image_url}}],
         }
@@ -1370,17 +1376,17 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
     async def send_image_file(
         self, chat_id: str, image_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, image_path, "image", caption or "", reply_to)
 
     async def send_multiple_images(
         self, chat_id: str,
-        images: List[Tuple[str, str]],
-        metadata: Optional[Dict[str, Any]] = None,
+        images: list[tuple[str, str]],
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         """Send multiple images in a single message.
@@ -1399,8 +1405,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return SendResult(success=False, error="No images provided")
 
         # Upload all images concurrently
-        tokens: List[str] = []
-        captions: List[str] = []
+        tokens: list[str] = []
+        captions: list[str] = []
         for url_or_path, caption in images:
             # Prefer local path, fall back to URL-based _send_image
             if url_or_path.startswith(("http://", "https://", "file://")):
@@ -1423,7 +1429,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         target_id = parts[1] if len(parts) > 1 else chat_id
         params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
 
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "text": " ".join(c for c in captions if c).strip() or "📷",
             "attachments": [{"type": "image", "payload": {"token": t}} for t in tokens],
         }
@@ -1440,9 +1446,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
     async def _send_multiple_images_fallback(
         self, chat_id: str,
-        images: List[Tuple[str, str]],
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        images: list[tuple[str, str]],
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Fallback: send images one by one if batch upload fails."""
         last_result = SendResult(success=False, error="No images sent")
@@ -1457,37 +1463,37 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
     async def send_document(
         self, chat_id: str, file_path: str,
-        caption: Optional[str] = None,
-        file_name: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        file_name: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, file_path, "file", caption or "", reply_to)
 
     async def send_video(
         self, chat_id: str, video_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, video_path, "video", caption or "", reply_to)
 
     async def send_voice(
         self, chat_id: str, audio_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, audio_path, "audio", caption or "", reply_to)
 
     async def send_animation(
         self, chat_id: str, animation_url: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send animated GIF — treated as image in MAX."""
         return await self.send_image(chat_id, animation_url, caption, reply_to, metadata)
@@ -1515,14 +1521,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     "type": d.get("type", "dm"),
                     "chat_id": chat_id,
                 }
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("MAX: failed to fetch chat info for %s: %s", chat_id, exc)
         return {"name": chat_id, "type": "dm", "chat_id": chat_id}
 
     # Interactive buttons (send_buttons, send_action, approval/clarify)
     # — moved to mixins/buttons.py (ButtonsMixin)
 
-    async def _on_callback(self, payload: Dict[str, Any]) -> Optional[MessageEvent]:
+    async def _on_callback(self, payload: dict[str, Any]) -> MessageEvent | None:
         """Handle message_callback update from inline keyboard button press."""
         callback = payload.get("callback", {}) or payload.get("message_callback", {})
         data = (callback.get("payload") or callback.get("data") or "").strip()
@@ -1570,8 +1576,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return None
 
     async def _handle_exec_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any]
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
+    ) -> MessageEvent | None:
         """Route exec approval button to resolve_gateway_approval."""
         # Format: exec:{choice}:{approval_id}
         parts = data.split(":", 2)
@@ -1586,7 +1592,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
             return None
 
-        from tools.approval import resolve_gateway_approval, has_blocking_approval
+        from tools.approval import has_blocking_approval, resolve_gateway_approval
 
         if not has_blocking_approval(session_key):
             await self.send(f"user:{user_id}", "❌ No pending approval to resolve.")
@@ -1614,8 +1620,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_slash_confirm_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any]
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
+    ) -> MessageEvent | None:
         """Route slash-confirm button to tools.slash_confirm.resolve."""
         # Format: sc:{choice}:{confirm_id}
         parts = data.split(":", 2)
@@ -1640,8 +1646,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_clarify_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any]
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
+    ) -> MessageEvent | None:
         """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
         # Format: clarify:{clarify_id}:{choice_index}
         parts = data.split(":", 2)
@@ -1656,7 +1662,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return None
 
         try:
-            from tools.clarify_gateway import resolve_gateway_clarify, mark_awaiting_text
+            from tools.clarify_gateway import (
+                mark_awaiting_text,
+                resolve_gateway_clarify,
+            )
 
             if choice_idx == "other":
                 # User chose "Other…" — next text message will be the answer
@@ -1698,8 +1707,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_model_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any], chat_id: str,
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any], chat_id: str,
+    ) -> MessageEvent | None:
         """Route model picker button callbacks.
 
         Formats:
@@ -1767,7 +1776,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         current_provider: str,
         session_key: str,
         on_model_selected,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send an interactive model picker with callback buttons.
 
@@ -1793,8 +1802,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         )[:MAX_MESSAGE_LENGTH]
 
         # Build provider buttons (2 per row)
-        buttons: List[List[Dict[str, str]]] = []
-        row: List[Dict[str, str]] = []
+        buttons: list[list[dict[str, str]]] = []
+        row: list[dict[str, str]] = []
         for p in providers[:20]:  # Max 20 providers
             slug = p.get("slug", "")
             name = str(p.get("name", slug))[:38]
@@ -1861,7 +1870,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         )[:MAX_MESSAGE_LENGTH]
 
         # Build model buttons (1 per row for readability)
-        buttons: List[List[Dict[str, str]]] = []
+        buttons: list[list[dict[str, str]]] = []
         for m in models:
             name = str(m)[:38]
             is_current = (
@@ -1877,7 +1886,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         # Pagination buttons
         if total_pages > 1:
-            nav_row: List[Dict[str, str]] = []
+            nav_row: list[dict[str, str]] = []
             if page > 0:
                 nav_row.append({
                     "type": "callback",
@@ -1946,7 +1955,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
     async def _on_model_picked(
         self, chat_id: str, model_id: str, provider_slug: str, user_id: str,
-    ) -> Optional[MessageEvent]:
+    ) -> MessageEvent | None:
         """Step 3: Model selected — call on_model_selected callback."""
         state = self._model_picker_state.pop(str(chat_id), None)
         if not state:
@@ -1998,8 +2007,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             f"Select a provider:"
         )[:MAX_MESSAGE_LENGTH]
 
-        buttons: List[List[Dict[str, str]]] = []
-        row: List[Dict[str, str]] = []
+        buttons: list[list[dict[str, str]]] = []
+        row: list[dict[str, str]] = []
         for p in providers[:20]:
             slug = p.get("slug", "")
             name = p.get("name", slug)[:38]
@@ -2040,7 +2049,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return "open" if self._allow_all_users else "allowlist"
 
     @property
-    def allow_from(self) -> List[str]:
+    def allow_from(self) -> list[str]:
         return list(self._allowed_users_set)
 
     @property
@@ -2048,7 +2057,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return self._group_policy
 
     @property
-    def group_allow_from(self) -> List[str]:
+    def group_allow_from(self) -> list[str]:
         return self._group_allow_from
 
     @property
@@ -2064,7 +2073,7 @@ def check_max_requirements() -> bool:
     """Check if aiohttp and httpx are available and token is configured."""
     try:
         import aiohttp  # noqa: F401
-        import httpx   # noqa: F401
+        import httpx  # noqa: F401
     except ImportError:
         return False
     return bool(os.getenv("MAX_BOT_TOKEN", "").strip())
@@ -2082,7 +2091,7 @@ def is_connected(config) -> bool:
     return validate_config(config)
 
 
-def _env_enablement() -> Optional[dict]:
+def _env_enablement() -> dict | None:
     """Seed PlatformConfig.extra from env-only setups."""
     token = os.getenv("MAX_BOT_TOKEN", "").strip()
     if not token:
@@ -2131,7 +2140,7 @@ def _env_enablement() -> Optional[dict]:
     return extra
 
 
-def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
+def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
     """Translate top-level max: config into env/extras."""
     del yaml_cfg
     if not isinstance(platform_cfg, dict):
@@ -2184,9 +2193,14 @@ def interactive_setup() -> None:
     """Interactive `hermes gateway setup` flow for the Max platform."""
     try:
         from hermes_cli.setup import (
-            prompt, prompt_yes_no, save_env_value,
-            get_env_value, print_header, print_info,
-            print_warning, print_success,
+            get_env_value,
+            print_header,
+            print_info,
+            print_success,
+            print_warning,
+            prompt,
+            prompt_yes_no,
+            save_env_value,
         )
     except ImportError:
         logger.warning("MAX: hermes_cli.setup not available for interactive setup")

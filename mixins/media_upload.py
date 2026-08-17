@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -50,7 +50,7 @@ class MediaUploadMixin(MaxBaseMixin):
 
     async def _upload_send(
         self, chat_id: str, file_path: str, mtype: str,
-        caption: str, reply_to: Optional[str],
+        caption: str, reply_to: str | None,
     ) -> SendResult:
         """Upload file then send as attachment.
 
@@ -70,7 +70,7 @@ class MediaUploadMixin(MaxBaseMixin):
         target_id = parts[1] if len(parts) > 1 else chat_id
         params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
 
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "text": caption,
             "attachments": [{"type": mtype, "payload": {"token": token}}],
         }
@@ -107,7 +107,7 @@ class MediaUploadMixin(MaxBaseMixin):
 
         return SendResult(success=False, error="Upload-send failed: attachment still not ready after retries", retryable=True)
 
-    async def _upload(self, file_path: str, media_type: str) -> Optional[str]:
+    async def _upload(self, file_path: str, media_type: str) -> str | None:
         """Two-step upload: get upload URL -> POST file (multipart) -> return token."""
         import aiohttp as _aiohttp
 

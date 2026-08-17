@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 from gateway.platforms.base import SendResult
@@ -72,12 +72,12 @@ class ButtonsMixin(MaxBaseMixin):
                 json={"action": api_action},
                 timeout=httpx.Timeout(3.0),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("MAX: send_action failed: %s", exc)
 
     async def _post_interactive(
-        self, chat_id: str, text: str, buttons: List[List[Dict[str, str]]],
-        reply_to: Optional[str] = None,
+        self, chat_id: str, text: str, buttons: list[list[dict[str, str]]],
+        reply_to: str | None = None,
     ) -> SendResult:
         """Send a message with inline keyboard buttons.
 
@@ -95,7 +95,7 @@ class ButtonsMixin(MaxBaseMixin):
         target_id = parts[1] if len(parts) > 1 else chat_id
         params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
 
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "text": text[:MAX_MESSAGE_LENGTH],
             "format": "markdown",
             "attachments": [{
@@ -120,8 +120,8 @@ class ButtonsMixin(MaxBaseMixin):
 
     async def send_buttons(
         self, chat_id: str, text: str,
-        buttons: List[Dict[str, str]],
-        reply_to: Optional[str] = None,
+        buttons: list[dict[str, str]],
+        reply_to: str | None = None,
     ) -> SendResult:
         """Send a message with inline buttons of ANY type.
 
@@ -158,7 +158,7 @@ class ButtonsMixin(MaxBaseMixin):
 
         # Build keyboard (one button per row)
         limited = buttons[:10]  # MAX API limit ~10 buttons per message
-        keyboard: List[List[Dict[str, str]]] = []
+        keyboard: list[list[dict[str, str]]] = []
         for i, btn in enumerate(limited, 1):
             b = dict(btn)
             # Remove label from the button payload (MAX API doesn't use it)
@@ -170,7 +170,7 @@ class ButtonsMixin(MaxBaseMixin):
             keyboard.append([b])
 
         # Build fallback text from full labels (untruncated)
-        fallback_lines: List[str] = []
+        fallback_lines: list[str] = []
         for i, btn in enumerate(limited, 1):
             desc = btn.get("label") or btn.get("text", "")
             if numbered:
@@ -191,7 +191,7 @@ class ButtonsMixin(MaxBaseMixin):
         command: str,
         session_key: str,
         description: str = "dangerous command",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         *args,
         **kwargs,
     ) -> SendResult:
@@ -234,7 +234,7 @@ class ButtonsMixin(MaxBaseMixin):
         message: str,
         session_key: str,
         confirm_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         *args,
         **kwargs,
     ) -> SendResult:
@@ -264,10 +264,10 @@ class ButtonsMixin(MaxBaseMixin):
         self,
         chat_id: str,
         question: str,
-        choices: Optional[list],
+        choices: list | None,
         clarify_id: str,
         session_key: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send a clarify prompt with inline choice buttons.
 
@@ -281,8 +281,8 @@ class ButtonsMixin(MaxBaseMixin):
 
         if choices and len(choices) > 0:
             # Render choice buttons (up to 3 per row)
-            buttons: List[List[Dict[str, str]]] = []
-            row: List[Dict[str, str]] = []
+            buttons: list[list[dict[str, str]]] = []
+            row: list[dict[str, str]] = []
             for i, choice in enumerate(choices):
                 btn_text = str(choice)[:40]
                 if len(str(choice)) > 40:
