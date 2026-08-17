@@ -60,6 +60,13 @@ class WebhookMixin(MaxBaseMixin):
         secret = self._webhook_secret
         path = self._webhook_path
 
+        if not secret:
+            logger.warning(
+                "MAX: webhook started WITHOUT a secret (MAX_WEBHOOK_SECRET empty) — "
+                "anyone can POST events to %s. Set MAX_WEBHOOK_SECRET in production.",
+                self._webhook_url or f"{self._webhook_host}:{self._webhook_port}{path}",
+            )
+
         app = web.Application()
 
         async def health_handler(req: web.Request) -> web.Response:

@@ -911,6 +911,35 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     @staticmethod
+    def _validate_download_url(url: str) -> bool:
+        """SSRF guard for media downloads: allow only public http(s) hosts.
+
+        Rejects non-http schemes, loopback/private/link-local IPs (e.g.
+        169.254.169.254 metadata endpoint, 127.0.0.1, 10.x internal nets)
+        and bare ``localhost``/``*.local`` hostnames.
+        """
+        import ipaddress
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname
+        if not host:
+            return False
+        host_l = host.lower().rstrip(".")
+        if host_l == "localhost" or host_l.endswith(".local"):
+            return False
+        # If the host is a literal IP, reject non-public ranges.
+        try:
+            ip = ipaddress.ip_address(host_l)
+        except ValueError:
+            ip = None
+        if ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local
+                               or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False
+        return True
+
+    @staticmethod
     def _detect_image_mime(data: bytes) -> str:
         """Detect image MIME type from magic bytes.
 
@@ -944,13 +973,16 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download %s from blocked host: %s", kind, self._safe_url_for_log(url))
+            return None
         headers = {
             "Authorization": self._token,
             "User-Agent": "HermesAgent/1.0 MaxBot",
             "Accept": "audio/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
@@ -978,13 +1010,16 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download image from blocked host: %s", self._safe_url_for_log(url))
+            return None
         headers = {
             "Authorization": self._token,
             "User-Agent": "HermesAgent/1.0 MaxBot",
             "Accept": "image/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
@@ -1016,13 +1051,16 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download document from blocked host: %s", self._safe_url_for_log(url))
+            return None
         headers = {
             "Authorization": self._token,
             "User-Agent": "HermesAgent/1.0 MaxBot",
             "Accept": "application/*,text/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
