@@ -1,6 +1,6 @@
 """Tests for interactive buttons (approval, slash-confirm, clarify, send_action, send_buttons)."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -48,7 +48,6 @@ class TestPostInteractive:
     async def test_post_interactive_no_client(self):
         a = self._make_adapter()
         a._http_client = None
-        buttons = [[{"type": "callback", "text": "X", "payload": "x"}]]
         result = await a._post_interactive("user:42", "Test", [])
         assert result.success is False
 

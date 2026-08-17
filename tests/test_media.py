@@ -1,6 +1,5 @@
 """Tests for media extraction."""
 
-import pytest
 
 import adapter
 

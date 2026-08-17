@@ -1,6 +1,6 @@
 """Tests for model picker interactive buttons."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

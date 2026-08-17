@@ -1,6 +1,6 @@
 """Tests for magic bytes MIME detection, typing renewal, and streaming throttle."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
