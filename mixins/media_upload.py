@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -19,6 +22,12 @@ logger = logging.getLogger(__name__)
 MAX_API_BASE = "https://platform-api.max.ru"
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 UPLOAD_DELAY = 2.0
+
+# Audio containers the Max CDN accepts for type=audio attachments.
+# Verified: ogg/opus (native voice) and mp3 (edge TTS delivered fine).
+# Anything else (wav, flac, m4a, ...) is transcoded to Ogg/Opus before
+# upload so the delivery does not depend on what the TTS provider emits.
+_AUDIO_PASSTHROUGH_CONTAINERS = frozenset({"ogg", "mp3"})
 
 # SSRF allowlist for file upload CDNs (used by both adapter and standalone sender)
 _ALLOWED_UPLOAD_HOSTS = frozenset({
@@ -38,6 +47,90 @@ def _safe_url_for_log(url: str) -> str:
         return "[invalid-url]"
     path = parsed.path or "/"
     return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+# ── Audio container normalization ────────────────────────────────────────
+# TTS providers emit whatever format they emit (wav, mp3, ogg, flac, ...).
+# The Max CDN rejects some containers (wav → 415), so normalize the file
+# to a Max-accepted container before upload. Idempotent: already-accepted
+# containers (ogg, mp3) pass through untouched; anything else is
+# transcoded to Ogg/Opus via ffmpeg in place.
+
+
+def _sniff_audio_container(path: str) -> str:
+    """Return container id ('ogg', 'mp3', 'wav', 'flac', 'm4a') or 'unknown'."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+    except OSError:
+        return "unknown"
+    if head.startswith(b"OggS"):
+        return "ogg"
+    if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+        return "mp3"
+    if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
+        return "wav"
+    if head.startswith(b"fLaC"):
+        return "flac"
+    if head[4:8] == b"ftyp":
+        return "m4a"
+    return "unknown"
+
+
+def _transcode_to_opus_ogg(src: str, dst: str) -> bool:
+    """Transcode *src* to Ogg/Opus at *dst* using ffmpeg. Returns success."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logger.warning("MAX: ffmpeg not found — cannot normalize audio %s", src)
+        return False
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-y", "-i", src, "-c:a", "libopus", "-b:a", "48k", dst],
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+        if proc.returncode != 0:
+            logger.warning(
+                "MAX: ffmpeg normalize failed for %s: %s",
+                src, proc.stderr.decode("utf-8", "replace")[-300:],
+            )
+            return False
+        return os.path.exists(dst) and os.path.getsize(dst) > 0
+    except Exception as e:  # noqa: BLE001 — normalization must never break delivery
+        logger.warning("MAX: ffmpeg normalize error for %s: %s", src, e)
+        return False
+
+
+def normalize_audio_for_max(path: str) -> str:
+    """Return a path whose audio container the Max CDN accepts.
+
+    Idempotent: ogg/mp3 pass through unchanged (same file, same bytes);
+    other containers are transcoded to a NEW ``.ogg`` file next to the
+    source (the CDN decides the format from the uploaded filename, so the
+    extension must be honest — an in-place transcode of a ``.wav`` path
+    still 415s). On any failure the original file is left untouched and
+    returned, so the caller can still try.
+    """
+    container = _sniff_audio_container(path)
+    if container in _AUDIO_PASSTHROUGH_CONTAINERS or container == "unknown":
+        return path
+
+    src = Path(path)
+    dst = src.with_suffix(".ogg")
+    try:
+        if not _transcode_to_opus_ogg(path, str(dst)):
+            return path
+        logger.info("MAX: normalized audio %s (%s -> %s)", path, container, dst)
+        return str(dst)
+    except Exception as e:  # noqa: BLE001 — normalization must never break delivery
+        logger.warning("MAX: audio normalization error for %s: %s", path, e)
+        try:
+            if dst.exists():
+                dst.unlink()
+        except OSError:
+            pass
+        return path
 
 
 class MediaUploadMixin(MaxBaseMixin):
@@ -60,6 +153,11 @@ class MediaUploadMixin(MaxBaseMixin):
         """
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
+
+        # Normalize audio to a Max-accepted container regardless of what the
+        # TTS provider emitted (wav/flac/m4a are rejected by the CDN with 415).
+        if mtype == "audio":
+            file_path = await asyncio.to_thread(normalize_audio_for_max, file_path)
 
         token = await self._upload(file_path, mtype)
         if not token:
