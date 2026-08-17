@@ -72,9 +72,10 @@ Middle text.
 
         result = adapter.MaxAdapter._convert_markdown_tables(text)
 
-        # Columns capped at 25 chars
-        assert "VeryLongColumnNameThatE" in result  # truncated
-        assert "very_long_value_here_to" in result  # truncated
+        # Long tokens are NOT truncated — ZWSP soft breaks (every 15 chars)
+        # keep them wrappable on mobile (table-renderer fix d7e003c / 2d46046)
+        assert "VeryLongColumnN\u200bameThatExceeds" in result
+        assert "very_long_value\u200b_here_too" in result
         assert "Short" in result
         assert "ok" in result
 

@@ -50,7 +50,7 @@ class TestEnvEnablement:
         monkeypatch.setenv("MAX_ALLOWED_USERS", "1, 2")
         from gateway.config import PlatformConfig
         cfg = PlatformConfig(enabled=True)
-        result = adapter.MaxAdapter._env_enablement(cfg)
+        result = adapter._env_enablement()
         assert result is not None
 
 
