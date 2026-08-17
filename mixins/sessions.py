@@ -55,7 +55,7 @@ class SessionsMixin(MaxBaseMixin):
                     include_archived=False,
                     order_by_last_active=True,
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: SessionDB query failed: %s", e)
             await self.send(chat_id, f"⚠️ Failed to query sessions: {e}")
             return

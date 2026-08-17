@@ -409,11 +409,11 @@ class TableRendererMixin(MaxBaseMixin):
                 tmp_img = Image.new("RGB", (1, 1))
                 tmp_draw = ImageDraw.Draw(tmp_img)
                 return int(tmp_draw.textlength(text, font=font))
-            except Exception:
+            except Exception:  # noqa: BLE001 — measurement fallback chain
                 try:
                     raw_width = wcswidth(text)
                     return int(raw_width * 0.6)
-                except Exception:
+                except Exception:  # noqa: BLE001 — last-resort getbbox fallback
                     bbox = font.getbbox(text)
                     return bbox[2] - bbox[0]
 
@@ -422,7 +422,7 @@ class TableRendererMixin(MaxBaseMixin):
             try:
                 bbox = this_font.getbbox("Ag")
                 return bbox[3] - bbox[1]
-            except Exception:
+            except Exception:  # noqa: BLE001 — fallback line height for exotic fonts
                 return 18
 
         line_h = _get_line_height(font)

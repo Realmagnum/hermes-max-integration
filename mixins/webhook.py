@@ -108,7 +108,7 @@ class WebhookMixin(MaxBaseMixin):
             else:
                 try:
                     payload = await req.json()
-                except Exception:
+                except (json.JSONDecodeError, TypeError, ValueError):
                     return web.Response(status=400, text="invalid json")
 
             event = await self._build_event(payload)
@@ -143,7 +143,7 @@ class WebhookMixin(MaxBaseMixin):
                 if resp.status_code == 200:
                     d = resp.json()
                     logger.info("MAX: webhook registered%s", "" if d.get("success") else f" — {d.get('message')}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 logger.error("MAX: webhook register failed: %s", e)
 
         # Start poll loop for draining the queue

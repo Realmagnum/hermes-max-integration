@@ -72,7 +72,7 @@ class ButtonsMixin(MaxBaseMixin):
                 json={"action": api_action},
                 timeout=httpx.Timeout(3.0),
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.debug("MAX: send_action failed: %s", exc)
 
     async def _post_interactive(
@@ -114,7 +114,7 @@ class ButtonsMixin(MaxBaseMixin):
             d = resp.json()
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: interactive send failed: %s", e)
             return SendResult(success=False, error="Interactive send failed (see logs)")
 

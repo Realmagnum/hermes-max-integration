@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -49,7 +50,7 @@ async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str)
                 success=True,
                 message_id=str(data.get("message", {}).get("message_id", "")),
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
         logger.error("MAX: send_message failed: %s", exc)
         return SendResult(success=False, error="Standalone send failed (see logs)")
 
@@ -144,7 +145,7 @@ async def _standalone_send(
                         _upload_token = upload_json.get("token", "")
                         if _upload_token:
                             logger.info("MAX: audio/video token obtained from /uploads for %s", media_path)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                     logger.warning("MAX: upload URL parse failed for %s: %s", media_path, e)
                     continue
 
@@ -166,15 +167,16 @@ async def _standalone_send(
                 try:
                     import aiohttp as _aiohttp
                     async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
-                        with open(media_path, "rb") as f:
-                            form = _aiohttp.FormData()
-                            form.add_field("data", f, filename=os.path.basename(media_path))
-                            async with aio_session.post(upload_url, data=form) as r:
+                        # Read file bytes off the event loop (ASYNC230).
+                        file_bytes = await asyncio.to_thread(Path(media_path).read_bytes)
+                        form = _aiohttp.FormData()
+                        form.add_field("data", file_bytes, filename=os.path.basename(media_path))
+                        async with aio_session.post(upload_url, data=form) as r:
                                 if r.status != 200:
                                     try:
                                         err_body = await r.text()
                                         logger.warning("MAX: CDN upload failed for %s (status %d): %s", media_path, r.status, err_body[:200])
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
                                         logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
                                     # For audio/video with token from /uploads: even if CDN fails, we might still try
                                     if _upload_type in ("audio", "video") and _upload_token:
@@ -190,7 +192,7 @@ async def _standalone_send(
                                         # For file/image: parse CDN JSON response for token
                                         try:
                                             upload_data = await r.json()
-                                        except Exception:
+                                        except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
                                             logger.warning("MAX: CDN returned non-JSON for %s", media_path)
                                             continue
                                         file_token = upload_data.get("token")
@@ -205,7 +207,7 @@ async def _standalone_send(
                                         if not file_token:
                                             logger.warning("MAX: CDN response missing token for %s", media_path)
                                             continue
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                     logger.warning("MAX: CDN upload error for %s: %s", media_path, e)
                     continue
 
@@ -246,13 +248,13 @@ async def _standalone_send(
                         else:
                             logger.warning("MAX: send failed for %s (status %d)", media_path, resp.status_code)
                             break
-                    except Exception as _exc:
+                    except Exception as _exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
                         logger.warning("MAX: send exception for %s: %s", media_path, _exc)
                         break
                 if not _sent_ok:
                     continue
 
             return {"success": True, "message_id": last_message_id}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
         logger.error("MAX: standalone send failed: %s", exc)
         return {"error": f"Max standalone send failed: {exc}"}

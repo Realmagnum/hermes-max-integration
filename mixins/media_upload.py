@@ -199,7 +199,7 @@ class MediaUploadMixin(MaxBaseMixin):
                         pass
                 logger.error("MAX: _upload_send failed: %s", e)
                 return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 logger.error("MAX: _upload_send failed: %s", e)
                 return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
 
@@ -246,10 +246,12 @@ class MediaUploadMixin(MaxBaseMixin):
 
             # Step 2: upload file to the URL (use aiohttp for multipart)
             async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as session:
-                with open(fp, "rb") as f:
-                    form = _aiohttp.FormData()
-                    form.add_field("data", f, filename=fp.name)
-                    async with session.post(upload_url, data=form) as r:
+                # Read file bytes off the event loop (ASYNC230); 50MB cap
+                # means loading into memory is acceptable here.
+                file_bytes = await asyncio.to_thread(fp.read_bytes)
+                form = _aiohttp.FormData()
+                form.add_field("data", file_bytes, filename=fp.name)
+                async with session.post(upload_url, data=form) as r:
                         if r.status != 200:
                             logger.warning(
                                 "MAX: CDN upload failed for %s (status %d, type=%s)",
@@ -267,7 +269,7 @@ class MediaUploadMixin(MaxBaseMixin):
                         # For file/image: parse CDN JSON response for token
                         try:
                             upload_data = await r.json()
-                        except Exception:
+                        except (json.JSONDecodeError, TypeError, ValueError):
                             logger.warning(
                                 "MAX: CDN returned non-JSON for %s (type=%s)",
                                 fp, media_type,
@@ -290,6 +292,6 @@ class MediaUploadMixin(MaxBaseMixin):
                                 return await self._upload(str(fp), "file")
                             return None
                         return token
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: upload error: %s", e)
             return None

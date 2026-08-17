@@ -176,7 +176,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 Platform._value2member_map_["max"] = pseudo
                 Platform._member_map_["MAX"] = pseudo
                 platform = pseudo
-            except Exception:
+            except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 platform = next(iter(Platform))
         super().__init__(config=config, platform=platform)
         extra = getattr(config, "extra", {}) or {}
@@ -322,7 +322,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             else:
                 logger.warning("MAX: failed to set commands: %s", resp.status_code)
                 return False
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: error setting commands: %s", e)
             return False
 
@@ -360,11 +360,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 # Register slash commands via PATCH /me/commands
                 try:
                     await self._set_bot_commands()
-                except Exception as cmd_err:
+                except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
                     logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
             else:
                 logger.warning("MAX: /me returned %s", resp.status_code)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             await self._http_client.aclose()
             self._http_client = None
             self._set_fatal_error("conn_fail", str(e), retryable=True)
@@ -395,7 +395,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         if self._webhook_runner:
             try:
                 await self._webhook_runner.cleanup()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 logger.debug("MAX: webhook cleanup error: %s", exc)
             self._webhook_runner = None
             self._webhook_app = None
@@ -457,7 +457,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                                     "MAX: failed to delete stale subscription %s: HTTP %s",
                                     url, del_resp.status_code,
                                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.debug(
                 "MAX: webhook cleanup skipped (non-fatal): %s", e,
             )
@@ -493,7 +493,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     logger.warning("MAX: poll HTTP %s (attempt %d)", resp.status_code, errs)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 errs += 1
                 logger.warning("MAX: poll error (attempt %d): %s: %s", errs, type(e).__name__, e)
                 await asyncio.sleep(min(POLL_ERROR_DELAY * (2 ** min(errs - 1, 4)), 60))
@@ -990,7 +990,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         try:
             resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
@@ -1027,7 +1027,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         try:
             resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
@@ -1068,7 +1068,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         try:
             resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
@@ -1085,7 +1085,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             content_type = SUPPORTED_DOCUMENT_TYPES[ext]
         try:
             return cache_document_from_bytes(resp.content, filename), content_type
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to cache document: %s", exc)
             return None
 
@@ -1268,7 +1268,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     ),
                     raw_response=data,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 logger.error("MAX: send failed chunk %s/%s: %s", idx, len(chunks), exc)
                 return SendResult(success=False, error="Send failed (see logs)")
 
@@ -1326,7 +1326,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             # MAX clears typing indicator on message edit — renew it
             await self.send_typing(chat_id)
             return SendResult(success=True, message_id=message_id, raw_response=resp.json())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: edit_message failed: %s", e)
             return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
 
@@ -1341,7 +1341,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             )
             resp.raise_for_status()
             return SendResult(success=True, message_id=message_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: delete_message failed: %s", e)
             return SendResult(success=False, error="Delete failed (see logs)", retryable=True)
 
@@ -1370,7 +1370,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             d = resp.json()
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: send_image failed: %s", e)
             return SendResult(success=False, error="Send image failed (see logs)", retryable=True)
 
@@ -1440,7 +1440,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             d = resp.json()
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: send_multiple_images failed: %s", e)
             return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
 
@@ -1521,7 +1521,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     "type": d.get("type", "dm"),
                     "chat_id": chat_id,
                 }
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.debug("MAX: failed to fetch chat info for %s: %s", chat_id, exc)
         return {"name": chat_id, "type": "dm", "chat_id": chat_id}
 
@@ -1976,7 +1976,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         try:
             result_text = await on_model_selected(chat_id, model_id, provider_slug)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             result_text = f"❌ Error switching model: {e}"
 
         # Send confirmation message to user
@@ -1998,7 +1998,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         try:
             provider_label = _get_label(current_provider)
-        except Exception:
+        except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
             provider_label = current_provider
 
         text = (
