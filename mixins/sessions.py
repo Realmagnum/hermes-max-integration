@@ -76,7 +76,7 @@ class SessionsMixin(MaxBaseMixin):
         if search:
             header = f"🔍 **Sessions matching \"{search}\":**"
         else:
-            header = f"📋 **Recent Sessions** (all platforms):"
+            header = "📋 **Recent Sessions** (all platforms):"
 
         lines = [header]
         for i, s in enumerate(rows[:15], 1):

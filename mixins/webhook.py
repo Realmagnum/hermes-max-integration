@@ -57,16 +57,6 @@ class WebhookMixin(MaxBaseMixin):
         except (ConnectionRefusedError, OSError):
             pass  # Port is free
 
-        # Port-in-use check
-        try:
-            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
-                sock.settimeout(1)
-                sock.connect(("127.0.0.1", self._webhook_port))
-            self._set_fatal_error("port_in_use", f"Port {self._webhook_port} already in use", retryable=False)
-            return False
-        except (ConnectionRefusedError, OSError):
-            pass  # Port is free
-
         secret = self._webhook_secret
         path = self._webhook_path
 

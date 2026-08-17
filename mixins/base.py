@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 import httpx
-from gateway.config import PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent
 
 logger = logging.getLogger(__name__)

@@ -33,11 +33,11 @@ import httpx
 
 from gateway.config import PlatformConfig, Platform
 from .mixins.buttons import ButtonsMixin
-from .mixins.media_upload import MediaUploadMixin, _ALLOWED_UPLOAD_HOSTS
+from .mixins.media_upload import MediaUploadMixin, _ALLOWED_UPLOAD_HOSTS  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
 from .mixins.sessions import SessionsMixin
-from .mixins.standalone import _send_max_message, _standalone_get_token, _standalone_send
+from .mixins.standalone import _standalone_get_token, _standalone_send  # noqa: F401 — re-export (tests use adapter._standalone_get_token)
 from .mixins.table_renderer import TableRendererMixin
-from .mixins.webhook import WebhookMixin, _verify_raw_secret
+from .mixins.webhook import WebhookMixin, _verify_raw_secret  # noqa: F401 — re-export (tests use adapter._verify_raw_secret)
 from gateway.platforms.base import (
     BasePlatformAdapter,
     MessageEvent,
@@ -55,7 +55,6 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 MAX_MESSAGE_LENGTH = 4000
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
 UPLOAD_DELAY = 2.0
@@ -701,7 +700,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 elif atype == "file":
                     text = (text + "\n[File]").strip() if text else "[File]"
                 elif atype == "location":
-                    text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else f"[Location: ...]"
+                    text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else "[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
         if text and self._cross_session:

@@ -36,7 +36,6 @@ class TableRendererMixin(MaxBaseMixin):
             # Check if this line starts a table (starts with |)
             if re.match(r'^\|.+\|', line):
                 # Collect consecutive pipe lines
-                table_start = i
                 table_lines = []
                 has_separator = False
                 while i < len(lines) and re.match(r'^\|.+\|', lines[i]):
@@ -68,7 +67,6 @@ class TableRendererMixin(MaxBaseMixin):
         rows match the header width.
         Returns (rows: list[list[str]], ncols: int).
         """
-        import re as _re
 
         raw_rows = []
         for line in lines:
