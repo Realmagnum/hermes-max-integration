@@ -33,7 +33,7 @@ import httpx
 
 from gateway.config import PlatformConfig, Platform
 from .mixins.buttons import ButtonsMixin
-from .mixins.media_upload import MediaUploadMixin
+from .mixins.media_upload import MediaUploadMixin, _ALLOWED_UPLOAD_HOSTS
 from .mixins.sessions import SessionsMixin
 from .mixins.standalone import _send_max_message, _standalone_get_token, _standalone_send
 from .mixins.table_renderer import TableRendererMixin
