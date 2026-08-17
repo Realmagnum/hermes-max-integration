@@ -176,6 +176,15 @@ class TableRendererMixin(MaxBaseMixin):
 
         Returns upload token on success, None on failure.
         """
+        # ── Cache hit? (content-addressed by table text; rendering is
+        #    deterministic, so identical tables reuse the same PNG) ────
+        import hashlib
+        digest = hashlib.md5(str(table_lines).encode(), usedforsecurity=False).hexdigest()[:12]
+        out_path = self._table_image_dir / f"table_{digest}.png"
+        if out_path.exists():
+            token = await self._upload(str(out_path), "image")
+            return token
+
         # ── Parse rows ────────────────────────────────────────────────
         rows, ncols = TableRendererMixin._parse_table_rows(table_lines)
         if not rows or ncols == 0:
@@ -568,10 +577,7 @@ class TableRendererMixin(MaxBaseMixin):
         # Bottom border
         draw.line([(0, y), (total_w, y)], fill=BORDER, width=LINE_WIDTH)
 
-        # ── Save & upload ─────────────────────────────────────────────
-        import hashlib
-        digest = hashlib.md5(str(table_lines).encode(), usedforsecurity=False).hexdigest()[:12]
-        out_path = self._table_image_dir / f"table_{digest}.png"
+        # ── Save & upload (cache miss — file just rendered) ─────────
         img.save(out_path, "PNG")
 
         token = await self._upload(str(out_path), "image")
