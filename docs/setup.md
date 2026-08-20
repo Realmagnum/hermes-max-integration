@@ -17,7 +17,8 @@
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
 | `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
 | `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG через Pillow |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |

@@ -191,10 +191,33 @@ MAX_ALLOWED_USERS=your_max_user_id
 
 ### 4. Enable table images (optional)
 
+The recommended renderer is **HTML→PNG via Playwright/Chromium** (clean tables,
+native emoji, no cell overflow). Without a browser the plugin automatically
+falls back to classic Pillow rendering.
+
+> **Important:** install dependencies into the same Python the Hermes gateway
+> runs in (its venv), otherwise the package won't reach the plugin runtime.
+> Windows: `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
+
 ```bash
-pip install Pillow
+# Variant A (recommended): HTML→PNG via Playwright.
+#   Uses system Chrome/Chromium (channel="chrome") or downloads bundled:
+python -m pip install 'playwright>=1.40'
+python -m playwright install chromium          # ~115 MB, one-time; or install Chrome/Chromium manually
+
+# Idempotent helper script instead of manual commands (installs only what's missing):
+python scripts/setup-playwright.py --check-only   # diagnostics (exit 1 if anything missing)
+python scripts/setup-playwright.py                # install what's missing
+
+# Variant B (fallback): classic rendering via Pillow
+python -m pip install Pillow
+
 echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
 ```
+
+**Auto-install (optional):** with `MAX_AUTO_INSTALL_PLAYWRIGHT=true` the plugin
+installs the package and Chromium itself on the first table render (takes 1–2
+minutes and requires network access; subsequent renders work as usual).
 
 ### 5. Restart
 
@@ -296,7 +319,8 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as Pillow-generated PNG images |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG images (HTML→PNG via Playwright, Pillow fallback) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first table render (needs network, 1–2 min) |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
@@ -391,11 +415,17 @@ curl http://localhost:8646/health
 # Check config
 grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
 
-# Check Pillow
-pip list | grep Pillow
+# Renderer diagnostics: playwright package + Chromium present?
+python scripts/setup-playwright.py --check-only
+#   MISSING → python scripts/setup-playwright.py  (installs what's missing)
+#   or manually: python -m pip install 'playwright>=1.40'
+#                python -m playwright install chromium
+
+# Check Pillow (fallback renderer)
+pip list | grep -i pillow
 
 # Check logs
-grep -i "table\|upload\|pillow" ~/.hermes/logs/gateway.log
+grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
 ```
 
 ### SSL errors with Max API
@@ -448,7 +478,9 @@ hermes-max-integration/
 └── .github/workflows/ci.yml # CI/CD
 ```
 
-**Note:** generated table PNGs are cached in `~/.hermes/table_images/`.
+**Note:** generated table PNGs are cached in `~/.hermes/table_images/`; the cache
+key includes the renderer engine (Playwright/Pillow), so switching engines never
+serves stale images.
 
 ## Security
 

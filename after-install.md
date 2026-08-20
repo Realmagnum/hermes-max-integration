@@ -7,6 +7,16 @@
    pip install aiohttp httpx
    ```
 
+   **Таблицы-картинки (опционально):** HTML→PNG рендер через Playwright/Chromium.
+   Ставьте в тот же Python, где работает шлюз Hermes (venv), иначе пакет не
+   попадёт в рантайм плагина. Windows: `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
+   ```bash
+   python -m pip install 'playwright>=1.40'
+   python -m playwright install chromium    # ~115 МБ, один раз
+   ```
+   Либо включите авто-установку (плагин сам поставит пакет и браузер при первом
+   рендере таблицы): добавьте `MAX_AUTO_INSTALL_PLAYWRIGHT=true` в `~/.hermes/.env`.
+
 2. **Настройте платформу:**
    ```bash
    hermes gateway setup

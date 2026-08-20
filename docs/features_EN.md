@@ -49,20 +49,27 @@ cp scripts/transcribe_audio.py ~/.hermes/scripts/
 
 ### How it works
 
-Markdown tables (`| A | B |\n|---|---|`) rendered as PNG images via Pillow.
+Markdown tables (`| A | B |\n|---|---|`) rendered as PNG images.
+Primary renderer is **HTML→PNG via Playwright/Chromium** (fixed layout, native
+emoji, no cell overflow); if the package or browser is unavailable it falls back
+to classic Pillow rendering.
 
-**Render algorithm (v5):**
+**Render algorithm (v6):**
 
-1. Parse markdown segments (`**bold**`, `*italic*`, `` `code` ``)
-2. Measure each cell width via `draw.textlength()`
-3. Soft-wrap text with styles
-4. Draw with colored status icons
+1. **Playwright (HTML→PNG):** table → HTML → screenshot via Chromium
+   (system Chrome when available, bundled otherwise)
+2. **Pillow (fallback):** parse markdown segments (`**bold**`, `*italic*`,
+   `` `code` ``), measure each cell via `draw.textlength()`, soft-wrap with
+   styles, draw with colored status icons
+3. PNG cache: the key includes the table text **and** the renderer engine —
+   switching engines never serves stale images
 
 ### Parameters
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | `MAX_TABLE_AS_IMAGE` | `false` | Enable PNG render |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | `false` | Auto-install Playwright + Chromium on first render |
 | `MAX_CELL_WIDTH` | `300px` | Max cell width |
 | `MAX_TABLE_WIDTH` | `1200px` | Max table width |
 | `CELL_PAD_X` | `22px` | Horizontal padding |
@@ -80,9 +87,10 @@ Markdown tables (`| A | B |\n|---|---|`) rendered as PNG images via Pillow.
 
 ### Troubleshooting
 
-**Pillow not installed:**
+**Pillow/Playwright not installed:**
 ```bash
-pip install Pillow
+python scripts/setup-playwright.py          # installs playwright + Chromium
+python -m pip install Pillow                # fallback renderer
 ```
 
 **Text truncated:**

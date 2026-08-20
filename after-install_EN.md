@@ -7,6 +7,17 @@ Next steps:
    pip install aiohttp httpx
    ```
 
+   **Tables as images (optional):** HTML→PNG rendering via Playwright/Chromium.
+   Install into the same Python the Hermes gateway runs in (its venv), otherwise
+   the package won't reach the plugin runtime. Windows:
+   `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
+   ```bash
+   python -m pip install 'playwright>=1.40'
+   python -m playwright install chromium    # ~115 MB, one-time
+   ```
+   Or enable auto-install (the plugin installs the package and browser itself on
+   the first table render): add `MAX_AUTO_INSTALL_PLAYWRIGHT=true` to `~/.hermes/.env`.
+
 2. **Configure the platform:**
    ```bash
    hermes gateway setup

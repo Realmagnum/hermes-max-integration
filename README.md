@@ -198,17 +198,29 @@ MAX_ALLOWED_USERS=ваш_id_в_max
 нативные эмодзи, никакого переполнения ячеек). Без браузера плагин автоматически
 фоллбэкает на классическую отрисовку через Pillow.
 
+> **Важно:** ставьте зависимости в тот же Python, где работает шлюз Hermes
+> (venv), иначе пакет не попадёт в рантайм плагина. Windows:
+> `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
+
 ```bash
 # Вариант A (рекомендуется): HTML→PNG через Playwright.
 #   Использует установленный Chrome/Chromium (system) или скачивает bundled:
-pip install 'hermes-max-integration[tables] @ git+https://github.com/Realmagnum/hermes-max-integration.git'
-playwright install chromium          # один раз; либо установите Chrome/Chromium вручную
+python -m pip install 'playwright>=1.40'
+python -m playwright install chromium          # ~115 МБ, один раз; либо установите Chrome/Chromium вручную
+
+# Идемпотентный скрипт вместо ручных команд (ставит только недостающее):
+python scripts/setup-playwright.py --check-only   # диагностика (exit 1, если чего-то нет)
+python scripts/setup-playwright.py                # установка недостающего
 
 # Вариант B (фоллбэк): классическая отрисовка через Pillow
-pip install Pillow
+python -m pip install Pillow
 
 echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
 ```
+
+**Авто-установка (опционально):** при `MAX_AUTO_INSTALL_PLAYWRIGHT=true`
+плагин сам поставит пакет и Chromium при первом рендере таблицы
+(займёт 1–2 минуты и потребует доступа в сеть; дальше рендер идёт как обычно).
 
 ### 5. Перезапуск
 
@@ -311,6 +323,7 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере таблицы (нужен доступ в сеть, 1–2 мин) |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
@@ -488,11 +501,17 @@ curl http://localhost:8646/health
 # Проверить что включено
 grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
 
-# Проверить Pillow
-pip list | grep Pillow
+# Диагностика рендера: playwright-пакет и Chromium на месте?
+python scripts/setup-playwright.py --check-only
+#   MISSING → python scripts/setup-playwright.py  (ставит недостающее)
+#   либо вручную: python -m pip install 'playwright>=1.40'
+#                 python -m playwright install chromium
+
+# Проверить Pillow (фоллбэк-рендер)
+pip list | grep -i pillow
 
 # Проверить логи
-grep -i "table\|upload\|pillow" ~/.hermes/logs/gateway.log
+grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
 ```
 
 ### SSL ошибки с MAX API
@@ -545,7 +564,9 @@ hermes-max-integration/
 └── .github/workflows/ci.yml # CI/CD
 ```
 
-**Примечание:** сгенерированные PNG-таблицы кэшируются в `~/.hermes/table_images/`.
+**Примечание:** сгенерированные PNG-таблицы кэшируются в `~/.hermes/table_images/`;
+ключ кэша включает движок рендера (Playwright/Pillow), так что при переключении
+движка старые картинки не подставляются.
 
 ## Безопасность
 

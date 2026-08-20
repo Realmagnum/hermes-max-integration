@@ -17,7 +17,8 @@
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Groups allowed for bot |
 | `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
 | `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to venv for faster-whisper |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG via Pillow |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG (HTML→PNG via Playwright, Pillow fallback) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first render |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (for testing) |

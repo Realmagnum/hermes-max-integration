@@ -99,13 +99,28 @@ ls -la ~/.hermes/audio_cache/max_audio_*.ogg
 - `MAX_TABLE_AS_IMAGE=true` установлен
 - Таблицы приходят текстом
 
-**Причина:** Нет Pillow
+**Причина:** нет Playwright/Chromium (основной рендер HTML→PNG) и/или нет Pillow
+(фоллбэк). Оба должны быть установлены в Python шлюза Hermes (venv).
 
 **Решение:**
 ```bash
-pip install Pillow
+# Диагностика: что отсутствует?
+python scripts/setup-playwright.py --check-only
+
+# Установить недостающее (идемпотентно):
+python scripts/setup-playwright.py
+# либо вручную:
+python -m pip install 'playwright>=1.40'
+python -m playwright install chromium
+
+# Фоллбэк-рендер без браузера:
+python -m pip install Pillow
+
 hermes gateway restart
 ```
+
+**Альтернатива:** `MAX_AUTO_INSTALL_PLAYWRIGHT=true` — плагин сам поставит
+пакет и Chromium при первом рендере таблицы (нужен доступ в сеть).
 
 ### 5. Reasoning не отображается
 

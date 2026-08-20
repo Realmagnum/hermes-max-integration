@@ -99,13 +99,28 @@ ls -la ~/.hermes/audio_cache/max_audio_*.ogg
 - `MAX_TABLE_AS_IMAGE=true` set
 - Tables arrive as text
 
-**Cause:** No Pillow
+**Cause:** Playwright/Chromium missing (primary HTML→PNG renderer) and/or Pillow
+missing (fallback). Both must be installed into the Hermes gateway Python (venv).
 
 **Solution:**
 ```bash
-pip install Pillow
+# Diagnostics: what is missing?
+python scripts/setup-playwright.py --check-only
+
+# Install what's missing (idempotent):
+python scripts/setup-playwright.py
+# or manually:
+python -m pip install 'playwright>=1.40'
+python -m playwright install chromium
+
+# Fallback renderer without a browser:
+python -m pip install Pillow
+
 hermes gateway restart
 ```
+
+**Alternative:** `MAX_AUTO_INSTALL_PLAYWRIGHT=true` — the plugin installs the
+package and Chromium itself on the first table render (needs network access).
 
 ### 5. Reasoning not displayed
 
