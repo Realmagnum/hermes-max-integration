@@ -2,6 +2,49 @@
 
 Все заметные изменения в плагине hermes-max-integration.
 
+## [2.9.0] — 2026-08-17
+
+### Рефакторинг
+
+- **Монолитный `adapter.py` (~3000 строк) разбит на модульную структуру `mixins/`** (ветка `feature/refactor-mixins-base`, 27 коммитов, merge без squash). `MaxAdapter` — тонкий фасад (2250 строк) поверх семи миксинов:
+  - `mixins/base.py` — базовое состояние и `http_client`
+  - `mixins/table_renderer.py` — рендеринг таблиц (текст + PNG)
+  - `mixins/media_upload.py` — двухшаговый upload на CDN MAX
+  - `mixins/buttons.py` — кнопки, approval/clarify, send_action
+  - `mixins/webhook.py` — aiohttp-сервер, подписки, секрет
+  - `mixins/sessions.py` — кросс-платформенные сессии
+  - `mixins/standalone.py` — standalone sender для cron/send_message
+- **Правило импортов:** внутри `mixins/` только относительные импорты (`.base`), `adapter.py` → `from .mixins.xxx` — иначе плагин бесшумно не загружается через систему плагинов Hermes
+- Удалён неиспользуемый `_seen_msgs`-дубль (SIM114), `next(iter(Platform))` вместо `list()[0]`, логирование в «молчаливых» except-блоках
+
+### Безопасность
+
+- **SSRF-защита скачивания медиа:** новый `_validate_download_url()` — только публичные http(s) хосты; блокируются loopback/private/link-local/reserved IP (включая `169.254.169.254`), `localhost` и `*.local`
+- **Утечка токена при редиректах закрыта:** убран `follow_redirects=True` из `_cache_audio/image/document_attachment` (клиент уже работает с `follow_redirects=False`; явное переопределение возвращало токен-переносящие редиректы)
+- **Предупреждение при пустом `MAX_WEBHOOK_SECRET`:** при старте вебхука без секрета логируется warning — иначе любой может слать события
+- `hashlib.md5(..., usedforsecurity=False)` — MD5 используется только для имени файла кэша, не для криптографии
+- Узкие except для JSON-парсинга: `(JSONDecodeError, TypeError, ValueError)` вместо слепого `Exception`
+
+### Исправлено
+
+- **Нормализация аудио перед загрузкой на CDN:** wav/flac/m4a транскодируются в Ogg/Opus через ffmpeg (CDN MAX отклоняет такие контейнеры с 415); ogg/mp3 проходят без изменений; идемпотентно
+- **Блокирующий `open()` в async-загрузке** заменён на `asyncio.to_thread(Path.read_bytes)` — файл читается вне event loop (media_upload, standalone)
+
+### Производительность
+
+- **Кэш таблиц-PNG теперь работает:** `_render_table_as_image` проверяет `table_<md5>.png` до отрисовки — повторные одинаковые таблицы переиспользуют готовое изображение вместо перерисовки
+
+### Качество
+
+- **Ruff: 220 → 0 ошибок** в `adapter.py`/`mixins/` (PEP 604/585 аннотации, импорты, автофиксы); тесты тоже чистые
+- **Bandit: High → 0** (остались только ложные B105 — имена env-переменных, и намеренный B104 — `0.0.0.0` для вебхука)
+- **Тесты: 154** (было 129): +11 SSRF-guard кейсов, +2 кэш таблиц, +12 нормализация аудио
+
+### Документация
+
+- `docs/refactor-plan.md` — план рефакторинга отмечен завершённым (все 11 шагов ✅)
+- CHANGELOG, README, AGENTS.md синхронизированы (RU+EN)
+
 ## [2.8.0] — 2026-08-05
 
 ### Изменено

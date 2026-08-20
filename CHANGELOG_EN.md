@@ -2,6 +2,49 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.9.0] — 2026-08-17
+
+### Refactor
+
+- **Monolithic `adapter.py` (~3000 lines) split into a modular `mixins/` structure** (branch `feature/refactor-mixins-base`, 27 commits, merge without squash). `MaxAdapter` is now a thin facade (2250 lines) over seven mixins:
+  - `mixins/base.py` — shared state and `http_client`
+  - `mixins/table_renderer.py` — table rendering (text + PNG)
+  - `mixins/media_upload.py` — two-step upload to the MAX CDN
+  - `mixins/buttons.py` — buttons, approval/clarify, send_action
+  - `mixins/webhook.py` — aiohttp server, subscriptions, secret
+  - `mixins/sessions.py` — cross-platform sessions
+  - `mixins/standalone.py` — standalone sender for cron/send_message
+- **Import rule:** only relative imports inside `mixins/` (`.base`); `adapter.py` → `from .mixins.xxx` — otherwise the plugin silently fails to load through the Hermes plugin system
+- Removed dead `_seen_msgs` duplicate (SIM114), `next(iter(Platform))` instead of `list()[0]`, logging in "silent" except blocks
+
+### Security
+
+- **SSRF protection for media downloads:** new `_validate_download_url()` — public http(s) hosts only; loopback/private/link-local/reserved IPs (incl. `169.254.169.254`), `localhost` and `*.local` are blocked
+- **Token leak on redirects closed:** removed `follow_redirects=True` from `_cache_audio/image/document_attachment` (the client already runs with `follow_redirects=False`; the explicit override re-enabled token-bearing redirects)
+- **Warning when `MAX_WEBHOOK_SECRET` is empty:** startup logs a warning if the webhook runs without a secret — otherwise anyone could post events
+- `hashlib.md5(..., usedforsecurity=False)` — MD5 is only used for the cache filename, not for cryptography
+- Narrow JSON-parsing excepts: `(JSONDecodeError, TypeError, ValueError)` instead of blind `Exception`
+
+### Fixed
+
+- **Audio normalization before CDN upload:** wav/flac/m4a are transcoded to Ogg/Opus via ffmpeg (the MAX CDN rejects such containers with 415); ogg/mp3 pass through unchanged; idempotent
+- **Blocking `open()` in async upload** replaced with `asyncio.to_thread(Path.read_bytes)` — the file is read off the event loop (media_upload, standalone)
+
+### Performance
+
+- **Table-PNG cache now works:** `_render_table_as_image` checks `table_<md5>.png` before rendering — repeated identical tables reuse the cached image instead of re-drawing
+
+### Quality
+
+- **Ruff: 220 → 0 errors** in `adapter.py`/`mixins/` (PEP 604/585 annotations, imports, auto-fixes); tests clean too
+- **Bandit: High → 0** (only false-positive B105 — env var names, and intentional B104 — `0.0.0.0` for the webhook)
+- **Tests: 154** (was 129): +11 SSRF-guard cases, +2 table cache, +12 audio normalization
+
+### Docs
+
+- `docs/refactor-plan.md` — refactoring plan marked complete (all 11 steps ✅)
+- CHANGELOG, README, AGENTS.md synced (RU+EN)
+
 ## [2.8.0] — 2026-08-05
 
 ### Changed
