@@ -171,10 +171,220 @@ class TableRendererMixin(MaxBaseMixin):
         result.append('`' + sep + '`')
         return '\n'.join(result)
 
+    # ─────────────────────────────────────────────────────────────────────
+    # HTML→PNG rendering (variant A: table-layout:fixed + explicit widths)
+    # Preferred renderer. Falls back to Pillow if playwright/Chromium is absent.
+    # ─────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _sanitize_html(value: str) -> str:
+        """HTML-escape cell text so it renders literally."""
+        import html as _html
+        return _html.escape(value, quote=True)
+
+    @staticmethod
+    def _markdown_to_html(text: str) -> str:
+        """Convert a cell with inline markdown into HTML.
+
+        Supports **bold**, *italic* and `code` inline markers. Everything else is
+        HTML-escaped so it renders literally (safe against injection). Emoji pass
+        through untouched and render natively in the browser.
+        """
+        import html as _html
+        import re as _re
+
+        # Escape first, then add tags around escaped content. To keep the markers
+        # recognizable we split on the markdown patterns BEFORE escaping inner text.
+        out, pos = [], 0
+        pattern = _re.compile(r"(\*\*.+?\*\*|`[^`]+`|(?<!\*)\*[^*\n]+?\*(?!\*))")
+        for m in pattern.finditer(text):
+            out.append(_html.escape(text[pos:m.start()], quote=True))
+            token = m.group(1)
+            if token.startswith("**") and token.endswith("**"):
+                out.append(f"<b>{_html.escape(token[2:-2])}</b>")
+            elif token.startswith("`") and token.endswith("`"):
+                out.append(f"<code>{_html.escape(token[1:-1])}</code>")
+            else:  # *italic*
+                out.append(f"<i>{_html.escape(token[1:-1])}</i>")
+            pos = m.end()
+        out.append(_html.escape(text[pos:], quote=True))
+        return "".join(out)
+
+    @staticmethod
+    def _rich_cell_html(text: str) -> str:
+        """Wrap status/symbol cells in colored spans and normalize pseudo-statuses.
+
+        Recognizes the same semantic tokens the legacy Pillow renderer did
+        (✅ ❌ ⚠ ⏳ 🔴 🟢 🟡 and [OK]/[ERR]/[WARN]/[WAIT]/[SCHED]/[CRIT]) but
+        keeps real emoji intact so the browser draws them in full color.
+        Returns HTML already escaped + marked.
+        """
+        # 1) Text pseudo-status tokens → real glyphs (kept as plain text)
+        text = text.replace("[OK]", "✅").replace("[ERR]", "❌").replace("[WARN]", "⚠")
+        text = text.replace("[WAIT]", "⏳").replace("[SCHED]", "🔔").replace("[CRIT]", "🚨")
+        text = text.replace("[GOOD]", "✅").replace("[MID]", "⚠")
+
+        # 2) Map emoji → (glyph, color-class). Strip variation selectors first.
+        text = text.replace("\ufe0f", "").replace("\ufe0e", "")
+        status_map = [
+            ("✅", "ok"), ("❌", "err"), ("⚠", "warn"),
+            ("🔴", "err"), ("🟢", "ok"), ("🟡", "warn"),
+            ("⏳", "wait"), ("🔔", "wait"), ("🚨", "err"),
+        ]
+        # whole-cell status detection: if the trimmed cell IS a status glyph
+        stripped = text.strip()
+        matched = None
+        for glyph, cls in status_map:
+            if stripped == glyph or stripped.startswith(glyph + " "):
+                matched = (glyph, cls)
+                break
+        # Render: markdown→HTML for any surrounding text; if a status glyph is
+        # present, wrap the whole cell in the matching colored span.
+        html_body = TableRendererMixin._markdown_to_html(text)
+        if matched and matched[1]:
+            return f'<span class="{matched[1]}">{html_body}</span>'
+        return html_body
+
+    @classmethod
+    def _build_table_html(cls, rows: list, ncols: int) -> str:
+        """Build an HTML document with a clean table using table-layout:fixed.
+
+        Variant A: explicit column widths (percent) computed from the data so
+        short columns (number/status/address) keep their size and don't get
+        squeezed by wide text columns. Inline markdown styles, native emoji and
+        status colors render in the browser.
+        """
+        # ── Column width distribution ────────────────────────────────
+        # Heuristic: cap displayed text length per column; short columns get
+        # small %, the widest-text column gets the remainder.
+        col_max_len = []
+        for ci in range(ncols):
+            mx = 0
+            for ri, row in enumerate(rows):
+                cell = row[ci] if ci < len(row) else ""
+                # strip common markdown markers to gauge real length
+                plain = cell.replace("**", "").replace("`", "").replace("*", "")
+                mx = max(mx, len(plain))
+            col_max_len.append(mx)
+
+        total_len = sum(col_max_len) or 1
+        fixed_share = 0.10  # base % per column regardless
+        widths_pct = []
+        for mx in col_max_len:
+            w = fixed_share + (mx / total_len) * (1.0 - fixed_share * ncols)
+            widths_pct.append(w)
+
+        # Normalize to 100%
+        total_pct = sum(widths_pct)
+        widths_pct = [w / total_pct * 100.0 for w in widths_pct]
+
+        colhead_styles = []
+        for ci in range(ncols):
+            pct = widths_pct[ci]
+            style = f"width:{pct:.1f}%"
+            # Very short cells (status/numbers) → don't wrap unnecessarily
+            if col_max_len[ci] <= 10:
+                style += "; white-space:nowrap"
+            colhead_styles.append(style)
+
+        th_rows = "".join(
+            f"<th style='{colhead_styles[ci]}'>{cls._rich_cell_html(rows[0][ci])}</th>"
+            for ci in range(ncols)
+        )
+        body_rows = []
+        for ri in range(1, len(rows)):
+            tds = []
+            for ci in range(ncols):
+                val = rows[ri][ci] if ci < len(rows[ri]) else ""
+                tds.append(f"<td>{cls._rich_cell_html(val)}</td>")
+            body_rows.append("<tr>" + "".join(tds) + "</tr>")
+
+        return f"""<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{ margin:0; padding:0; background:#ffffff; -webkit-font-smoothing:antialiased; }}
+  .wrap {{ display:inline-block; padding:12px; }}
+  table {{
+    border-collapse: collapse; width:100%; table-layout:fixed; max-width:820px;
+    font-family: "Inter","SF Pro Text",-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    font-size: 14px; line-height:1.45; color:#0f172a;
+  }}
+  thead th {{
+    background:#1e293b; color:#ffffff; font-weight:600; text-align:left;
+    padding:9px 12px; border:2px solid #94a3b8; overflow:hidden;
+  }}
+  tbody td {{
+    padding:8px 12px; border:1px solid #e2e8f0; vertical-align:top;
+    overflow-wrap:break-word; word-break:break-word;
+  }}
+  tbody tr:nth-child(odd) {{ background:#ffffff; }}
+  tbody tr:nth-child(even) {{ background:#f1f5f9; }}
+  code {{ font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:12.5px; background:#eef2f7; padding:1px 4px; border-radius:3px; }}
+  b {{ font-weight:700; }}
+  i {{ font-style:italic; }}
+  .ok   {{ color:#16a34a; font-weight:600; }}
+  .err  {{ color:#dc2626; font-weight:600; }}
+  .warn {{ color:#ea580c; font-weight:600; }}
+  .wait {{ color:#3b82f6; font-weight:600; }}
+</style></head><body><div class="wrap">
+<table>
+  <thead><tr>{th_rows}</tr></thead>
+  <tbody>{''.join(body_rows)}</tbody>
+</table>
+</div></body></html>"""
+
+    async def _render_table_html_png(self, rows: list, ncols: int, out_path) -> bool:
+        """Render table to PNG via playwright + Chromium. Returns True on success."""
+        html = TableRendererMixin._build_table_html(rows, ncols)
+
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.warning("MAX: playwright not installed, table→PNG via Pillow fallback")
+            return False
+
+        try:
+            # Write HTML next to output so a relative path is stable
+            html_path = out_path.with_suffix(".html")
+            html_path.write_text(html, encoding="utf-8")
+
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    channel="chrome" if _chrome_available() else None,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                try:
+                    page = await browser.new_page(device_scale_factor=2)
+                    await page.goto(f"file://{html_path}")
+                    await page.wait_for_timeout(120)
+                    el = await page.query_selector(".wrap")
+                    if el is None:
+                        raise RuntimeError("table .wrap element not found")
+                    await el.screenshot(path=str(out_path))
+                finally:
+                    await browser.close()
+                # Remove the temp html helper file, keep the PNG
+                html_path.unlink(missing_ok=True)
+            return out_path.exists()
+        except Exception as e:  # noqa: BLE001 — any browser/pw failure → fallback
+            logger.warning("MAX: HTML→PNG render failed (%s); falling back to Pillow", e)
+            # cleanup partial html/png
+            for pth in (html_path, out_path):
+                try:
+                    pth.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return False
+
     async def _render_table_as_image(self, table_lines: list) -> str | None:
         """Render pipe-delimited table lines as a clean PNG and upload to MAX.
 
         Returns upload token on success, None on failure.
+
+        Rendering strategy (preferred → fallback):
+          1) HTML→PNG via Playwright + Chromium (variant A: fixed layout,
+             native emoji, never overflows cells)
+          2) Pillow ImageDraw (legacy) if playwright/browser is unavailable
         """
         # ── Cache hit? (content-addressed by table text; rendering is
         #    deterministic, so identical tables reuse the same PNG) ────
@@ -189,6 +399,17 @@ class TableRendererMixin(MaxBaseMixin):
         rows, ncols = TableRendererMixin._parse_table_rows(table_lines)
         if not rows or ncols == 0:
             return None
+
+        # ── Preferred: HTML→PNG via Playwright + Chromium (variant A) ──
+        # Falls back to the legacy Pillow render below if unavailable.
+        if await self._render_table_html_png(rows, ncols, out_path):
+            try:
+                token = await self._upload(str(out_path), "image")
+                if token:
+                    return token
+                logger.warning("MAX: HTML→PNG rendered but upload failed; falling back")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("MAX: HTML→PNG upload error (%s); falling back to Pillow", e)
 
         def _prepare_cell(val: str) -> tuple:
             """Convert raw cell text to (display_text, color).
@@ -582,3 +803,24 @@ class TableRendererMixin(MaxBaseMixin):
 
         token = await self._upload(str(out_path), "image")
         return token
+
+
+def _chrome_available() -> bool:
+    """Return True if a system Chrome/Chromium binary can be found.
+
+    Used to pick Playwright's `channel="chrome"` (uses installed Chrome)
+    vs the bundled Chromium. When playwright is not installed at all this
+    function is not even reached (import above fails first).
+    """
+    import shutil
+
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        if shutil.which(name):
+            return True
+    # macOS app bundle
+    candidates = (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    )
+    return any(os.path.isfile(p) for p in candidates)
+
