@@ -1,6 +1,5 @@
 """Tests for media extraction."""
 
-import pytest
 
 import adapter
 
@@ -114,3 +113,44 @@ class TestDeriveMessageType:
 
     def test_document(self):
         assert adapter.MaxAdapter._derive_message_type("", ["application/pdf"]) == adapter.MessageType.DOCUMENT
+
+
+class TestValidateDownloadUrl:
+    """SSRF guard for media download URLs."""
+
+    def test_public_https(self):
+        assert adapter.MaxAdapter._validate_download_url("https://cdn.max.ru/file.ogg")
+
+    def test_public_http(self):
+        assert adapter.MaxAdapter._validate_download_url("http://cdn.max.ru/file.ogg")
+
+    def test_non_http_scheme(self):
+        assert not adapter.MaxAdapter._validate_download_url("ftp://cdn.max.ru/file.ogg")
+        assert not adapter.MaxAdapter._validate_download_url("file:///etc/passwd")
+
+    def test_metadata_ip(self):
+        assert not adapter.MaxAdapter._validate_download_url("http://169.254.169.254/latest/meta-data/")
+
+    def test_loopback(self):
+        assert not adapter.MaxAdapter._validate_download_url("http://127.0.0.1:8646/health")
+        assert not adapter.MaxAdapter._validate_download_url("http://[::1]/x")
+
+    def test_private_ranges(self):
+        assert not adapter.MaxAdapter._validate_download_url("http://10.0.0.5/")
+        assert not adapter.MaxAdapter._validate_download_url("http://192.168.1.10/")
+        assert not adapter.MaxAdapter._validate_download_url("http://172.16.0.1/")
+
+    def test_link_local_ipv6(self):
+        assert not adapter.MaxAdapter._validate_download_url("http://[fe80::1]/x")
+
+    def test_localhost_name(self):
+        assert not adapter.MaxAdapter._validate_download_url("http://localhost:8646/health")
+
+    def test_mdns_local_host(self):
+        assert not adapter.MaxAdapter._validate_download_url("http://printer.local/file")
+
+    def test_missing_host(self):
+        assert not adapter.MaxAdapter._validate_download_url("http:///no-host")
+
+    def test_bare_url(self):
+        assert not adapter.MaxAdapter._validate_download_url("not-a-url")

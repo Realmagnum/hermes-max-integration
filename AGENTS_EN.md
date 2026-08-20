@@ -4,7 +4,7 @@
 
 > **⚠️ Bilingual Project:** All `*.md` documentation files are written in **Russian** (primary language). Each file must have an English translation in the format `*_EN.md`. Any change to the original **must** be synced to the translation. The English version is an exact translation of the Russian one, with identical structure and content.
 
-This repository contains a Hermes Agent platform plugin that adds Max messenger as a gateway channel with STT voice transcription.
+This repository contains a Hermes Agent platform plugin that adds Max messenger as a gateway channel (voice transcription is performed by the Hermes core).
 
 When a user gives you this repository and asks to connect Hermes to Max:
 
@@ -33,16 +33,10 @@ When a user gives you this repository and asks to connect Hermes to Max:
    hermes gateway status
    curl http://localhost:8646/health
    ```
-10. For STT (voice transcription), install faster-whisper:
-    ```bash
-    python3 -m venv ~/.hermes/stt-venv
-    ~/.hermes/stt-venv/bin/pip install faster-whisper
-    cp scripts/transcribe_audio.py ~/.hermes/scripts/
-    ```
-11. When the agent receives a voice message (marked as `[Audio: /path/to/file.ogg]`), transcribe it:
-    ```bash
-    ~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
-    ```
+10. STT (voice transcription) is provided by the **Hermes core** (>= 0.20.0): the plugin adapter only downloads and caches audio, the core transcribes it according to the `stt` config in `config.yaml`. No plugin setting is needed; `MAX_STT_ENABLED` was removed.
+    - Core providers: `local` (faster-whisper, free), `groq`, `openai` (whisper-1 / gpt-transcribe), `mistral`, `xai`, `elevenlabs`
+    - Setup: `hermes tools` → STT category, or manually `config.yaml` → `stt.language` (for Russian — `ru`; default is `"en"`)
+11. When the agent receives a voice message (`[Audio: /path/to/file.ogg]`), the core has already transcribed it — just answer the content.
 
 **Important current Max API facts** (checked 2026-07-21):
 - Bot API requests use `Authorization: ***` header; token in query parameters is no longer supported.
@@ -58,10 +52,9 @@ When a user gives you this repository and asks to connect Hermes to Max:
 - **Callback updates (`message_callback`)** contain a `message` object; the chat_id for routing lives at `message.recipient.chat_id`, NOT at `chat.chat_id` or top-level `chat_id`.
 
 **STT-specific:**
-- Voice messages from Max come as audio attachments with `payload.url` for direct download.
-- The adapter auto-downloads them to `~/.hermes/audio_cache/max_audio_{message_id}.ogg` when `MAX_STT_ENABLED=true`.
-- Use the `scripts/transcribe_audio.py` script with faster-whisper for transcription.
-- Default model: `base` (best speed/accuracy trade-off on CPU).
+- Voice messages from MAX arrive as audio attachments with `payload.url` for direct download.
+- The adapter downloads and caches them; transcription is done by the Hermes core (core STT, `config.yaml` → `stt`).
+- Model/provider/language are configured in the core, not in the plugin.
 
 **Tables as Images (`MAX_TABLE_AS_IMAGE=true`):**
 - Pipe markdown tables (`| A | B |\n|---|---|`) are rendered as Pillow-generated PNG images.

@@ -8,3 +8,4 @@ dist/
 .ruff_cache/
 *.log
 .DS_Store
+.hermes-tmp.*/

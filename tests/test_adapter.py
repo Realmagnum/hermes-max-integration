@@ -1,9 +1,6 @@
 """Core adapter tests."""
 
-import os
-import types
-import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -48,9 +45,7 @@ class TestEnvEnablement:
         monkeypatch.setenv("MAX_WEBHOOK_PORT", "8646")
         monkeypatch.setenv("MAX_WEBHOOK_PATH", "/max/webhook")
         monkeypatch.setenv("MAX_ALLOWED_USERS", "1, 2")
-        from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True)
-        result = adapter.MaxAdapter._env_enablement(cfg)
+        result = adapter._env_enablement()
         assert result is not None
 
 

@@ -7,7 +7,8 @@ for receiving messages, and the Max Bot REST API for sending responses.
 Architecture:
 - Inbound:  Long polling (GET /updates) OR Webhook (POST /max/webhook) → MessageEvent
 - Outbound: httpx → POST /messages (with chunking for >4000 chars)
-- STT:      Voice messages auto-downloaded → local path → faster-whisper transcription
+- STT:      Voice messages auto-downloaded and cached; transcription is
+            handled by the Hermes core STT pipeline (config.yaml -> stt)
 - Files:    Two-step upload (POST /uploads → PUT file → token → send)
 - Streaming: edit_message via PUT /messages
 
@@ -15,35 +16,46 @@ Configuration in ~/.hermes/.env:
   MAX_BOT_TOKEN (required)
   MAX_WEBHOOK_HOST, MAX_WEBHOOK_PORT, MAX_WEBHOOK_PATH
   MAX_WEBHOOK_SECRET, MAX_ALLOWED_USERS, MAX_ALLOW_ALL_USERS
-  MAX_STT_ENABLED (default: true)
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import mimetypes
 import os
-import socket as _socket
 import time
-import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-
-from gateway.config import PlatformConfig, Platform
+from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
+    SUPPORTED_DOCUMENT_TYPES,
     BasePlatformAdapter,
     MessageEvent,
     MessageType,
     SendResult,
-    SUPPORTED_DOCUMENT_TYPES,
     cache_audio_from_bytes,
-    cache_image_from_bytes,
     cache_document_from_bytes,
+    cache_image_from_bytes,
+)
+
+from .mixins.buttons import ButtonsMixin
+from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
+    _ALLOWED_UPLOAD_HOSTS,
+    MediaUploadMixin,
+)
+from .mixins.sessions import SessionsMixin
+from .mixins.standalone import (  # noqa: F401 — re-export (tests use adapter._standalone_get_token)
+    _standalone_get_token,
+    _standalone_send,
+)
+from .mixins.table_renderer import TableRendererMixin
+from .mixins.webhook import (  # noqa: F401 — re-export (tests use adapter._verify_raw_secret)
+    WebhookMixin,
+    _verify_raw_secret,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,34 +64,23 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 MAX_MESSAGE_LENGTH = 4000
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
-WEBHOOK_MAX_BODY_BYTES = 1_048_576  # 1 MB
 UPLOAD_DELAY = 2.0
 
-# SSRF allowlist for file upload CDNs (used by both adapter and standalone sender)
-_ALLOWED_UPLOAD_HOSTS = frozenset({
-    "platform-api.max.ru",
-    "cdn.max.ru",
-    "storage.max.ru",
-    "upload.max.ru",
-    "iu.oneme.ru",
-    "fu.oneme.ru",
-})
+# SSRF allowlist is in .mixins.media_upload
 
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy reverse proxy; порт защищён host firewall
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
 
-# STT
+# Audio cache anchor (also parent of table_images dir)
 AUDIO_CACHE_DIR = Path(
     os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))
 ) / "audio_cache"
 
 # Ensure cache dir exists with restricted permissions (voice messages are private)
 AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-DEFAULT_STT_ENABLED = True
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 import json as _json
@@ -96,7 +97,7 @@ def _safe_url_for_log(url: str) -> str:
     return url
 
 
-def _find_audio_url_direct(obj: Any, depth: int = 0) -> Optional[str]:
+def _find_audio_url_direct(obj: Any, depth: int = 0) -> str | None:
     """Recursively search for an audio/voice download URL in a MAX update.
 
     Searches common MAX fields: message.attachments, .voice, .audio,
@@ -135,7 +136,7 @@ def _find_audio_url_direct(obj: Any, depth: int = 0) -> Optional[str]:
     return None
 
 
-def _parse_list(value: str) -> List[str]:
+def _parse_list(value: str) -> list[str]:
     """Parse comma-separated string into trimmed list."""
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
@@ -146,21 +147,6 @@ def _is_group(chat_id: str) -> bool:
         return int(chat_id) < 0
     except (ValueError, TypeError):
         return False
-
-
-def _verify_raw_secret(body: bytes, secret: str, secret_header: Optional[str]) -> bool:
-    """Constant-time comparison of webhook secret.
-
-    Max sends the raw secret in X-Max-Bot-Api-Secret header (not HMAC).
-    Uses secrets.compare for timing-safe string comparison.
-    """
-    import secrets
-    del body  # kept for API compatibility
-    if not secret:
-        return True
-    if not secret_header:
-        return False
-    return secrets.compare_digest(str(secret), str(secret_header))
 
 
 def _coerce_bool(value: Any, default: bool = False) -> bool:
@@ -174,8 +160,8 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
 
-class MaxAdapter(BasePlatformAdapter):
-    """MAX messenger platform adapter with STT voice transcription."""
+class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
+    """MAX messenger platform adapter (voice transcription via Hermes core STT)."""
 
     def __init__(self, config: PlatformConfig):
         try:
@@ -190,8 +176,8 @@ class MaxAdapter(BasePlatformAdapter):
                 Platform._value2member_map_["max"] = pseudo
                 Platform._member_map_["MAX"] = pseudo
                 platform = pseudo
-            except Exception:
-                platform = list(Platform)[0]
+            except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
+                platform = next(iter(Platform))
         super().__init__(config=config, platform=platform)
         extra = getattr(config, "extra", {}) or {}
 
@@ -200,13 +186,6 @@ class MaxAdapter(BasePlatformAdapter):
             os.getenv("MAX_BOT_TOKEN", "")
             or getattr(config, "token", "")
             or extra.get("token", "")
-        )
-
-        # STT
-        self._stt_enabled: bool = _coerce_bool(
-            os.getenv("MAX_STT_ENABLED")
-            or extra.get("stt_enabled", DEFAULT_STT_ENABLED),
-            DEFAULT_STT_ENABLED,
         )
 
         # Table-as-image (requires Pillow)
@@ -267,37 +246,37 @@ class MaxAdapter(BasePlatformAdapter):
 
         # Group access control
         self._group_policy: str = extra.get("group_policy", "allowlist")
-        self._group_allow_from: List[str] = _parse_list(
+        self._group_allow_from: list[str] = _parse_list(
             os.getenv("MAX_GROUP_ALLOWED_USERS", "")
             or str(extra.get("group_allow_from", ""))
         )
-        self._group_allow_chats: List[str] = _parse_list(
+        self._group_allow_chats: list[str] = _parse_list(
             os.getenv("MAX_GROUP_ALLOWED_CHATS", "")
             or str(extra.get("group_allow_chats", ""))
         )
 
         # Runtime state
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: httpx.AsyncClient | None = None
         self._webhook_runner: Any = None  # aiohttp.web.AppRunner
         self._webhook_site: Any = None
         self._webhook_app: Any = None
         self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
-        self._poll_task: Optional[asyncio.Task] = None
+        self._poll_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
         self._stop: asyncio.Event = asyncio.Event()
         self._running: bool = False
 
         # Dedup: mid → timestamp (max 5000 entries to prevent memory exhaustion)
-        self._seen_msgs: Dict[str, float] = {}
+        self._seen_msgs: dict[str, float] = {}
         self._SEEN_MSGS_MAX = 5000
         # DM routing: chat_id → user_id
-        self._dm_user_ids: Dict[str, str] = {}
+        self._dm_user_ids: dict[str, str] = {}
 
         # Interactive button state tracking
-        self._exec_approval_state: Dict[str, str] = {}   # approval_id → session_key
-        self._slash_confirm_state: Dict[str, str] = {}   # confirm_id → session_key
-        self._clarify_state: Dict[str, str] = {}          # clarify_id → session_key
-        self._model_picker_state: Dict[str, dict] = {}    # chat_id → picker state
+        self._exec_approval_state: dict[str, str] = {}   # approval_id → session_key
+        self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
+        self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
+        self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
 
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
@@ -343,7 +322,7 @@ class MaxAdapter(BasePlatformAdapter):
             else:
                 logger.warning("MAX: failed to set commands: %s", resp.status_code)
                 return False
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: error setting commands: %s", e)
             return False
 
@@ -381,11 +360,11 @@ class MaxAdapter(BasePlatformAdapter):
                 # Register slash commands via PATCH /me/commands
                 try:
                     await self._set_bot_commands()
-                except Exception as cmd_err:
+                except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
                     logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
             else:
                 logger.warning("MAX: /me returned %s", resp.status_code)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             await self._http_client.aclose()
             self._http_client = None
             self._set_fatal_error("conn_fail", str(e), retryable=True)
@@ -416,8 +395,8 @@ class MaxAdapter(BasePlatformAdapter):
         if self._webhook_runner:
             try:
                 await self._webhook_runner.cleanup()
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
+                logger.debug("MAX: webhook cleanup error: %s", exc)
             self._webhook_runner = None
             self._webhook_app = None
 
@@ -478,7 +457,7 @@ class MaxAdapter(BasePlatformAdapter):
                                     "MAX: failed to delete stale subscription %s: HTTP %s",
                                     url, del_resp.status_code,
                                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.debug(
                 "MAX: webhook cleanup skipped (non-fatal): %s", e,
             )
@@ -514,7 +493,7 @@ class MaxAdapter(BasePlatformAdapter):
                     logger.warning("MAX: poll HTTP %s (attempt %d)", resp.status_code, errs)
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 errs += 1
                 logger.warning("MAX: poll error (attempt %d): %s: %s", errs, type(e).__name__, e)
                 await asyncio.sleep(min(POLL_ERROR_DELAY * (2 ** min(errs - 1, 4)), 60))
@@ -523,127 +502,12 @@ class MaxAdapter(BasePlatformAdapter):
     # Webhook server
     # ═════════════════════════════════════════════════════════════════════
 
-    async def _start_webhook(self) -> bool:
-        """Start aiohttp webhook server."""
-        try:
-            from aiohttp import web
-        except ImportError:
-            self._set_fatal_error("no_aiohttp", "aiohttp not installed", retryable=False)
-            return False
-
-        # Port-in-use check
-        try:
-            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
-                sock.settimeout(1)
-                sock.connect(("127.0.0.1", self._webhook_port))
-            self._set_fatal_error("port_in_use", f"Port {self._webhook_port} already in use", retryable=False)
-            return False
-        except (ConnectionRefusedError, OSError):
-            pass  # Port is free
-
-        # Port-in-use check
-        try:
-            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
-                sock.settimeout(1)
-                sock.connect(("127.0.0.1", self._webhook_port))
-            self._set_fatal_error("port_in_use", f"Port {self._webhook_port} already in use", retryable=False)
-            return False
-        except (ConnectionRefusedError, OSError):
-            pass  # Port is free
-
-        secret = self._webhook_secret
-        path = self._webhook_path
-
-        app = web.Application()
-
-        async def health_handler(req: web.Request) -> web.Response:
-            return web.json_response({"status": "ok"})
-
-        # Rate limiter for webhook (per-IP, in-memory, cleaned every 5 min)
-        _webhook_hits: Dict[str, list] = {}
-        _WEBHOOK_LIMIT = 30   # max requests
-        _WEBHOOK_WINDOW = 10  # per 10 seconds
-
-        async def webhook_handler(req: web.Request) -> web.Response:
-            nonlocal _webhook_hits
-            # Simple per-IP rate limiting
-            now = time.monotonic()
-            peer = req.remote or "unknown"
-            hits = _webhook_hits.get(peer, [])
-            hits[:] = [t for t in hits if now - t < _WEBHOOK_WINDOW]
-            if len(hits) >= _WEBHOOK_LIMIT:
-                logger.warning("MAX: webhook rate limit exceeded for %s", peer)
-                return web.Response(status=429)
-            hits.append(now)
-            _webhook_hits[peer] = hits
-            # Periodic cleanup
-            if len(_webhook_hits) > 1000:
-                _webhook_hits = {k: v for k, v in _webhook_hits.items()
-                                 if any(now - t < _WEBHOOK_WINDOW for t in v)}
-
-            # Verify secret
-            if secret:
-                body = await req.read()
-                sig = req.headers.get("X-Max-Bot-Api-Secret", "")
-                if not _verify_raw_secret(body, secret, sig):
-                    logger.warning("MAX: webhook secret verification failed")
-                    return web.Response(status=403)
-                try:
-                    payload = json.loads(body)
-                except json.JSONDecodeError:
-                    return web.Response(status=400, text="invalid json")
-            else:
-                try:
-                    payload = await req.json()
-                except Exception:
-                    return web.Response(status=400, text="invalid json")
-
-            event = await self._build_event(payload)
-            if event is not None:
-                await self._message_queue.put(event)
-            return web.Response(text="ok")
-
-        app.router.add_get("/health", health_handler)
-        app.router.add_post(path, webhook_handler)
-
-        self._webhook_app = app
-        self._webhook_runner = web.AppRunner(app)
-        await self._webhook_runner.setup()
-        site = web.TCPSite(self._webhook_runner, self._webhook_host, self._webhook_port)
-        await site.start()
-        logger.info("MAX: webhook on %s:%s%s", self._webhook_host, self._webhook_port, path)
-
-        # Auto-register webhook if URL is set
-        if self._webhook_url:
-            try:
-                body: Dict[str, Any] = {
-                    "url": self._webhook_url,
-                    "update_types": ["message_created", "message_callback", "bot_started", "bot_added"],
-                }
-                if secret:
-                    body["secret"] = secret
-                resp = await self._http_client.post(
-                    f"{MAX_API_BASE}/subscriptions",
-                    json=body,
-                    timeout=httpx.Timeout(10.0),
-                )
-                if resp.status_code == 200:
-                    d = resp.json()
-                    logger.info("MAX: webhook registered%s", "" if d.get("success") else f" — {d.get('message')}")
-            except Exception as e:
-                logger.error("MAX: webhook register failed: %s", e)
-
-        # Start poll loop for draining the queue
-        self._poll_task = asyncio.create_task(self._queue_poll_loop())
-        self._mark_connected()
-        return True
-
     async def _queue_poll_loop(self) -> None:
         """Drain the message queue and dispatch to the gateway runner."""
         while self._running:
             try:
                 event = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
@@ -660,7 +524,7 @@ class MaxAdapter(BasePlatformAdapter):
     # Update processing
     # ═════════════════════════════════════════════════════════════════════
 
-    async def _build_event(self, payload: Dict[str, Any]) -> Optional[MessageEvent]:
+    async def _build_event(self, payload: dict[str, Any]) -> MessageEvent | None:
         """Parse a Max Update object into a MessageEvent."""
         update_type = payload.get("update_type", "")
 
@@ -717,7 +581,7 @@ class MaxAdapter(BasePlatformAdapter):
 
         return None
 
-    async def _on_message_created(self, update: dict) -> Optional[MessageEvent]:
+    async def _on_message_created(self, update: dict) -> MessageEvent | None:
         """Process message_created update. Returns MessageEvent or None."""
         message = update.get("message", {}) or {}
         body = message.get("body") or {}
@@ -769,16 +633,14 @@ class MaxAdapter(BasePlatformAdapter):
                 return None
             self._seen_msgs[mid] = now
             # Prune old entries + hard limit
-            if len(self._seen_msgs) > self._SEEN_MSGS_MAX:
-                self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
-            elif len(self._seen_msgs) > 100:
+            if len(self._seen_msgs) > self._SEEN_MSGS_MAX or len(self._seen_msgs) > 100:
                 self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
 
         # Access control
-        if not self._allow_all_users and self._allowed_users_set:
-            if user_id not in self._allowed_users_set:
-                logger.debug("MAX: ignoring message from unauthorized user %s", user_id)
-                return None
+        if (not self._allow_all_users and self._allowed_users_set
+                and user_id not in self._allowed_users_set):
+            logger.debug("MAX: ignoring message from unauthorized user %s", user_id)
+            return None
 
         # Group access control
         if chat_type == "group":
@@ -798,28 +660,11 @@ class MaxAdapter(BasePlatformAdapter):
             len(media_urls), media_types,
         )
 
-        # Auto-transcribe audio when STT is enabled
-        if self._stt_enabled and media_urls:
-            logger.info(
-                "MAX: STT starting for %s audio file(s) of types %s",
-                len(media_urls), media_types,
-            )
-            stt_text = await self._transcribe_media(media_urls, media_types)
-            if stt_text:
-                text = (text + "\n\n" + stt_text).strip() if text else stt_text
-                logger.info("MAX: audio auto-transcribed: %s...", stt_text[:80])
-            else:
-                logger.warning("MAX: STT returned empty transcription")
-        elif self._stt_enabled and not media_urls and not text:
-            logger.warning(
-                "MAX: empty message with no media — possible undetected voice. "
-                "update_type=%r Update keys: %s, Message keys: %s",
-                update.get("update_type"),
-                list(update.keys()), list(message.keys()),
-            )
-            # Fallback: try direct audio extraction from MAX voice format.
-            # MAX may send voice as message.attachments, message.voice, or
-            # at the update root level instead of body.attachments.
+        # Voice messages: cache any audio attachments so the Hermes core STT
+        # pipeline (config.yaml -> stt) can transcribe them. MAX may send
+        # voice as message.attachments, message.voice, or at the update root
+        # level instead of body.attachments.
+        if not media_urls and not text:
             voice_url = _find_audio_url_direct(update)
             if voice_url:
                 logger.info("MAX: found audio via fallback: %s", _safe_url_for_log(voice_url))
@@ -828,13 +673,10 @@ class MaxAdapter(BasePlatformAdapter):
                 )
                 if cached:
                     audio_path, audio_mtype = cached
-                    stt_text = await self._transcribe_media(
-                        [audio_path], [audio_mtype]
-                    )
-                    if stt_text:
-                        text = stt_text
-                        logger.info("MAX: audio auto-transcribed: %s...", stt_text[:80])
-            if not text:
+                    media_urls.append(audio_path)
+                    media_types.append(audio_mtype)
+                    logger.info("MAX: audio cached (fallback) to %s", audio_path)
+            if not media_urls and not text:
                 logger.warning("MAX: raw update payload: %s",
                     _json.dumps(update, ensure_ascii=False, default=str)[:2048])
 
@@ -849,7 +691,7 @@ class MaxAdapter(BasePlatformAdapter):
                     text = (text + f"\n[Image: {url}]").strip() if text else f"[Image: {url}]"
                 elif atype == "audio":
                     audio_url = payload_att.get("url", "")
-                    if audio_url and self._stt_enabled:
+                    if audio_url:
                         pseudo_att = {"type": "audio", "payload": {"url": audio_url}}
                         cached = await self._cache_audio_attachment(pseudo_att, "audio")
                         if cached:
@@ -865,7 +707,7 @@ class MaxAdapter(BasePlatformAdapter):
                 elif atype == "file":
                     text = (text + "\n[File]").strip() if text else "[File]"
                 elif atype == "location":
-                    text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else f"[Location: ...]"
+                    text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else "[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
         if text and self._cross_session:
@@ -917,10 +759,10 @@ class MaxAdapter(BasePlatformAdapter):
     # ═════════════════════════════════════════════════════════════════════
 
     async def _extract_inbound_media(
-        self, payload: Dict[str, Any], message: Dict[str, Any], body: Dict[str, Any]
-    ) -> Tuple[List[str], List[str]]:
+        self, payload: dict[str, Any], message: dict[str, Any], body: dict[str, Any]
+    ) -> tuple[list[str], list[str]]:
         """Recursively find and cache all media attachments in the payload."""
-        attachments: List[Dict[str, Any]] = []
+        attachments: list[dict[str, Any]] = []
         seen: set[int] = set()
 
         def add_attachment(item: Any) -> None:
@@ -957,8 +799,8 @@ class MaxAdapter(BasePlatformAdapter):
 
         walk(payload)
 
-        media_paths: List[str] = []
-        media_types: List[str] = []
+        media_paths: list[str] = []
+        media_types: list[str] = []
         seen_media_refs: set[str] = set()
 
         for attachment in attachments:
@@ -990,9 +832,9 @@ class MaxAdapter(BasePlatformAdapter):
         return media_paths, media_types
 
     @staticmethod
-    def _attachment_kind(attachment: Dict[str, Any]) -> str:
+    def _attachment_kind(attachment: dict[str, Any]) -> str:
         """Determine attachment kind from type keys and payload."""
-        values: List[str] = []
+        values: list[str] = []
         for key in ("type", "attachment_type", "kind", "media_type"):
             value = attachment.get(key)
             if value:
@@ -1026,7 +868,7 @@ class MaxAdapter(BasePlatformAdapter):
         return ""
 
     @staticmethod
-    def _find_first_url(data: Any) -> Optional[str]:
+    def _find_first_url(data: Any) -> str | None:
         """Find a plausible download URL inside an attachment payload."""
         if isinstance(data, dict):
             for key in ("url", "download_url", "downloadUrl", "file_url",
@@ -1046,7 +888,7 @@ class MaxAdapter(BasePlatformAdapter):
         return None
 
     @staticmethod
-    def _find_first_filename(data: Any) -> Optional[str]:
+    def _find_first_filename(data: Any) -> str | None:
         """Find a plausible original filename inside an attachment payload."""
         if isinstance(data, dict):
             for key in ("filename", "file_name", "fileName", "name",
@@ -1076,6 +918,34 @@ class MaxAdapter(BasePlatformAdapter):
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     @staticmethod
+    def _validate_download_url(url: str) -> bool:
+        """SSRF guard for media downloads: allow only public http(s) hosts.
+
+        Rejects non-http schemes, loopback/private/link-local IPs (e.g.
+        169.254.169.254 metadata endpoint, 127.0.0.1, 10.x internal nets)
+        and bare ``localhost``/``*.local`` hostnames.
+        """
+        import ipaddress
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname
+        if not host:
+            return False
+        host_l = host.lower().rstrip(".")
+        if host_l == "localhost" or host_l.endswith(".local"):
+            return False
+        # If the host is a literal IP, reject non-public ranges.
+        try:
+            ip = ipaddress.ip_address(host_l)
+        except ValueError:
+            ip = None
+        if ip is None:
+            return True
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+    @staticmethod
     def _detect_image_mime(data: bytes) -> str:
         """Detect image MIME type from magic bytes.
 
@@ -1103,11 +973,14 @@ class MaxAdapter(BasePlatformAdapter):
         return "image/jpeg"
 
     async def _cache_audio_attachment(
-        self, attachment: Dict[str, Any], kind: str
-    ) -> Optional[Tuple[str, str]]:
+        self, attachment: dict[str, Any], kind: str
+    ) -> tuple[str, str] | None:
         """Download audio attachment and cache it."""
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
+            return None
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download %s from blocked host: %s", kind, self._safe_url_for_log(url))
             return None
         headers = {
             "Authorization": self._token,
@@ -1115,9 +988,9 @@ class MaxAdapter(BasePlatformAdapter):
             "Accept": "audio/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
@@ -1137,11 +1010,14 @@ class MaxAdapter(BasePlatformAdapter):
         return cache_audio_from_bytes(resp.content, ext), content_type or "audio/ogg"
 
     async def _cache_image_attachment(
-        self, attachment: Dict[str, Any]
-    ) -> Optional[Tuple[str, str]]:
+        self, attachment: dict[str, Any]
+    ) -> tuple[str, str] | None:
         """Download image attachment and cache it."""
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
+            return None
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download image from blocked host: %s", self._safe_url_for_log(url))
             return None
         headers = {
             "Authorization": self._token,
@@ -1149,9 +1025,9 @@ class MaxAdapter(BasePlatformAdapter):
             "Accept": "image/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
@@ -1175,11 +1051,14 @@ class MaxAdapter(BasePlatformAdapter):
             return None
 
     async def _cache_document_attachment(
-        self, attachment: Dict[str, Any]
-    ) -> Optional[Tuple[str, str]]:
+        self, attachment: dict[str, Any]
+    ) -> tuple[str, str] | None:
         """Download document attachment and cache it."""
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
+            return None
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download document from blocked host: %s", self._safe_url_for_log(url))
             return None
         headers = {
             "Authorization": self._token,
@@ -1187,9 +1066,9 @@ class MaxAdapter(BasePlatformAdapter):
             "Accept": "application/*,text/*,*/*;q=0.8",
         }
         try:
-            resp = await self._http_client.get(url, headers=headers, follow_redirects=True)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
@@ -1206,51 +1085,12 @@ class MaxAdapter(BasePlatformAdapter):
             content_type = SUPPORTED_DOCUMENT_TYPES[ext]
         try:
             return cache_document_from_bytes(resp.content, filename), content_type
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to cache document: %s", exc)
             return None
 
-    async def _transcribe_media(self, media_urls: list, media_types: list) -> Optional[str]:
-        """Run STT on cached audio files and return combined transcription."""
-        if not self._stt_enabled:
-            return None
-
-        import asyncio.subprocess
-        transcriptions = []
-        for path, mtype in zip(media_urls, media_types):
-            if not mtype.startswith("audio/"):
-                continue
-            try:
-                venv_path = os.getenv("MAX_STT_VENV",
-                                     str(Path.home() / ".hermes" / "stt-venv"))
-                python = str(Path(venv_path) / "bin" / "python3")
-                if not os.path.exists(python):
-                    python = "python3"
-                import shlex
-                proc = await asyncio.subprocess.create_subprocess_exec(
-                    python, "-c",
-                    f"from faster_whisper import WhisperModel; m=WhisperModel('base','cpu','int8'); segs,_=m.transcribe({shlex.quote(path)},language='ru'); [print(s.text.strip()) for s in segs]",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=120.0
-                )
-                if proc.returncode == 0 and stdout:
-                    transcriptions.append(stdout.decode().strip())
-                elif stderr:
-                    logger.warning("MAX: STT failed: %s", stderr.decode()[:200])
-            except asyncio.TimeoutError:
-                logger.warning("MAX: STT timed out for %s", path)
-            except Exception as e:
-                logger.error("MAX: STT error: %s", e)
-
-        if transcriptions:
-            return "\n".join(transcriptions)
-        return None
-
     @staticmethod
-    def _derive_message_type(text: str, media_types: List[str]) -> MessageType:
+    def _derive_message_type(text: str, media_types: list[str]) -> MessageType:
         """Derive MessageType from text and media types."""
         if any(mtype.startswith(("application/", "text/"))
                or mtype == "application/octet-stream" for mtype in media_types):
@@ -1265,7 +1105,7 @@ class MaxAdapter(BasePlatformAdapter):
     # Outbound: send messages
     # ═════════════════════════════════════════════════════════════════════
 
-    def _split_outbound_text(self, content: str) -> List[str]:
+    def _split_outbound_text(self, content: str) -> list[str]:
         """Split long outbound text into Max-sized chunks (≤4000 chars).
 
         Preserves paragraph boundaries where possible; hard-splits long
@@ -1275,7 +1115,7 @@ class MaxAdapter(BasePlatformAdapter):
         if len(content) <= limit:
             return [content]
 
-        chunks: List[str] = []
+        chunks: list[str] = []
         current = ""
 
         def flush() -> None:
@@ -1322,511 +1162,12 @@ class MaxAdapter(BasePlatformAdapter):
         flush()
         return chunks or [content[:limit]]
 
-    @staticmethod
-    def _convert_markdown_tables(text: str) -> str:
-        """Convert markdown tables to MAX-compatible pipe format with monospace.
-
-        MAX does not support markdown table rendering. This converts:
-          | Col1 | Col2 |
-          |------|------|
-          | v1   | v2   |
-        Into a monospace code block with aligned columns, which renders
-        correctly on MAX.
-        """
-        import re
-
-        # Match markdown tables: find blocks of pipe-delimited rows
-        # that contain at least one separator row (|---|).
-        # Strategy: find consecutive lines starting with |,
-        # where at least one is a separator.
-        lines = text.split('\n')
-        result_lines = []
-        i = 0
-
-        while i < len(lines):
-            line = lines[i]
-
-            # Check if this line starts a table (starts with |)
-            if re.match(r'^\|.+\|', line):
-                # Collect consecutive pipe lines
-                table_start = i
-                table_lines = []
-                has_separator = False
-                while i < len(lines) and re.match(r'^\|.+\|', lines[i]):
-                    current = lines[i]
-                    table_lines.append(current)
-                    if re.match(r'^\|[\s\-:|]+\|$', current):
-                        has_separator = True
-                    i += 1
-
-                if has_separator and len(table_lines) >= 2:
-                    # This is a table — convert it
-                    converted = MaxAdapter._render_table(table_lines)
-                    result_lines.append(converted)
-                else:
-                    # Not a valid table — keep as-is
-                    result_lines.extend(table_lines)
-            else:
-                result_lines.append(line)
-                i += 1
-
-        return '\n'.join(result_lines)
-
-    @staticmethod
-    def _render_table(lines: list) -> str:
-        """Render a list of pipe-delimited lines as a monospace table."""
-        # Parse rows (skip separator lines)
-        rows = []
-        for line in lines:
-            if not line.strip():
-                continue
-            # Skip separator rows (|---|---|)
-            if all(c in '|-: ' for c in line):
-                continue
-            cells = [c.strip() for c in line.strip('|').split('|')]
-            rows.append(cells)
-
-        if not rows:
-            return '\n'.join(lines)
-
-        # Calculate column widths (cap at 25 chars for mobile)
-        ncols = max(len(r) for r in rows) if rows else 0
-        if ncols == 0:
-            return '\n'.join(lines)
-        widths = [3] * ncols  # minimum width
-        for row in rows:
-            for i, cell in enumerate(row):
-                if i < ncols:
-                    widths[i] = max(widths[i], min(len(cell), 25))
-
-        # Build formatted table.
-        # MAX supports inline `code` for monospace. Each line is its own
-        # inline code span — no newlines inside, so they render correctly.
-        sep = '-' * (sum(widths) + 3 * ncols + 1)
-
-        result = ['`' + sep + '`']
-        for row in rows:
-            padded = []
-            for i in range(ncols):
-                cell = row[i] if i < len(row) else ''
-                cell = cell[:25]
-                padded.append(cell.ljust(widths[i]))
-            result.append('`| ' + ' | '.join(padded) + ' |`')
-        result.append('`' + sep + '`')
-        return '\n'.join(result)
-
-    async def _render_table_as_image(self, table_lines: list) -> Optional[str]:
-        """Render pipe-delimited table lines as a clean PNG and upload to MAX.
-
-        Returns upload token on success, None on failure.
-        """
-        # ── Parse rows ────────────────────────────────────────────────
-        rows = []
-        for line in table_lines:
-            if not line.strip():
-                continue
-            if all(c in '|-: ' for c in line):
-                continue
-            cells = [c.strip() for c in line.strip('|').split('|')]
-            rows.append(cells)
-        if not rows or not rows[0]:
-            return None
-
-        ncols = max(len(r) for r in rows)
-        if ncols == 0:
-            return None
-
-        def _prepare_cell(val: str) -> tuple:
-            """Convert raw cell text to (display_text, color).
-
-            Emoji → Unicode symbols that DejaVu Sans renders properly.
-            Markdown styling (**bold**, *italic*, `code`) is preserved
-            and rendered at draw time via segment parser.
-            Status cells get semantic colors.
-
-            NOTE: MAX may append U+FE0F (emoji VS-16) to emoji chars.
-            Normalize by stripping variation selectors first.
-            """
-            color = None
-            text = val.strip()
-            # Strip variation selectors so "⚠️" matches as "⚠"
-            text = text.replace("\ufe0f", "").replace("\ufe0e", "")
-
-            # Map emoji → clear Unicode symbols with semantic colors
-            if "✅" in text:
-                text = text.replace("✅", "✓").strip()
-                color = "#16a34a"  # green-600
-            elif "❌" in text:
-                text = text.replace("❌", "✗").strip()
-                color = "#dc2626"  # red-600
-            elif "⚠" in text:
-                text = text.replace("⚠", "⚠").strip()
-                color = "#ea580c"  # orange-600
-            elif "⏳" in text or "⌛" in text:
-                is_scheduled = "schedule" in text.lower()
-                text = text.replace("⏳", "▶" if is_scheduled else "◷") \
-                           .replace("⌛", "▶" if is_scheduled else "◷").strip()
-                color = "#3b82f6" if is_scheduled else "#ca8a04"
-            elif "🔴" in text:
-                text = text.replace("🔴", "●").strip()
-                color = "#dc2626"
-            elif "🟢" in text:
-                text = text.replace("🟢", "●").strip()
-                color = "#16a34a"
-            elif "🟡" in text:
-                text = text.replace("🟡", "●").strip()
-                color = "#ca8a04"
-
-            # Cleanup stray text markers
-            text = text.replace("ℹ", "").replace("📊", "")
-            text = text.replace("[OK]", "✓").replace("[ERR]", "✗")
-            text = text.replace("[WARN]", "⚠").replace("[WAIT]", "◷")
-            text = text.replace("[SCHED]", "▶")
-            text = text.replace("[CRIT]", "●").replace("[GOOD]", "●").replace("[MID]", "●")
-
-            return text.strip(), color
-
-        cells_info = [[_prepare_cell(c) for c in row] for row in rows]
-
-        try:
-            from PIL import Image, ImageDraw, ImageFont
-            from wcwidth import wcswidth
-        except ImportError:
-            logger.warning("MAX: Pillow not installed, cannot render table as image")
-            return None
-
-        # ── Layout ────────────────────────────────────────────────────
-        CELL_PAD_X = 22
-        CELL_PAD_Y = 14
-        LINE_WIDTH = 2
-        FONT_SIZE = 18
-        HEADER_FONT_SIZE = 20
-
-        try:
-            font = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE
-            )
-            font_bold = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", HEADER_FONT_SIZE
-            )
-            font_italic = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf", FONT_SIZE
-            )
-            font_code = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", FONT_SIZE - 2
-            )
-        except (IOError, OSError):
-            font = ImageFont.load_default()
-            font_bold = font
-            font_italic = font
-            font_code = font
-
-        from PIL import ImageDraw as _ImageDraw
-        _tmp_img = Image.new("RGB", (1, 1))
-        _tmp_draw = _ImageDraw.Draw(_tmp_img)
-
-        import re as _md_re
-
-        def _strip_md_plain(text: str) -> str:
-            """Strip markdown formatting, return plain text for measurement."""
-            t = _md_re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-            t = _md_re.sub(r'\*(.+?)\*', r'\1', t)
-            t = _md_re.sub(r'`(.+?)`', r'\1', t)
-            return t
-
-        def _parse_md_segments(text: str) -> list:
-            """Parse inline markdown into [(text, style_key), ...].
-            style_key: 'bold', 'italic', 'code', or 'plain'.
-            """
-            pattern = r'(\*\*.+?\*\*|`.+?`|(?<!\*)\*.+?\*(?!\*))'
-            parts = _md_re.split(pattern, text)
-            result = []
-            for p in parts:
-                if not p:
-                    continue
-                if p.startswith('**') and p.endswith('**'):
-                    result.append((p[2:-2], 'bold'))
-                elif p.startswith('*') and p.endswith('*') and not p.startswith('**'):
-                    result.append((p[1:-1], 'italic'))
-                elif p.startswith('`') and p.endswith('`'):
-                    result.append((p[1:-1], 'code'))
-                else:
-                    result.append((p, 'plain'))
-            return result
-
-        def _seg_font(style_key: str):
-            """Return the font for a given style key."""
-            if style_key == 'bold':
-                return font_bold
-            elif style_key == 'italic':
-                return font_italic
-            elif style_key == 'code':
-                return font_code
-            return font
-
-        def _seg_width(text: str, style_key: str) -> int:
-            """Measure pixel width of a styled segment."""
-            return int(_tmp_draw.textlength(text, font=_seg_font(style_key)))
-
-        def _tokenize_md(text: str) -> list:
-            """Split markdown text into [(word, style_key), ...] tokens."""
-            tokens = []
-            for seg_text, style_key in _parse_md_segments(text):
-                for i, w in enumerate(seg_text.split()):
-                    tokens.append((w, style_key))
-            return tokens
-
-        def _wrap_md_text(cell_text: str, max_px_width: int) -> list:
-            """Soft-wrap markdown text by tokens.
-            Returns list of token lists: [[(word, style), ...], ...]
-            """
-            tokens = _tokenize_md(cell_text)
-            if not tokens:
-                return [[('', 'plain')]]
-            avail = max(10, max_px_width - CELL_PAD_X * 2)
-            lines = []
-            cur = []
-            cur_w = 0
-            for word, sty in tokens:
-                ww = _seg_width(word, sty)
-                if not cur:
-                    cur = [(word, sty)]
-                    cur_w = ww
-                elif cur_w + _seg_width(' ', 'plain') + ww <= avail:
-                    cur.append((word, sty))
-                    cur_w += _seg_width(' ', 'plain') + ww
-                else:
-                    lines.append(cur)
-                    cur = [(word, sty)]
-                    cur_w = ww
-            if cur:
-                lines.append(cur)
-            return lines if lines else [[('', 'plain')]]
-
-        def _text_px_width(text: str, font: ImageFont.FreeTypeFont) -> int:
-            """Get pixel width of text using draw.textlength (Pillow 8+).
-            Falls back to wcswidth*0.6 only as last resort."""
-            try:
-                # Create a temporary draw to measure accurately
-                from PIL import ImageDraw
-                tmp_img = Image.new("RGB", (1, 1))
-                tmp_draw = ImageDraw.Draw(tmp_img)
-                return int(tmp_draw.textlength(text, font=font))
-            except Exception:
-                try:
-                    raw_width = wcswidth(text)
-                    return int(raw_width * 0.6)
-                except Exception:
-                    bbox = font.getbbox(text)
-                    return bbox[2] - bbox[0]
-
-        def _get_line_height(this_font: ImageFont.FreeTypeFont) -> int:
-            """Get single line height in pixels for a font."""
-            try:
-                bbox = this_font.getbbox("Ag")
-                return bbox[3] - bbox[1]
-            except Exception:
-                return 18
-
-        line_h = _get_line_height(font)
-        line_h_bold = _get_line_height(font_bold)
-
-        def _wrap_cell_text(cell_text: str, max_px_width: int, use_font=None) -> list:
-            """Soft-wrap cell text by words to fit max_px_width.
-
-            Args:
-                cell_text: Text to wrap
-                max_px_width: Available pixel width for the cell (including padding)
-                use_font: Font to use for measurement (default: font for data, font_bold for header)
-
-            Returns list of strings (wrapped lines). Empty input -> [''].
-            """
-            this_font = use_font or font
-            if not cell_text.strip():
-                return [cell_text]
-
-            words = cell_text.split()
-            lines = []
-            current = ""
-            current_w = 0
-            avail = max(10, max_px_width - CELL_PAD_X * 2)
-
-            for word in words:
-                ww = _text_px_width(word, this_font)
-                if not current:
-                    if ww <= avail:
-                        current = word
-                        current_w = ww
-                    else:
-                        lines.append(word)
-                        current = ""
-                        current_w = 0
-                    continue
-                if current_w + _text_px_width(" ", this_font) + ww <= avail:
-                    current += " " + word
-                    current_w += _text_px_width(" " + word, this_font)
-                else:
-                    lines.append(current)
-                    if ww <= avail:
-                        current = word
-                        current_w = ww
-                    else:
-                        lines.append(word)
-                        current = ""
-                        current_w = 0
-            if current:
-                lines.append(current)
-            return lines or [""]
-
-        # Measure each column width by its widest text in pixels.
-        # Header → font_bold, data → font (regular). Cap at 300px.
-        data_rows = cells_info[1:]
-        header = cells_info[0]
-
-        px_widths = []
-        for ci in range(ncols):
-            max_px = 0
-            for ri, row in enumerate(cells_info):
-                if ci < len(row):
-                    cell_text = row[ci][0]
-                    plain_text = _strip_md_plain(cell_text)
-                    this_font = font_bold if ri == 0 else font
-                    txt_w = int(_tmp_draw.textlength(plain_text, font=this_font))
-                    max_px = max(max_px, txt_w)
-            col_w = min(max_px + CELL_PAD_X * 2 + 5, 300)
-            px_widths.append(col_w)
-        # Cap total width at 1200px for mobile retina
-        total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
-        if total_w > 1200:
-            scale = 1200 / total_w
-            px_widths = [max(px_widths[i], int(w * scale)) for i, w in enumerate(px_widths)]
-            total_w = sum(px_widths) + LINE_WIDTH * (ncols + 1)
-
-        # Calculate row heights with soft-wrap (multi-line support)
-        # Also wrap header — it can have long text too
-
-        # Pre-compute wrapped lines for header
-        hdr_wrapped = []
-        hdr_max_l = 1
-        for ci in range(ncols):
-            cell_text = header[ci][0] if ci < len(header) else ""
-            col_w = px_widths[ci] if ci < len(px_widths) else 100
-            wrapped = _wrap_md_text(cell_text, col_w)
-            hdr_wrapped.append(wrapped)
-            hdr_max_l = max(hdr_max_l, len(wrapped))
-
-        header_h = int(CELL_PAD_Y * 2 + line_h_bold * hdr_max_l)
-
-        # Pre-compute wrapped lines for each data row cell
-        wrapped_data = []  # list of lists of lists: [row_index][col_index] = [line_str, ...]
-        row_max_lines = []
-        for row in data_rows:
-            row_wrapped = []
-            max_l = 1
-            for ci in range(ncols):
-                cell_text = row[ci][0] if ci < len(row) else ""
-                # Use the column's pixel width for wrapping
-                col_w = px_widths[ci] if ci < len(px_widths) else 100
-                wrapped = _wrap_md_text(cell_text, col_w)
-                row_wrapped.append(wrapped)
-                max_l = max(max_l, len(wrapped))
-            wrapped_data.append(row_wrapped)
-            row_max_lines.append(max_l)
-
-        # Row heights: line count + padding
-        row_heights = [int(CELL_PAD_Y * 2 + line_h * ml) for ml in row_max_lines]
-
-        img_h = int(header_h + LINE_WIDTH + sum(row_heights) + LINE_WIDTH + 6)
-
-        # ── Draw ──────────────────────────────────────────────────────
-        img = Image.new("RGB", (total_w, img_h), "#ffffff")
-        draw = ImageDraw.Draw(img)
-
-        # Color palette
-        HDR_BG = "#1e293b"       # slate-800
-        HDR_TEXT = "#ffffff"
-        ROW_EVEN = "#ffffff"
-        ROW_ODD = "#f1f5f9"      # slate-100
-        BORDER = "#94a3b8"       # slate-400
-        SEP = "#e2e8f0"          # slate-200
-        TEXT_COLOR = "#0f172a"   # slate-900
-
-        y = 0
-
-        # --- Header row (multi-line markdown) ---
-        draw.rectangle([(0, y), (total_w, y + header_h)], fill=HDR_BG)
-        cx = LINE_WIDTH
-        for ci in range(ncols):
-            wrapped_token_lines = hdr_wrapped[ci]
-            nlines = len(wrapped_token_lines)
-            th = line_h_bold * nlines
-            ty = y + int((header_h - th) / 2)
-            for li, token_line in enumerate(wrapped_token_lines):
-                sx = cx + CELL_PAD_X
-                for word, sty in token_line:
-                    f = _seg_font(sty)
-                    draw.text((sx, ty + line_h_bold * li), word, font=f, fill=HDR_TEXT)
-                    sx += draw.textlength(word + ' ', font=f)
-            # Vertical divider
-            draw.line([(cx, y), (cx, y + header_h)], fill=BORDER, width=LINE_WIDTH)
-            cx += px_widths[ci] + LINE_WIDTH
-        # Right border
-        draw.line([(cx, y), (cx, y + header_h)], fill=BORDER, width=LINE_WIDTH)
-        y += header_h
-
-        # Header-bottom separator
-        draw.line([(0, y), (total_w, y)], fill=BORDER, width=LINE_WIDTH)
-
-        # --- Data rows (multi-line markdown) ---
-        for ri, row in enumerate(data_rows):
-            row_h = row_heights[ri]
-            bg = ROW_EVEN if ri % 2 == 0 else ROW_ODD
-            draw.rectangle([(0, y), (total_w, y + row_h)], fill=bg)
-            cx = LINE_WIDTH
-            for ci in range(ncols):
-                cell_text, cell_color = row[ci] if ci < len(row) else ("", None)
-                fill_color = cell_color or TEXT_COLOR
-                wrapped_token_lines = wrapped_data[ri][ci]
-                n_lines = len(wrapped_token_lines)
-                total_text_h = line_h * n_lines
-                text_y_offset = y + int((row_h - total_text_h) / 2)
-                for li, token_line in enumerate(wrapped_token_lines):
-                    sx = cx + CELL_PAD_X
-                    for word, sty in token_line:
-                        f = _seg_font(sty)
-                        draw.text((sx, text_y_offset + line_h * li), word, font=f, fill=fill_color)
-                        sx += draw.textlength(word + ' ', font=f)
-                # Vertical divider
-                draw.line(
-                    [(cx, y), (cx, y + row_h)], fill=SEP, width=1,
-                )
-                cx += px_widths[ci] + LINE_WIDTH
-            # Right border
-            draw.line([(cx, y), (cx, y + row_h)], fill=BORDER, width=LINE_WIDTH)
-            if ri != len(data_rows) - 1:
-                draw.line(
-                    [(0, y + row_h), (total_w, y + row_h)], fill=SEP, width=1,
-                )
-            y += row_h
-
-        # Bottom border
-        draw.line([(0, y), (total_w, y)], fill=BORDER, width=LINE_WIDTH)
-
-        # ── Save & upload ─────────────────────────────────────────────
-        import hashlib
-        digest = hashlib.md5(str(table_lines).encode()).hexdigest()[:12]
-        out_path = self._table_image_dir / f"table_{digest}.png"
-        img.save(out_path, "PNG")
-
-        token = await self._upload(str(out_path), "image")
-        return token
-
     async def send(
         self,
         chat_id: str,
         content: str,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send a text message, automatically chunking if over limit."""
         if not self._http_client:
@@ -1845,7 +1186,7 @@ class MaxAdapter(BasePlatformAdapter):
 
         # ── Handle tables ─────────────────────────────────────────────
         # Table images (MAX_TABLE_AS_IMAGE) or text fallback
-        image_tokens: List[str] = []
+        image_tokens: list[str] = []
 
         if self._table_as_image:
             # Try to render tables as images
@@ -1887,14 +1228,14 @@ class MaxAdapter(BasePlatformAdapter):
 
         # ── Send ───────────────────────────────────────────────────────
         chunks = self._split_outbound_text(content)
-        last_result: Optional[SendResult] = None
+        last_result: SendResult | None = None
 
         for idx, text in enumerate(chunks, start=1):
             if len(chunks) > 1:
                 prefix = f"({idx}/{len(chunks)})\n"
                 text = prefix + text[:max(0, 3900 - len(prefix))]
 
-            body: Dict[str, Any] = {
+            body: dict[str, Any] = {
                 "text": text,
                 "format": "markdown",
                 "notify": True,
@@ -1927,7 +1268,7 @@ class MaxAdapter(BasePlatformAdapter):
                     ),
                     raw_response=data,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 logger.error("MAX: send failed chunk %s/%s: %s", idx, len(chunks), exc)
                 return SendResult(success=False, error="Send failed (see logs)")
 
@@ -1985,7 +1326,7 @@ class MaxAdapter(BasePlatformAdapter):
             # MAX clears typing indicator on message edit — renew it
             await self.send_typing(chat_id)
             return SendResult(success=True, message_id=message_id, raw_response=resp.json())
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: edit_message failed: %s", e)
             return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
 
@@ -2000,15 +1341,15 @@ class MaxAdapter(BasePlatformAdapter):
             )
             resp.raise_for_status()
             return SendResult(success=True, message_id=message_id)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: delete_message failed: %s", e)
             return SendResult(success=False, error="Delete failed (see logs)", retryable=True)
 
     async def send_image(
         self, chat_id: str, image_url: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send an image via URL attachment."""
         if not self._http_client:
@@ -2017,7 +1358,7 @@ class MaxAdapter(BasePlatformAdapter):
         target_type = parts[0] if len(parts) > 1 else "user"
         target_id = parts[1] if len(parts) > 1 else chat_id
         params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "text": caption or "",
             "attachments": [{"type": "image", "payload": {"url": image_url}}],
         }
@@ -2029,23 +1370,23 @@ class MaxAdapter(BasePlatformAdapter):
             d = resp.json()
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: send_image failed: %s", e)
             return SendResult(success=False, error="Send image failed (see logs)", retryable=True)
 
     async def send_image_file(
         self, chat_id: str, image_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, image_path, "image", caption or "", reply_to)
 
     async def send_multiple_images(
         self, chat_id: str,
-        images: List[Tuple[str, str]],
-        metadata: Optional[Dict[str, Any]] = None,
+        images: list[tuple[str, str]],
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         """Send multiple images in a single message.
@@ -2064,8 +1405,8 @@ class MaxAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="No images provided")
 
         # Upload all images concurrently
-        tokens: List[str] = []
-        captions: List[str] = []
+        tokens: list[str] = []
+        captions: list[str] = []
         for url_or_path, caption in images:
             # Prefer local path, fall back to URL-based _send_image
             if url_or_path.startswith(("http://", "https://", "file://")):
@@ -2088,7 +1429,7 @@ class MaxAdapter(BasePlatformAdapter):
         target_id = parts[1] if len(parts) > 1 else chat_id
         params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
 
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "text": " ".join(c for c in captions if c).strip() or "📷",
             "attachments": [{"type": "image", "payload": {"token": t}} for t in tokens],
         }
@@ -2099,15 +1440,15 @@ class MaxAdapter(BasePlatformAdapter):
             d = resp.json()
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.error("MAX: send_multiple_images failed: %s", e)
             return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
 
     async def _send_multiple_images_fallback(
         self, chat_id: str,
-        images: List[Tuple[str, str]],
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        images: list[tuple[str, str]],
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Fallback: send images one by one if batch upload fails."""
         last_result = SendResult(success=False, error="No images sent")
@@ -2122,245 +1463,46 @@ class MaxAdapter(BasePlatformAdapter):
 
     async def send_document(
         self, chat_id: str, file_path: str,
-        caption: Optional[str] = None,
-        file_name: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        file_name: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, file_path, "file", caption or "", reply_to)
 
     async def send_video(
         self, chat_id: str, video_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, video_path, "video", caption or "", reply_to)
 
     async def send_voice(
         self, chat_id: str, audio_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
         return await self._upload_send(chat_id, audio_path, "audio", caption or "", reply_to)
 
     async def send_animation(
         self, chat_id: str, animation_url: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send animated GIF — treated as image in MAX."""
         return await self.send_image(chat_id, animation_url, caption, reply_to, metadata)
 
     # ═════════════════════════════════════════════════════════════════════
-    # File upload (two-step)
-    # ═════════════════════════════════════════════════════════════════════
-
-    async def _upload_send(
-        self, chat_id: str, file_path: str, mtype: str,
-        caption: str, reply_to: Optional[str],
-    ) -> SendResult:
-        """Upload file then send as attachment.
-
-        Retries up to 3 times with exponential backoff (2/4/6s) when MAX
-        returns ``attachment.not.ready`` — the CDN needs time to scan
-        and validate the uploaded file before it can be attached.
-        """
-        if not self._http_client:
-            return SendResult(success=False, error="Not connected")
-
-        token = await self._upload(file_path, mtype)
-        if not token:
-            return SendResult(success=False, error="Upload failed")
-
-        parts = chat_id.split(":", 1)
-        target_type = parts[0] if len(parts) > 1 else "user"
-        target_id = parts[1] if len(parts) > 1 else chat_id
-        params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-
-        body: Dict[str, Any] = {
-            "text": caption,
-            "attachments": [{"type": mtype, "payload": {"token": token}}],
-        }
-        if reply_to:
-            body["link"] = {"type": "REPLY", "mid": reply_to}
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                if attempt > 0:
-                    delay = 2.0 * (2 ** (attempt - 1))  # 2s, 4s, 6s
-                    await asyncio.sleep(delay)
-
-                resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
-                resp.raise_for_status()
-                d = resp.json()
-                mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
-                return SendResult(success=True, message_id=mid, raw_response=d)
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 400:
-                    try:
-                        err_body = e.response.json()
-                        code = err_body.get("code", "")
-                        if code == "attachment.not.ready" and attempt + 1 < max_retries:
-                            logger.info("MAX: upload not ready (attempt %d/%d), retrying…", attempt + 1, max_retries)
-                            continue
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                logger.error("MAX: _upload_send failed: %s", e)
-                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
-            except Exception as e:
-                logger.error("MAX: _upload_send failed: %s", e)
-                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
-
-        return SendResult(success=False, error="Upload-send failed: attachment still not ready after retries", retryable=True)
-
-    async def _upload(self, file_path: str, media_type: str) -> Optional[str]:
-        """Two-step upload: get upload URL → POST file (multipart) → return token."""
-        import aiohttp as _aiohttp
-
-        fp = Path(file_path)
-        if not fp.exists() or fp.stat().st_size > MAX_FILE_SIZE:
-            return None
-
-        try:
-            # Step 1: get upload URL
-            resp = await self._http_client.post(f"{MAX_API_BASE}/uploads", params={"type": media_type})
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            upload_url = data.get("url")
-            if not upload_url:
-                return None
-
-            # audio/video: token comes from POST /uploads response itself
-            # file/image: token comes from CDN upload response
-            upload_token = data.get("token") if media_type in ("audio", "video") else None
-
-            # SECURITY: Only upload to known Max/Cdn domains (SSRF prevention).
-            # If the API returns an unexpected URL, refuse to connect.
-            parsed = urlparse(upload_url)
-            if parsed.hostname and (
-                parsed.hostname in _ALLOWED_UPLOAD_HOSTS
-                or parsed.hostname.endswith(".max.ru")
-                or parsed.hostname.endswith(".oneme.ru")
-                or parsed.hostname.endswith(".okcdn.ru")
-            ):
-                pass  # Safe — within Max infrastructure
-            else:
-                logger.warning(
-                    "MAX: upload URL rejected (not in Max domain): %s",
-                    self._safe_url_for_log(upload_url),
-                )
-                return None
-
-            # Step 2: upload file to the URL (use aiohttp for multipart)
-            async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as session:
-                with open(fp, "rb") as f:
-                    form = _aiohttp.FormData()
-                    form.add_field("data", f, filename=fp.name)
-                    async with session.post(upload_url, data=form) as r:
-                        if r.status != 200:
-                            logger.warning(
-                                "MAX: CDN upload failed for %s (status %d, type=%s)",
-                                fp, r.status, media_type,
-                            )
-                            if media_type in ("audio", "video") and upload_token:
-                                logger.info("MAX: audio/video CDN failed but we have token from /uploads, still trying")
-                            else:
-                                return None
-
-                        # For audio/video: token already obtained from /uploads response
-                        if upload_token:
-                            return upload_token
-
-                        # For file/image: parse CDN JSON response for token
-                        try:
-                            upload_data = await r.json()
-                        except Exception:
-                            logger.warning(
-                                "MAX: CDN returned non-JSON for %s (type=%s)",
-                                fp, media_type,
-                            )
-                            if media_type in ("audio", "video"):
-                                return await self._upload(str(fp), "file")
-                            return None
-                        token = upload_data.get("token")
-                        if not token and "photos" in upload_data:
-                            photos = upload_data["photos"]
-                            if isinstance(photos, dict):
-                                first = next(iter(photos.values()), {})
-                                token = first.get("token") if isinstance(first, dict) else None
-                        if not token:
-                            logger.warning(
-                                "MAX: CDN response missing token for %s (type=%s)",
-                                fp.name, media_type,
-                            )
-                            if media_type in ("audio", "video"):
-                                return await self._upload(str(fp), "file")
-                            return None
-                        return token
-        except Exception as e:
-            logger.error("MAX: upload error: %s", e)
-            return None
-
-    # ═════════════════════════════════════════════════════════════════════
     # Typing indicator
     # ═════════════════════════════════════════════════════════════════════
 
-    async def send_typing(self, chat_id: str, metadata=None) -> None:
-        """Send typing indicator (delegates to send_action)."""
-        await self.send_action(chat_id, "typing")
-
-    async def send_action(self, chat_id: str, action: str = "typing", metadata=None) -> None:
-        """Send a chat action indicator. Best-effort (silent on failure).
-
-        Supported actions (mapped to MAX API):
-          typing / typing_on  — показать «печатает»
-          typing_off          — скрыть «печатает»
-          sending_photo       — отправляет фото
-          sending_video       — отправляет видео
-          sending_audio       — отправляет аудио
-          sending_file        — отправляет файл
-          read                — отметить как прочитано
-
-        Args:
-            chat_id: Scoped chat ID (e.g. 'chat:123' or 'user:456').
-            action: Action type string from the list above.
-            metadata: Optional platform-specific context (ignored for MAX).
-        """
-        if not self._http_client:
-            return
-
-        # Normalise action name to MAX API format
-        action_map = {
-            "typing": "typing_on",
-            "typing_on": "typing_on",
-            "typing_off": "typing_off",
-            "sending_photo": "sending_photo",
-            "sending_video": "sending_video",
-            "sending_audio": "sending_audio",
-            "sending_file": "sending_file",
-            "read": "read",
-        }
-        api_action = action_map.get(action.lower().strip(), "typing_on")
-
-        parts = chat_id.split(":", 1)
-        target_id = parts[1] if len(parts) > 1 else chat_id
-
-        try:
-            await self._http_client.post(
-                f"{MAX_API_BASE}/chats/{target_id}/actions",
-                json={"action": api_action},
-                timeout=httpx.Timeout(3.0),
-            )
-        except Exception:
-            pass
+    # Chat actions (send_typing / send_action) moved to mixins/buttons.py
 
     # ═════════════════════════════════════════════════════════════════════
     # Chat info
@@ -2379,253 +1521,14 @@ class MaxAdapter(BasePlatformAdapter):
                     "type": d.get("type", "dm"),
                     "chat_id": chat_id,
                 }
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            logger.debug("MAX: failed to fetch chat info for %s: %s", chat_id, exc)
         return {"name": chat_id, "type": "dm", "chat_id": chat_id}
 
-    # ═════════════════════════════════════════════════════════════════════
-    # Interactive buttons (approval, slash-confirm, clarify)
-    # ═════════════════════════════════════════════════════════════════════
+    # Interactive buttons (send_buttons, send_action, approval/clarify)
+    # — moved to mixins/buttons.py (ButtonsMixin)
 
-    async def _post_interactive(
-        self, chat_id: str, text: str, buttons: List[List[Dict[str, str]]],
-        reply_to: Optional[str] = None,
-    ) -> SendResult:
-        """Send a message with inline keyboard buttons.
-
-        MAX inline_keyboard format:
-          attachments: [{
-            type: "inline_keyboard",
-            payload: { buttons: [[{type: "callback", text: "...", payload: "..."}]] }
-          }]
-        """
-        if not self._http_client:
-            return SendResult(success=False, error="Not connected")
-
-        parts = chat_id.split(":", 1)
-        target_type = parts[0] if len(parts) > 1 else "user"
-        target_id = parts[1] if len(parts) > 1 else chat_id
-        params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-
-        body: Dict[str, Any] = {
-            "text": text[:MAX_MESSAGE_LENGTH],
-            "format": "markdown",
-            "attachments": [{
-                "type": "inline_keyboard",
-                "payload": {"buttons": buttons},
-            }],
-        }
-        if reply_to:
-            body["link"] = {"type": "REPLY", "mid": reply_to}
-
-        try:
-            resp = await self._http_client.post(
-                f"{MAX_API_BASE}/messages", params=params, json=body,
-            )
-            resp.raise_for_status()
-            d = resp.json()
-            mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
-            return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:
-            logger.error("MAX: interactive send failed: %s", e)
-            return SendResult(success=False, error="Interactive send failed (see logs)")
-
-    async def send_buttons(
-        self, chat_id: str, text: str,
-        buttons: List[Dict[str, str]],
-        reply_to: Optional[str] = None,
-    ) -> SendResult:
-        """Send a message with inline buttons of ANY type.
-
-        Reuses _post_interactive, which accepts all MAX button types.
-        Each button dict may include an optional "label" key with the
-        full description text for the fallback in the message body.
-        If "label" is omitted, "text" is used for both.
-
-          - callback  → {"type": "callback", "text": "...", "payload": "...", "label": "..."}
-          - link      → {"type": "link", "text": "...", "url": "...", "label": "..."}
-          - message   → {"type": "message", "text": "...", "payload": "...", "label": "..."}
-          - request_contact → {"type": "request_contact", "text": "...", "label": "..."}
-          - request_geo_location → {"type": "request_geo_location", "text": "...", "label": "..."}
-
-        Features:
-        - One button per row (full width)
-        - Buttons auto-numbered when 3+
-        - Button text duplicated in the message body as fallback
-          (MAX mobile may truncate button text visually; the "label"
-           field provides the full description that always stays readable)
-
-        Example:
-            await adapter.send_buttons(
-                chat_id="chat:123",
-                text="Выберите тариф:",
-                buttons=[
-                    {"type": "callback", "text": "Базовый", "label": "Базовый — 500₽/мес, 10GB", "payload": "basic"},
-                    {"type": "callback", "text": "Стандарт", "label": "Стандарт — 1000₽/мес, 50GB", "payload": "std"},
-                ],
-            )
-        """
-        # Number buttons if 3+ for clarity
-        numbered = len(buttons) >= 3
-
-        # Build keyboard (one button per row)
-        limited = buttons[:10]  # MAX API limit ~10 buttons per message
-        keyboard: List[List[Dict[str, str]]] = []
-        for i, btn in enumerate(limited, 1):
-            b = dict(btn)
-            # Remove label from the button payload (MAX API doesn't use it)
-            b.pop("label", None)
-            if numbered:
-                prefix = f"{i}. "
-                if not b.get("text", "").startswith(prefix):
-                    b["text"] = f"{prefix}{b['text']}"
-            keyboard.append([b])
-
-        # Build fallback text from full labels (untruncated)
-        fallback_lines: List[str] = []
-        for i, btn in enumerate(limited, 1):
-            desc = btn.get("label") or btn.get("text", "")
-            if numbered:
-                fallback_lines.append(f"{i}. {desc}")
-            else:
-                fallback_lines.append(f"• {desc}")
-        fallback_text = "\n".join(fallback_lines)
-
-        full_text = f"{text}\n\n{fallback_text}" if fallback_lines else text
-        if len(full_text) > MAX_MESSAGE_LENGTH - 200:
-            full_text = full_text[:MAX_MESSAGE_LENGTH - 200]
-
-        return await self._post_interactive(chat_id, full_text, keyboard, reply_to=reply_to)
-
-    async def send_exec_approval(
-        self,
-        chat_id: str,
-        command: str,
-        session_key: str,
-        description: str = "dangerous command",
-        metadata: Optional[Dict[str, Any]] = None,
-        *args,
-        **kwargs,
-    ) -> SendResult:
-        """Render a dangerous-command approval prompt with native buttons.
-
-        Four buttons: Approve Once / Approve Session / Approve Always / Deny.
-        Button callbacks route through _on_callback → resolve_gateway_approval.
-        """
-        if not self._http_client:
-            return SendResult(success=False, error="Not connected")
-
-        approval_id = uuid.uuid4().hex[:12]
-        cmd_preview = (command or "")[:300] + "..." if len(command or "") > 300 else (command or "")
-
-        text = (
-            f"⚠️ **Command Approval Required**\n\n"
-            f"```\n{cmd_preview}\n```\n\n"
-            f"Reason: {description}"
-        )
-
-        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
-
-        buttons = [[
-            {"type": "callback", "text": "✅ Approve Once", "payload": f"exec:once:{approval_id}"},
-            {"type": "callback", "text": "🔄 Session", "payload": f"exec:session:{approval_id}"},
-        ], [
-            {"type": "callback", "text": "🔒 Always", "payload": f"exec:always:{approval_id}"},
-            {"type": "callback", "text": "❌ Deny", "payload": f"exec:deny:{approval_id}"},
-        ]]
-
-        result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
-        if result.success:
-            self._exec_approval_state[approval_id] = session_key
-        return result
-
-    async def send_slash_confirm(
-        self,
-        chat_id: str,
-        title: str,
-        message: str,
-        session_key: str,
-        confirm_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        *args,
-        **kwargs,
-    ) -> SendResult:
-        """Render a 3-button slash-command confirmation prompt.
-
-        Buttons: Approve Once / Always Approve / Cancel.
-        Mirrors Telegram's send_slash_confirm.
-        """
-        if not self._http_client:
-            return SendResult(success=False, error="Not connected")
-
-        text = f"**{title}**\n\n{message}"[:MAX_MESSAGE_LENGTH]
-        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
-
-        buttons = [[
-            {"type": "callback", "text": "✅ Approve Once", "payload": f"sc:once:{confirm_id}"},
-            {"type": "callback", "text": "🔒 Always", "payload": f"sc:always:{confirm_id}"},
-            {"type": "callback", "text": "❌ Cancel", "payload": f"sc:cancel:{confirm_id}"},
-        ]]
-
-        result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
-        if result.success:
-            self._slash_confirm_state[confirm_id] = session_key
-        return result
-
-    async def send_clarify(
-        self,
-        chat_id: str,
-        question: str,
-        choices: Optional[list],
-        clarify_id: str,
-        session_key: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> SendResult:
-        """Send a clarify prompt with inline choice buttons.
-
-        Each choice becomes a callback button. The last button is always
-        "Other…" for free-text input.
-        """
-        if not self._http_client:
-            return SendResult(success=False, error="Not connected")
-
-        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
-
-        if choices and len(choices) > 0:
-            # Render choice buttons (up to 3 per row)
-            buttons: List[List[Dict[str, str]]] = []
-            row: List[Dict[str, str]] = []
-            for i, choice in enumerate(choices):
-                btn_text = str(choice)[:40]
-                if len(str(choice)) > 40:
-                    btn_text = btn_text[:37] + "..."
-                row.append({
-                    "type": "callback",
-                    "text": btn_text,
-                    "payload": f"clarify:{clarify_id}:{i}",
-                })
-                if len(row) >= 3:
-                    buttons.append(row)
-                    row = []
-            if row:
-                buttons.append(row)
-            # Add "Other…" button
-            buttons.append([{
-                "type": "callback",
-                "text": "💬 Other…",
-                "payload": f"clarify:{clarify_id}:other",
-            }])
-
-            text = f"**{question}**"[:MAX_MESSAGE_LENGTH]
-            result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
-            if result.success:
-                self._clarify_state[clarify_id] = session_key
-            return result
-        else:
-            # Open-ended — just send the question as plain text
-            return await self.send(chat_id, question, reply_to=reply_to, metadata=metadata)
-
-    async def _on_callback(self, payload: Dict[str, Any]) -> Optional[MessageEvent]:
+    async def _on_callback(self, payload: dict[str, Any]) -> MessageEvent | None:
         """Handle message_callback update from inline keyboard button press."""
         callback = payload.get("callback", {}) or payload.get("message_callback", {})
         data = (callback.get("payload") or callback.get("data") or "").strip()
@@ -2673,8 +1576,8 @@ class MaxAdapter(BasePlatformAdapter):
             return None
 
     async def _handle_exec_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any]
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
+    ) -> MessageEvent | None:
         """Route exec approval button to resolve_gateway_approval."""
         # Format: exec:{choice}:{approval_id}
         parts = data.split(":", 2)
@@ -2689,7 +1592,7 @@ class MaxAdapter(BasePlatformAdapter):
             await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
             return None
 
-        from tools.approval import resolve_gateway_approval, has_blocking_approval
+        from tools.approval import has_blocking_approval, resolve_gateway_approval
 
         if not has_blocking_approval(session_key):
             await self.send(f"user:{user_id}", "❌ No pending approval to resolve.")
@@ -2717,8 +1620,8 @@ class MaxAdapter(BasePlatformAdapter):
         return None
 
     async def _handle_slash_confirm_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any]
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
+    ) -> MessageEvent | None:
         """Route slash-confirm button to tools.slash_confirm.resolve."""
         # Format: sc:{choice}:{confirm_id}
         parts = data.split(":", 2)
@@ -2743,8 +1646,8 @@ class MaxAdapter(BasePlatformAdapter):
         return None
 
     async def _handle_clarify_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any]
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
+    ) -> MessageEvent | None:
         """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
         # Format: clarify:{clarify_id}:{choice_index}
         parts = data.split(":", 2)
@@ -2759,7 +1662,10 @@ class MaxAdapter(BasePlatformAdapter):
             return None
 
         try:
-            from tools.clarify_gateway import resolve_gateway_clarify, mark_awaiting_text
+            from tools.clarify_gateway import (
+                mark_awaiting_text,
+                resolve_gateway_clarify,
+            )
 
             if choice_idx == "other":
                 # User chose "Other…" — next text message will be the answer
@@ -2801,8 +1707,8 @@ class MaxAdapter(BasePlatformAdapter):
         return None
 
     async def _handle_model_callback(
-        self, data: str, user_id: str, raw_payload: Dict[str, Any], chat_id: str,
-    ) -> Optional[MessageEvent]:
+        self, data: str, user_id: str, raw_payload: dict[str, Any], chat_id: str,
+    ) -> MessageEvent | None:
         """Route model picker button callbacks.
 
         Formats:
@@ -2870,7 +1776,7 @@ class MaxAdapter(BasePlatformAdapter):
         current_provider: str,
         session_key: str,
         on_model_selected,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send an interactive model picker with callback buttons.
 
@@ -2896,8 +1802,8 @@ class MaxAdapter(BasePlatformAdapter):
         )[:MAX_MESSAGE_LENGTH]
 
         # Build provider buttons (2 per row)
-        buttons: List[List[Dict[str, str]]] = []
-        row: List[Dict[str, str]] = []
+        buttons: list[list[dict[str, str]]] = []
+        row: list[dict[str, str]] = []
         for p in providers[:20]:  # Max 20 providers
             slug = p.get("slug", "")
             name = str(p.get("name", slug))[:38]
@@ -2964,7 +1870,7 @@ class MaxAdapter(BasePlatformAdapter):
         )[:MAX_MESSAGE_LENGTH]
 
         # Build model buttons (1 per row for readability)
-        buttons: List[List[Dict[str, str]]] = []
+        buttons: list[list[dict[str, str]]] = []
         for m in models:
             name = str(m)[:38]
             is_current = (
@@ -2980,7 +1886,7 @@ class MaxAdapter(BasePlatformAdapter):
 
         # Pagination buttons
         if total_pages > 1:
-            nav_row: List[Dict[str, str]] = []
+            nav_row: list[dict[str, str]] = []
             if page > 0:
                 nav_row.append({
                     "type": "callback",
@@ -3049,7 +1955,7 @@ class MaxAdapter(BasePlatformAdapter):
 
     async def _on_model_picked(
         self, chat_id: str, model_id: str, provider_slug: str, user_id: str,
-    ) -> Optional[MessageEvent]:
+    ) -> MessageEvent | None:
         """Step 3: Model selected — call on_model_selected callback."""
         state = self._model_picker_state.pop(str(chat_id), None)
         if not state:
@@ -3070,7 +1976,7 @@ class MaxAdapter(BasePlatformAdapter):
 
         try:
             result_text = await on_model_selected(chat_id, model_id, provider_slug)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             result_text = f"❌ Error switching model: {e}"
 
         # Send confirmation message to user
@@ -3092,7 +1998,7 @@ class MaxAdapter(BasePlatformAdapter):
 
         try:
             provider_label = _get_label(current_provider)
-        except Exception:
+        except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
             provider_label = current_provider
 
         text = (
@@ -3101,8 +2007,8 @@ class MaxAdapter(BasePlatformAdapter):
             f"Select a provider:"
         )[:MAX_MESSAGE_LENGTH]
 
-        buttons: List[List[Dict[str, str]]] = []
-        row: List[Dict[str, str]] = []
+        buttons: list[list[dict[str, str]]] = []
+        row: list[dict[str, str]] = []
         for p in providers[:20]:
             slug = p.get("slug", "")
             name = p.get("name", slug)[:38]
@@ -3135,107 +2041,15 @@ class MaxAdapter(BasePlatformAdapter):
             state["provider_msg_id"] = result.message_id
             self._model_picker_state[str(chat_id)] = state
 
-    # ═════════════════════════════════════════════════════════════════════
-    # Cross-platform session commands
-    # ═════════════════════════════════════════════════════════════════════
-
-    async def _handle_cross_sessions(self, text: str, chat_id: str) -> None:
-        """Handle /sessions and /resume (no-arg) — list sessions from ALL platforms.
-
-        Bypasses the core gateway's per-platform scoping so the user can see
-        CLI, Telegram, Discord, WebUI and other sessions directly from MAX.
-        """
-        try:
-            from hermes_state import SessionDB
-        except ImportError:
-            await self.send(chat_id, "⚠️ Session store not available")
-            return
-
-        args = text[len('/sessions'):].strip()
-        search = None
-        if args.lower().startswith('search '):
-            search = args[6:].strip()
-            if not search:
-                await self.send(chat_id, "Usage: `/sessions search <query>`")
-                return
-
-        db = SessionDB()
-
-        try:
-            if search:
-                rows = db.list_sessions_rich(
-                    limit=20,
-                    include_archived=False,
-                    order_by_last_active=True,
-                    search_query=search,
-                )
-            else:
-                rows = db.list_sessions_rich(
-                    limit=15,
-                    include_archived=False,
-                    order_by_last_active=True,
-                )
-        except Exception as e:
-            logger.warning("MAX: SessionDB query failed: %s", e)
-            await self.send(chat_id, f"⚠️ Failed to query sessions: {e}")
-            return
-
-        if not rows:
-            await self.send(chat_id, "📭 **No sessions found**")
-            return
-
-        # Emoji map for known sources
-        source_emoji = {
-            'cli': '💻', 'telegram': '📱', 'max': '🟣',
-            'discord': '🎮', 'webui': '🌐', 'api_server': '🔌',
-            'cron': '⏰', 'slack': '💬', 'matrix': '🧩',
-        }
-
-        max_preview = 45
-
-        if search:
-            header = f"🔍 **Sessions matching \"{search}\":**"
-        else:
-            header = f"📋 **Recent Sessions** (all platforms):"
-
-        lines = [header]
-        for i, s in enumerate(rows[:15], 1):
-            source = str(s.get('source', '') or '?')
-            emoji = source_emoji.get(source, '📄')
-            title = str(s.get('title') or '').strip() or '(unnamed)'
-            sid = str(s.get('id', ''))[:12]
-            preview = str(s.get('preview', '') or '')[:max_preview].replace('\n', ' ').strip()
-            lines.append(
-                f"{i}. {emoji} **{source}** — {title[:40]}"
-            )
-            if preview:
-                lines.append(f"   _{preview}..._")
-            lines.append(f"   `{sid}...`")
-
-        total = len(rows)
-        if total > 15:
-            lines.append(f"\n...and {total - 15} more sessions")
-
-        msg = '\n'.join(lines)
-
-        # MAX has 4000 char limit — chunk if needed
-        if len(msg) > MAX_MESSAGE_LENGTH - 100:
-            msg = '\n'.join(lines[:1] + lines[1:11])  # Keep header + first 10
-            msg += f'\n\n...truncated ({total} total)'
-
-        await self.send(chat_id, msg)
-        await self.send(
-            chat_id,
-            "`/resume <id>` — переключиться на сессию\n"
-            "`/sessions search <query>` — поиск по сессиям"
-        )
+    # Cross-platform session commands (/sessions, /resume)
+    # — moved to mixins/sessions.py (SessionsMixin)
 
     @property
     def dm_policy(self) -> str:
         return "open" if self._allow_all_users else "allowlist"
 
     @property
-    def allow_from(self) -> List[str]:
+    def allow_from(self) -> list[str]:
         return list(self._allowed_users_set)
 
     @property
@@ -3243,7 +2057,7 @@ class MaxAdapter(BasePlatformAdapter):
         return self._group_policy
 
     @property
-    def group_allow_from(self) -> List[str]:
+    def group_allow_from(self) -> list[str]:
         return self._group_allow_from
 
     @property
@@ -3259,7 +2073,7 @@ def check_max_requirements() -> bool:
     """Check if aiohttp and httpx are available and token is configured."""
     try:
         import aiohttp  # noqa: F401
-        import httpx   # noqa: F401
+        import httpx  # noqa: F401
     except ImportError:
         return False
     return bool(os.getenv("MAX_BOT_TOKEN", "").strip())
@@ -3277,7 +2091,7 @@ def is_connected(config) -> bool:
     return validate_config(config)
 
 
-def _env_enablement() -> Optional[dict]:
+def _env_enablement() -> dict | None:
     """Seed PlatformConfig.extra from env-only setups."""
     token = os.getenv("MAX_BOT_TOKEN", "").strip()
     if not token:
@@ -3312,10 +2126,6 @@ def _env_enablement() -> Optional[dict]:
     if allow_all:
         extra["allow_all_users"] = _coerce_bool(allow_all, True)
 
-    stt_enabled = os.getenv("MAX_STT_ENABLED", "").strip()
-    if stt_enabled:
-        extra["stt_enabled"] = _coerce_bool(stt_enabled, True)
-
     home = os.getenv("MAX_HOME_CHANNEL", "").strip()
     if home:
         extra["home_channel"] = {
@@ -3330,7 +2140,7 @@ def _env_enablement() -> Optional[dict]:
     return extra
 
 
-def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
+def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
     """Translate top-level max: config into env/extras."""
     del yaml_cfg
     if not isinstance(platform_cfg, dict):
@@ -3347,7 +2157,6 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> Optional[dict]:
         "allowed_users": "MAX_ALLOWED_USERS",
         "allow_all_users": "MAX_ALLOW_ALL_USERS",
         "home_channel": "MAX_HOME_CHANNEL",
-        "stt_enabled": "MAX_STT_ENABLED",
         "group_policy": "MAX_GROUP_POLICY",
         "cross_session": "MAX_CROSS_SESSION",
     }
@@ -3384,15 +2193,20 @@ def interactive_setup() -> None:
     """Interactive `hermes gateway setup` flow for the Max platform."""
     try:
         from hermes_cli.setup import (
-            prompt, prompt_yes_no, save_env_value,
-            get_env_value, print_header, print_info,
-            print_warning, print_success,
+            get_env_value,
+            print_header,
+            print_info,
+            print_success,
+            print_warning,
+            prompt,
+            prompt_yes_no,
+            save_env_value,
         )
     except ImportError:
         logger.warning("MAX: hermes_cli.setup not available for interactive setup")
         return
 
-    print_header("Max (max.ru) with STT")
+    print_header("Max (max.ru)")
 
     existing_token = get_env_value("MAX_BOT_TOKEN")
     if existing_token:
@@ -3438,9 +2252,8 @@ def interactive_setup() -> None:
             save_env_value("MAX_ALLOWED_USERS", allowed.replace(" ", ""))
 
     print()
-    print_info("🎤 Voice messages (STT)")
-    stt = prompt_yes_no("Enable voice message download for transcription?", True)
-    save_env_value("MAX_STT_ENABLED", "true" if stt else "false")
+    print_info("🎤 Voice messages")
+    print_info("Transcription is handled by the Hermes core STT pipeline (config.yaml → stt); no plugin setting needed.")
 
     print()
     print_success("Max configuration saved to ~/.hermes/.env")
@@ -3453,13 +2266,13 @@ def register(ctx) -> None:
 
     ctx.register_platform(
         name="max",
-        label="Max (STT)",
+        label="Max",
         adapter_factory=lambda cfg: MaxAdapter(cfg),
         check_fn=check_max_requirements,
         validate_config=validate_config,
         is_connected=is_connected,
         required_env=["MAX_BOT_TOKEN"],
-        install_hint="pip install aiohttp httpx; pip install faster-whisper  # for STT",
+        install_hint="pip install aiohttp httpx",
         setup_fn=interactive_setup,
         env_enablement_fn=_env_enablement,
         apply_yaml_config_fn=_apply_yaml_config,
@@ -3485,243 +2298,5 @@ def register(ctx) -> None:
         ctx.register_skill(
             "max-gateway",
             skill_path,
-            description="Install and configure Hermes Agent gateway access through Max messenger with STT.",
+            description="Install and configure Hermes Agent gateway access through Max messenger (voice transcription via Hermes core STT).",
         )
-
-
-# ═════════════════════════════════════════════════════════════════════════
-# Standalone sender (for cron jobs and send_message tool)
-# ═════════════════════════════════════════════════════════════════════════
-
-async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str) -> SendResult:
-    """Send a message via Max API without the full adapter."""
-    extra = getattr(pconfig, "extra", {}) or {}
-    token = os.getenv("MAX_BOT_TOKEN") or getattr(pconfig, "token", "") or extra.get("token", "")
-    if not token:
-        return SendResult(success=False, error="MAX_BOT_TOKEN not configured")
-
-    parts = chat_id.split(":", 1)
-    target_type = parts[0] if len(parts) > 1 else "user"
-    target_id = parts[1] if len(parts) > 1 else chat_id
-
-    params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-    body = {"text": message[:MAX_MESSAGE_LENGTH], "format": "markdown"}
-    headers = {"Authorization": token, "Content-Type": "application/json"}
-
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            return SendResult(
-                success=True,
-                message_id=str(data.get("message", {}).get("message_id", "")),
-            )
-    except Exception as exc:
-        logger.error("MAX: send_message failed: %s", exc)
-        return SendResult(success=False, error="Standalone send failed (see logs)")
-
-
-def _standalone_get_token(pconfig: PlatformConfig) -> str:
-    """Extract MAX bot token from config/env in the standalone path."""
-    extra = getattr(pconfig, "extra", {}) or {}
-    return (os.getenv("MAX_BOT_TOKEN") or getattr(pconfig, "token", "") or extra.get("token", "") or "").strip()
-
-
-async def _standalone_send(
-    pconfig: PlatformConfig,
-    chat_id: str,
-    message: str,
-    *,
-    thread_id: Optional[str] = None,
-    media_files: Optional[List[Tuple[str, bool]]] = None,
-    force_document: bool = False,
-) -> dict:
-    """Standalone sender contract for send_message/cron delivery.
-
-    Supports native file delivery: extracts MEDIA: paths from ``message``,
-    uploads each file via the 3-step MAX protocol, and attaches them to the
-    outgoing message. Works with or without a running gateway adapter.
-    """
-    del thread_id, force_document
-
-    token = _standalone_get_token(pconfig)
-    if not token:
-        return {"error": "MAX_BOT_TOKEN not configured"}
-
-    headers = {"Authorization": token, "Content-Type": "application/json"}
-
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
-            # 1. Send text message first
-            last_message_id: Optional[str] = None
-            if message and message.strip():
-                parts = chat_id.split(":", 1)
-                target_type = parts[0] if len(parts) > 1 else "user"
-                target_id = parts[1] if len(parts) > 1 else chat_id
-                params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-                body = {"text": message[:MAX_MESSAGE_LENGTH], "format": "markdown"}
-                resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                last_message_id = str(data.get("message", {}).get("message_id", "") or data.get("message", {}).get("body", {}).get("mid", ""))
-
-            # 2. Upload and send each media file
-            for media_item in (media_files or []):
-                media_path, is_voice = media_item if isinstance(media_item, (list, tuple)) else (media_item, False)
-                if not os.path.exists(media_path):
-                    logger.warning("MAX: standalone media file not found: %s", media_path)
-                    continue
-
-                # Determine attachment type from extension (for native playback)
-                _ATTACH_TYPES = {
-                    ".jpg": "image", ".jpeg": "image", ".png": "image",
-                    ".webp": "image", ".gif": "image", ".bmp": "image",
-                    ".mp4": "video", ".mov": "video", ".avi": "video",
-                    ".mkv": "video", ".webm": "video",
-                    ".mp3": "audio", ".wav": "audio", ".ogg": "audio",
-                    ".opus": "audio", ".m4a": "audio", ".flac": "audio",
-                }
-                _ext = os.path.splitext(media_path)[1].lower()
-                _attach_type = _ATTACH_TYPES.get(_ext, "file")
-                _upload_token = ""
-
-                # Step 1: get upload URL
-                # For audio/video: use proper type so /uploads returns a token
-                # For file/image: use type=file for reliability
-                _upload_type = _attach_type if _attach_type in ("audio", "video") else "file"
-                try:
-                    resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": _upload_type}, headers=headers)
-                    if resp.status_code != 200:
-                        logger.warning("MAX: upload URL request failed for %s (status %d)", media_path, resp.status_code)
-                        # Fall back to type=file for audio/video
-                        if _upload_type in ("audio", "video"):
-                            resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": "file"}, headers=headers)
-                            if resp.status_code != 200:
-                                continue
-                            _upload_type = "file"
-                        else:
-                            continue
-                    upload_json = resp.json()
-                    upload_url = upload_json.get("url", "")
-                    if not upload_url:
-                        logger.warning("MAX: upload URL response missing 'url' for %s", media_path)
-                        continue
-                    # For audio/video: token comes from /uploads response itself
-                    if _upload_type in ("audio", "video"):
-                        _upload_token = upload_json.get("token", "")
-                        if _upload_token:
-                            logger.info("MAX: audio/video token obtained from /uploads for %s", media_path)
-                except Exception as e:
-                    logger.warning("MAX: upload URL parse failed for %s: %s", media_path, e)
-                    continue
-
-                logger.info("MAX: upload url obtained for %s: %s", media_path, upload_url[:80])
-
-                # SSRF protection: only upload to known MAX/CDN domains
-                from urllib.parse import urlparse as _urlparse_upload
-                parsed_upload = _urlparse_upload(upload_url)
-                if not parsed_upload.hostname or not (
-                    parsed_upload.hostname in _ALLOWED_UPLOAD_HOSTS
-                    or parsed_upload.hostname.endswith(".max.ru")
-                    or parsed_upload.hostname.endswith(".oneme.ru")
-                    or parsed_upload.hostname.endswith(".okcdn.ru")
-                    or parsed_upload.hostname.endswith(".cdn-max.ru")
-                ):
-                    logger.warning("MAX: upload URL rejected (SSRF): %s", upload_url[:80])
-                    continue
-
-                # Step 2: upload file as multipart
-                try:
-                    import aiohttp as _aiohttp
-                    async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
-                        with open(media_path, "rb") as f:
-                            form = _aiohttp.FormData()
-                            form.add_field("data", f, filename=os.path.basename(media_path))
-                            async with aio_session.post(upload_url, data=form) as r:
-                                if r.status != 200:
-                                    try:
-                                        err_body = await r.text()
-                                        logger.warning("MAX: CDN upload failed for %s (status %d): %s", media_path, r.status, err_body[:200])
-                                    except Exception:
-                                        logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
-                                    # For audio/video with token from /uploads: even if CDN fails, we might still try
-                                    if _upload_type in ("audio", "video") and _upload_token:
-                                        logger.info("MAX: CDN failed but using token from /uploads anyway for %s", media_path)
-                                        file_token = _upload_token
-                                    else:
-                                        continue
-                                else:
-                                    # For audio/video: use token from /uploads (CDN just returns <retval>1</retval>)
-                                    if _upload_type in ("audio", "video") and _upload_token:
-                                        file_token = _upload_token
-                                    else:
-                                        # For file/image: parse CDN JSON response for token
-                                        try:
-                                            upload_data = await r.json()
-                                        except Exception:
-                                            logger.warning("MAX: CDN returned non-JSON for %s", media_path)
-                                            continue
-                                        file_token = upload_data.get("token")
-                                        if not file_token:
-                                            # type=image returns: {"photos": {"id": {"token": "..."}}}
-                                            photos = upload_data.get("photos", {})
-                                            if isinstance(photos, dict):
-                                                for _pid, _pdata in photos.items():
-                                                    if isinstance(_pdata, dict) and _pdata.get("token"):
-                                                        file_token = _pdata["token"]
-                                                        break
-                                        if not file_token:
-                                            logger.warning("MAX: CDN response missing token for %s", media_path)
-                                            continue
-                except Exception as e:
-                    logger.warning("MAX: CDN upload error for %s: %s", media_path, e)
-                    continue
-
-                # Wait for MAX to process the file
-                await asyncio.sleep(UPLOAD_DELAY)
-
-                # Step 3: send message with attachment (with retry for attachment.not.ready)
-                parts = chat_id.split(":", 1)
-                target_type = parts[0] if len(parts) > 1 else "user"
-                target_id = parts[1] if len(parts) > 1 else chat_id
-                params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-                body = {
-                    "text": os.path.basename(media_path),
-                    "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
-                }
-                _sent_ok = False
-                for _retry in range(3):
-                    try:
-                        resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
-                        if resp.status_code in (200, 201):
-                            data = resp.json()
-                            if data.get("ok", True) or "message" in data:
-                                last_message_id = str(
-                                    data.get("message", {}).get("body", {}).get("mid", "")
-                                    or data.get("message", {}).get("message_id", "")
-                                    or ""
-                                )
-                                _sent_ok = True
-                                break
-                        elif resp.status_code == 400:
-                            err_body = resp.json()
-                            if err_body.get("code") == "attachment.not.ready":
-                                logger.info("MAX: attachment not ready for %s, retrying...", media_path)
-                                await asyncio.sleep(5.0)
-                                continue
-                            logger.warning("MAX: message rejected for %s: %s", media_path, err_body)
-                            break
-                        else:
-                            logger.warning("MAX: send failed for %s (status %d)", media_path, resp.status_code)
-                            break
-                    except Exception as _exc:
-                        logger.warning("MAX: send exception for %s: %s", media_path, _exc)
-                        break
-                if not _sent_ok:
-                    continue
-
-            return {"success": True, "message_id": last_message_id}
-    except Exception as exc:
-        logger.error("MAX: standalone send failed: %s", exc)
-        return {"error": f"Max standalone send failed: {exc}"}

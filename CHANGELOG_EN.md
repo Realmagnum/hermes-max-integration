@@ -2,6 +2,75 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.9.0] — 2026-08-17
+
+### Refactor
+
+- **Monolithic `adapter.py` (~3000 lines) split into a modular `mixins/` structure** (branch `feature/refactor-mixins-base`, 27 commits, merge without squash). `MaxAdapter` is now a thin facade (2250 lines) over seven mixins:
+  - `mixins/base.py` — shared state and `http_client`
+  - `mixins/table_renderer.py` — table rendering (text + PNG)
+  - `mixins/media_upload.py` — two-step upload to the MAX CDN
+  - `mixins/buttons.py` — buttons, approval/clarify, send_action
+  - `mixins/webhook.py` — aiohttp server, subscriptions, secret
+  - `mixins/sessions.py` — cross-platform sessions
+  - `mixins/standalone.py` — standalone sender for cron/send_message
+- **Import rule:** only relative imports inside `mixins/` (`.base`); `adapter.py` → `from .mixins.xxx` — otherwise the plugin silently fails to load through the Hermes plugin system
+- Removed dead `_seen_msgs` duplicate (SIM114), `next(iter(Platform))` instead of `list()[0]`, logging in "silent" except blocks
+
+### Security
+
+- **SSRF protection for media downloads:** new `_validate_download_url()` — public http(s) hosts only; loopback/private/link-local/reserved IPs (incl. `169.254.169.254`), `localhost` and `*.local` are blocked
+- **Token leak on redirects closed:** removed `follow_redirects=True` from `_cache_audio/image/document_attachment` (the client already runs with `follow_redirects=False`; the explicit override re-enabled token-bearing redirects)
+- **Warning when `MAX_WEBHOOK_SECRET` is empty:** startup logs a warning if the webhook runs without a secret — otherwise anyone could post events
+- `hashlib.md5(..., usedforsecurity=False)` — MD5 is only used for the cache filename, not for cryptography
+- Narrow JSON-parsing excepts: `(JSONDecodeError, TypeError, ValueError)` instead of blind `Exception`
+
+### Fixed
+
+- **Audio normalization before CDN upload:** wav/flac/m4a are transcoded to Ogg/Opus via ffmpeg (the MAX CDN rejects such containers with 415); ogg/mp3 pass through unchanged; idempotent
+- **Blocking `open()` in async upload** replaced with `asyncio.to_thread(Path.read_bytes)` — the file is read off the event loop (media_upload, standalone)
+
+### Performance
+
+- **Table-PNG cache now works:** `_render_table_as_image` checks `table_<md5>.png` before rendering — repeated identical tables reuse the cached image instead of re-drawing
+
+### Quality
+
+- **Ruff: 220 → 0 errors** in `adapter.py`/`mixins/` (PEP 604/585 annotations, imports, auto-fixes); tests clean too
+- **Bandit: High → 0** (only false-positive B105 — env var names, and intentional B104 — `0.0.0.0` for the webhook)
+- **Tests: 154** (was 129): +11 SSRF-guard cases, +2 table cache, +12 audio normalization
+
+### Docs
+
+- `docs/refactor-plan.md` — refactoring plan marked complete (all 11 steps ✅)
+- CHANGELOG, README, AGENTS.md synced (RU+EN)
+
+## [2.8.0] — 2026-08-05
+
+### Changed
+
+- **STT moved out of the plugin into the Hermes core (>= 0.20.0).** The plugin no longer transcribes voice itself: the adapter downloads and caches audio, the core transcribes it per the `stt` config in `config.yaml` — providers `local`/`groq`/`openai` (whisper-1, gpt-transcribe)/`mistral`/`xai`/`elevenlabs`, unified language resolution, 🎙️ transcript echo, VAD-based anti-hallucination hardening.
+- Removed `mixins/stt_processor.py` (`STTProcessorMixin`) and `scripts/transcribe_audio.py`; inline transcription removed from `adapter.py` (media is still downloaded and cached for the core).
+- Removed `MAX_STT_ENABLED` / `MAX_STT_VENV` from code, `.env` docs, `plugin.yaml` and the interactive setup; `hermes gateway setup` no longer asks about STT.
+- `plugin.yaml` → `version: 2.8.0`.
+
+### Recommendations
+
+- For Russian, set `stt.language: ru` in `config.yaml` (core default is `"en"`). Configure via `hermes tools` → STT category.
+
+## [2.7.1] — 2026-08-05
+
+### Fixed
+
+- **STT on Windows: fixed 3 voice-transcription bugs** (in `mixins/stt_processor.py` and `scripts/transcribe_audio.py`):
+  - `python3` on Windows is a Microsoft Store stub ("Python was not found"). Now `Scripts/python.exe` (Windows) / `bin/python3` (Linux) is looked up, then the gateway's own interpreter (`sys.executable`) — a dedicated STT venv is no longer required
+  - `WhisperModel('base','cpu','int8')` — in faster-whisper >=1.x the 3rd positional arg is `device_index`, not `compute_type` → TypeError; fixed with keyword args `device='cpu', compute_type='int8'`
+  - Audio path is passed via `argv` (adapter) / env var instead of embedding into the `-c` source: on Windows `C:\Users\...` broke parsing as a Unicode escape (`unicodeescape` SyntaxError). Command-injection protection preserved — evolution of the `shlex.quote` fix from 2.1.1
+
+### Refactoring
+
+- **Step 7 complete:** STT logic extracted to `mixins/stt_processor.py` (`STTProcessorMixin`) and wired into `MaxAdapter`; the inline `_transcribe_media` method removed from `adapter.py`
+
 ## [2.7.0] — 2026-07-25
 
 ### Added

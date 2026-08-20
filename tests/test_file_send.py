@@ -1,7 +1,6 @@
 """Tests for native file sending (upload, retry, standalone, batch images)."""
 
 import os
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -9,12 +8,12 @@ import pytest
 
 import adapter
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 
 def _mock_adapter():
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import AsyncMock
+
     from gateway.config import PlatformConfig
     cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
     a = adapter.MaxAdapter(cfg)
@@ -193,25 +192,27 @@ class TestStandaloneSend:
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
 
-        with patch.object(adapter, "_standalone_get_token", return_value="tok"):
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client_cls.return_value.__aenter__.return_value = mock_client
+        with (
+            patch("max.mixins.standalone._standalone_get_token", return_value="tok"),
+            patch("httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
 
-                mock_resp = MagicMock()
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"message": {"message_id": "m-1"}}
-                mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"message": {"message_id": "m-1"}}
+            mock_client.post = AsyncMock(return_value=mock_resp)
 
-                result = await adapter._standalone_send(pconfig, "user:42", "Hello")
-                assert result.get("success") is True
-                assert result.get("message_id") == "m-1"
+            result = await adapter._standalone_send(pconfig, "user:42", "Hello")
+            assert result.get("success") is True
+            assert result.get("message_id") == "m-1"
 
     @pytest.mark.asyncio
     async def test_standalone_no_token(self):
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="", extra={})
-        with patch.object(adapter, "_standalone_get_token", return_value=""):
+        with patch("max.mixins.standalone._standalone_get_token", return_value=""):
             result = await adapter._standalone_send(pconfig, "user:1", "hi")
             assert "not configured" in (result.get("error", "")).lower()
 
@@ -221,22 +222,24 @@ class TestStandaloneSend:
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
 
-        with patch.object(adapter, "_standalone_get_token", return_value="tok"):
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client_cls.return_value.__aenter__.return_value = mock_client
+        with (
+            patch("max.mixins.standalone._standalone_get_token", return_value="tok"),
+            patch("httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
 
-                mock_resp = MagicMock()
-                mock_resp.status_code = 200
-                mock_resp.json.return_value = {"message": {"message_id": "m-1"}}
-                mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"message": {"message_id": "m-1"}}
+            mock_client.post = AsyncMock(return_value=mock_resp)
 
-                # Non-existent file should be skipped, text still delivered
-                result = await adapter._standalone_send(
-                    pconfig, "user:42", "Text",
-                    media_files=[("/nonexistent/file.pdf", False)],
-                )
-                assert result.get("success") is True
+            # Non-existent file should be skipped, text still delivered
+            result = await adapter._standalone_send(
+                pconfig, "user:42", "Text",
+                media_files=[("/nonexistent/file.pdf", False)],
+            )
+            assert result.get("success") is True
 
 
 # ── Tests for SSRF in standalone sender ──────────────────────────────────
@@ -251,22 +254,24 @@ class TestStandaloneSSRF:
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
 
-        with patch.object(adapter, "_standalone_get_token", return_value="tok"):
-            with patch("httpx.AsyncClient") as mock_client_cls:
-                mock_client = AsyncMock()
-                mock_client_cls.return_value.__aenter__.return_value = mock_client
+        with (
+            patch("max.mixins.standalone._standalone_get_token", return_value="tok"),
+            patch("httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
 
-                evil_resp = MagicMock()
-                evil_resp.status_code = 200
-                evil_resp.json.return_value = {"url": "https://evil.com/upload"}
-                mock_client.post = AsyncMock(return_value=evil_resp)
+            evil_resp = MagicMock()
+            evil_resp.status_code = 200
+            evil_resp.json.return_value = {"url": "https://evil.com/upload"}
+            mock_client.post = AsyncMock(return_value=evil_resp)
 
-                with patch("os.path.exists", return_value=True):
-                    result = await adapter._standalone_send(
-                        pconfig, "user:42", "test",
-                        media_files=[("/tmp/test.pdf", False)],
-                    )
-                assert result.get("success") is True
+            with patch("os.path.exists", return_value=True):
+                result = await adapter._standalone_send(
+                    pconfig, "user:42", "test",
+                    media_files=[("/tmp/test.pdf", False)],
+                )
+            assert result.get("success") is True
 
 
 # ── Tests for _standalone_get_token ───────────────────────────────────────
@@ -317,12 +322,9 @@ class TestStandaloneGetToken:
 ])
 def test_allowed_upload_hosts(host):
     """Verify that allowed CDN hosts pass the SSRF check."""
-    from urllib.parse import urlparse
     allowed = adapter._ALLOWED_UPLOAD_HOSTS
     if (
-        host in allowed
-        or host.endswith(".max.ru")
-        or host.endswith(".oneme.ru")
+        host in allowed or host.endswith((".max.ru", ".oneme.ru"))
     ):
         assert True
     else:

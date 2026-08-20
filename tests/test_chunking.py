@@ -1,8 +1,6 @@
 """Tests for message chunking in detail."""
 
-from unittest.mock import MagicMock
 
-import pytest
 
 import adapter
 

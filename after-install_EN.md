@@ -1,199 +1,76 @@
-# Post-Installation Guide
+# Max plugin installed
 
-## 1. Verify Installation
+Next steps:
 
-```bash
-# Check gateway status
-hermes gateway status
+1. **Install runtime dependencies:**
+   ```bash
+   pip install aiohttp httpx
+   ```
 
-# Health check
-curl http://localhost:8646/health
-# Expected: {"status":"ok"}
+2. **Configure the platform:**
+   ```bash
+   hermes gateway setup
+   ```
+   Choose **Max**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and optional secret.
 
-# Check plugin loaded
-journalctl -u hermes-gateway -g "MAX: connected" --since "5 minutes ago"
-```
+3. **Voice messages:** transcription is performed by the Hermes core (>= 0.20.0) — the plugin only downloads and caches audio. For Russian, set in `config.yaml`:
+   ```yaml
+   stt:
+     enabled: true
+     language: ru   # core default is "en"
+     provider: local
+   ```
 
-## 2. Install Dependencies
+4. **Choose connection mode:**
 
-```bash
-# Core dependencies
-pip install aiohttp httpx
+   **Long polling (simpler, no HTTPS):**
+   - Just set `MAX_BOT_TOKEN` and restart. The adapter auto-uses long-polling.
+   - No public URL needed. Good for development.
 
-# For STT voice transcription
-pip install faster-whisper
-```
+   **Webhook (production) — requires a reverse proxy:**
+   - MAX API connects **only to port 443** over HTTPS.
+   - You need a reverse proxy (Caddy, Nginx, Traefik, Cloudflare Tunnel) that terminates TLS and proxies to `127.0.0.1:8646`.
+   - **Caddy** example (`Caddyfile`):
+     ```caddyfile
+     max.example.com {
+         reverse_proxy 127.0.0.1:8646
+     }
+     ```
+   - **Cloudflare Tunnel** example (no dedicated server):
+     ```bash
+     cloudflared tunnel --url http://localhost:8646
+     ```
+   - In `.env`, set the public URL and secret:
+     ```bash
+     MAX_WEBHOOK_URL=https://max.example.com/max/webhook
+     MAX_WEBHOOK_SECRET=my-secret-abc123
+     MAX_WEBHOOK_HOST=0.0.0.0
+     MAX_WEBHOOK_PORT=8646
+     MAX_WEBHOOK_PATH=/max/webhook
+     ```
+   - Register the subscription in MAX API (the adapter does this automatically on startup, but manual registration is also possible):
+     ```bash
+     curl -X POST "https://platform-api.max.ru/subscriptions" \
+       -H "Authorization: ***" \
+       -H "Content-Type: application/json" \
+       -d '{"url":"https://max.example.com/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"my-secret-abc123"}'
+     ```
 
-## 3. Configure STT (Optional)
+5. **Restart Hermes gateway:**
+   ```bash
+   hermes gateway restart
+   ```
 
-```bash
-# Create venv for faster-whisper
-python3 -m venv ~/.hermes/stt-venv
-~/.hermes/stt-venv/bin/pip install faster-whisper
+6. **Verify:**
+   ```bash
+   hermes gateway status
+   curl http://localhost:8646/health
+   # Expected: {"status":"ok"}
+   ```
 
-# Copy transcription script
-cp scripts/transcribe_audio.py ~/.hermes/scripts/
-```
+## Official Max docs
 
-### Test STT
-
-```bash
-# Transcribe a test file
-~/.hermes/scripts/transcribe_audio.py /path/to/test.ogg
-
-# Check audio cache
-ls -la ~/.hermes/audio_cache/
-```
-
-## 4. Choose Connection Mode
-
-### Long Polling (Development)
-
-```bash
-# Just set token
-MAX_BOT_TOKEN=your_token
-```
-
-No public URL needed. Good for local development.
-
-### Webhook (Production)
-
-Requires reverse proxy (Caddy, Nginx, Traefik, Cloudflare Tunnel).
-
-**Caddy example:**
-```caddyfile
-max.example.com {
-    reverse_proxy 127.0.0.1:8646
-}
-```
-
-**Cloudflare Tunnel example:**
-```bash
-cloudflared tunnel --url http://localhost:8646
-```
-
-**Configure in .env:**
-```bash
-MAX_WEBHOOK_URL=https://max.example.com/max/webhook
-MAX_WEBHOOK_SECRET=my-secret-abc123
-MAX_WEBHOOK_HOST=0.0.0.0
-MAX_WEBHOOK_PORT=8646
-MAX_WEBHOOK_PATH=/max/webhook
-```
-
-**Register subscription (optional — plugin does this automatically):**
-```bash
-curl -X POST "https://platform-api.max.ru/subscriptions" \
-  -H "Authorization: your_token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://max.example.com/max/webhook",
-    "update_types": ["message_created", "message_callback", "bot_started"],
-    "secret": "my-secret-abc123"
-  }'
-```
-
-## 5. Restart Gateway
-
-```bash
-hermes gateway restart
-```
-
-## 6. Test
-
-### Basic Test
-
-```bash
-# Check logs
-journalctl -u hermes-gateway -f
-
-# Send test message to bot
-# Expected: Bot responds
-```
-
-### Full Diagnostics
-
-```bash
-cd ~/.hermes/plugins/max-platform
-
-# Basic check
-./scripts/diagnose.sh
-
-# E2E test (sends message to home channel)
-./scripts/diagnose.sh --send
-```
-
-### Test Voice
-
-```bash
-# Send voice message to bot
-# Check logs for transcription
-journalctl -u hermes-gateway -g "STT" --since "1 minute ago"
-```
-
-### Test Tables
-
-```bash
-# Enable table images
-echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
-hermes gateway restart
-
-# Send message with markdown table
-# Expected: PNG image received
-```
-
-## 7. Troubleshooting
-
-### Bot not responding
-
-```bash
-# Check token
-curl -s -X GET "https://platform-api.max.ru/me" \
-  -H "Authorization: your_token"
-
-# Check webhook subscriptions
-curl -H "Authorization: your_token" \
-  https://platform-api.max.ru/subscriptions
-
-# Check logs
-journalctl -u hermes-gateway -p err -n 50
-```
-
-### SSL errors
-
-```bash
-# For testing
-MAX_INSECURE_SSL=true
-```
-
-### Voice not transcribing
-
-```bash
-# Check STT enabled
-grep MAX_STT_ENABLED ~/.hermes/.env
-
-# Check faster-whisper installed
-~/.hermes/stt-venv/bin/pip list | grep faster-whisper
-
-# Test transcription
-python3 scripts/transcribe_audio.py --latest
-```
-
-### Tables not rendering
-
-```bash
-# Check Pillow installed
-pip list | grep Pillow
-
-# Check config
-grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
-
-# Check logs
-grep -i "table\|upload\|pillow" ~/.hermes/logs/gateway.log
-```
-
-## Official MAX Documentation
-
+Checked on 2026-06-22:
 - https://dev.max.ru/docs/chatbots/bots-create
 - https://dev.max.ru/docs/chatbots/bots-coding/prepare
 - https://dev.max.ru/docs-api/methods/POST/subscriptions

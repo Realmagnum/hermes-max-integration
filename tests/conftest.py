@@ -1,13 +1,24 @@
-"""Shared test fixtures for Max STT plugin."""
+"""Shared test fixtures for Max platform plugin."""
 
+import importlib
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# The plugin is a package (dir `max/`) whose modules use RELATIVE imports
+# (`adapter.py` does `from .mixins.media_upload import ...`). A plain
+# top-level `import adapter` therefore fails with
+# "attempted relative import with no known parent package". Tests use
+# `import adapter`, so import the package member and alias it into
+# sys.modules under the top-level name the tests expect.
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]  # .../plugins/max
+_PLUGINS_DIR = _PLUGIN_ROOT.parent                  # .../plugins (package root)
+sys.path.insert(0, str(_PLUGINS_DIR))
+
+adapter = importlib.import_module("max.adapter")
+sys.modules["adapter"] = adapter
 
 
 @pytest.fixture
@@ -20,7 +31,6 @@ def max_config():
         token="test-token",
         extra={
             "token": "test-token",
-            "stt_enabled": True,
         },
     )
 
