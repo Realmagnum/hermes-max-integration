@@ -11,6 +11,14 @@ author: Alexander / Hermes Agent community
 license: MIT
 homepage: https://gitea.rmg7.com/agent/hermes-max-integration
 
+# Declared for the `hermes plugins install/update` hint (never auto-installed
+# by Hermes by design). Table-as-image: playwright is the preferred HTML→PNG
+# renderer, pillow the fallback. Browser binaries need a separate step:
+#   python -m playwright install chromium   (~115 MB, one-time)
+python_dependencies:
+  - "playwright>=1.40"
+  - "pillow>=10"
+
 requires_env:
   - name: MAX_BOT_TOKEN
     description: "Bot token from MAX for Partners: Chat-bots → Advanced settings → Configure → Token"
