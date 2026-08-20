@@ -1,11 +1,55 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 from .base import MaxBaseMixin
 
 logger = logging.getLogger(__name__)
+
+# ── Playwright setup (HTML→PNG table renderer) ──────────────────────
+# Declared here once; docs and scripts/setup-playwright.py mirror these.
+_SETUP_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup-playwright.py"
+_PLAYWRIGHT_READY_MARKER = ".playwright-ready"
+_AUTO_INSTALL_ENV = "MAX_AUTO_INSTALL_PLAYWRIGHT"
+_AUTO_SETUP_LOCK = asyncio.Lock()
+
+
+def _env_flag(name: str) -> bool:
+    """Coerce an env var to bool: 1/true/yes/on → True."""
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _playwright_importable() -> bool:
+    """True when the `playwright` package can be imported (no side effects)."""
+    import importlib.util
+
+    return importlib.util.find_spec("playwright") is not None
+
+
+def _chromium_browsers_installed() -> bool:
+    """True when Playwright's bundled Chromium/headless shell is present.
+
+    Mirrors scripts/setup-playwright.py: checks the platform browser root
+    (respects PLAYWRIGHT_BROWSERS_PATH) for chromium-* directories.
+    """
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if override:
+        root = Path(override)
+    elif sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        root = Path(base) / "ms-playwright"
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Caches" / "ms-playwright"
+    else:
+        root = Path.home() / ".cache" / "ms-playwright"
+    if not root.is_dir():
+        return False
+    return any(p.name.startswith("chromium") and p.is_dir() for p in root.iterdir())
 
 class TableRendererMixin(MaxBaseMixin):
     """Mixin for rendering Markdown tables."""
@@ -340,7 +384,15 @@ class TableRendererMixin(MaxBaseMixin):
         try:
             from playwright.async_api import async_playwright
         except ImportError:
-            logger.warning("MAX: playwright not installed, table→PNG via Pillow fallback")
+            logger.warning(
+                "MAX: playwright not installed — table→PNG via Pillow fallback. "
+                "Install with: \"%s\" -m pip install 'playwright>=1.40' && "
+                "\"%s\" -m playwright install chromium "
+                "(or set %s=true for one-time auto-setup)",
+                sys.executable,
+                sys.executable,
+                _AUTO_INSTALL_ENV,
+            )
             return False
 
         try:
@@ -367,7 +419,13 @@ class TableRendererMixin(MaxBaseMixin):
                 html_path.unlink(missing_ok=True)
             return out_path.exists()
         except Exception as e:  # noqa: BLE001 — any browser/pw failure → fallback
-            logger.warning("MAX: HTML→PNG render failed (%s); falling back to Pillow", e)
+            hint = ""
+            if "Executable doesn't exist" in str(e):
+                hint = (
+                    f' Chromium missing — run "{sys.executable}" '
+                    f"-m playwright install chromium"
+                )
+            logger.warning("MAX: HTML→PNG render failed (%s)%s; falling back to Pillow", e, hint)
             # cleanup partial html/png
             for pth in (html_path, out_path):
                 try:
@@ -375,6 +433,65 @@ class TableRendererMixin(MaxBaseMixin):
                 except OSError:
                     pass
             return False
+
+    def _table_cache_path(self, table_lines: list, engine: str) -> Path:
+        """Content-addressed PNG path for a renderer engine.
+
+        The engine is part of the key (``v2`` scheme): after switching from
+        Pillow to Playwright, old Pillow-rendered PNGs for the same table
+        text get a different digest and are never served from cache.
+        """
+        import hashlib
+
+        digest = hashlib.md5(
+            f"{engine}:v2:{table_lines}".encode(), usedforsecurity=False
+        ).hexdigest()[:12]
+        return self._table_image_dir / f"table_{digest}.png"
+
+    async def _ensure_playwright_ready(self) -> None:
+        """(Opt-in) One-time Playwright setup, guarded by a marker file.
+
+        Triggered by ``MAX_AUTO_INSTALL_PLAYWRIGHT=true``. Runs the bundled
+        idempotent ``scripts/setup-playwright.py`` with the gateway venv
+        python (``sys.executable``) in a worker thread, then writes a
+        ``.playwright-ready`` marker next to the table cache so the
+        (potentially 1–2 minute) install runs at most once. A failed setup
+        leaves no marker and is retried on the next render.
+        """
+        marker = self._table_image_dir / _PLAYWRIGHT_READY_MARKER
+        async with _AUTO_SETUP_LOCK:
+            if marker.exists():
+                return  # already attempted — don't stall renders again
+            if _playwright_importable() and _chromium_browsers_installed():
+                marker.write_text("ok", encoding="utf-8")
+                return
+            if not _SETUP_SCRIPT.exists():
+                logger.warning(
+                    "MAX: %s=true but scripts/setup-playwright.py not found — skipping",
+                    _AUTO_INSTALL_ENV,
+                )
+                return
+            try:
+                proc = await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, str(_SETUP_SCRIPT), "--quiet"],
+                    capture_output=True,
+                    text=True,
+                    timeout=900,
+                )
+            except Exception as e:  # noqa: BLE001 — network/pip/timeout failures
+                logger.warning("MAX: Playwright auto-install failed to start (%s)", e)
+                return
+            if proc.returncode == 0:
+                marker.write_text("ok", encoding="utf-8")
+                logger.info("MAX: Playwright + Chromium auto-installed (one-time setup)")
+            else:
+                tail = (proc.stderr or proc.stdout or "").strip()[-400:]
+                logger.warning(
+                    "MAX: Playwright auto-install failed (rc=%s): %s",
+                    proc.returncode,
+                    tail,
+                )
 
     async def _render_table_as_image(self, table_lines: list) -> str | None:
         """Render pipe-delimited table lines as a clean PNG and upload to MAX.
@@ -385,12 +502,18 @@ class TableRendererMixin(MaxBaseMixin):
           1) HTML→PNG via Playwright + Chromium (variant A: fixed layout,
              native emoji, never overflows cells)
           2) Pillow ImageDraw (legacy) if playwright/browser is unavailable
+
+        Cache is content-addressed by table text AND renderer engine, so a
+        switch from Pillow to Playwright never serves stale images.
         """
-        # ── Cache hit? (content-addressed by table text; rendering is
-        #    deterministic, so identical tables reuse the same PNG) ────
-        import hashlib
-        digest = hashlib.md5(str(table_lines).encode(), usedforsecurity=False).hexdigest()[:12]
-        out_path = self._table_image_dir / f"table_{digest}.png"
+        # ── (opt-in) one-time Playwright auto-setup ───────────────────
+        if _env_flag(_AUTO_INSTALL_ENV):
+            await self._ensure_playwright_ready()
+
+        # ── Cache hit? (engine-aware; rendering is deterministic, so
+        #    identical tables reuse the same PNG per engine) ───────────
+        engine = "html" if _playwright_importable() else "pillow"
+        out_path = self._table_cache_path(table_lines, engine)
         if out_path.exists():
             token = await self._upload(str(out_path), "image")
             return token
@@ -402,7 +525,7 @@ class TableRendererMixin(MaxBaseMixin):
 
         # ── Preferred: HTML→PNG via Playwright + Chromium (variant A) ──
         # Falls back to the legacy Pillow render below if unavailable.
-        if await self._render_table_html_png(rows, ncols, out_path):
+        if engine == "html" and await self._render_table_html_png(rows, ncols, out_path):
             try:
                 token = await self._upload(str(out_path), "image")
                 if token:
@@ -410,6 +533,12 @@ class TableRendererMixin(MaxBaseMixin):
                 logger.warning("MAX: HTML→PNG rendered but upload failed; falling back")
             except Exception as e:  # noqa: BLE001
                 logger.warning("MAX: HTML→PNG upload error (%s); falling back to Pillow", e)
+
+        # ── Fallback: Pillow (re-keyed to the pillow engine cache) ────
+        out_path = self._table_cache_path(table_lines, "pillow")
+        if out_path.exists():
+            token = await self._upload(str(out_path), "image")
+            return token
 
         def _prepare_cell(val: str) -> tuple:
             """Convert raw cell text to (display_text, color).
