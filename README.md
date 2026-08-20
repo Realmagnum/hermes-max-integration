@@ -155,7 +155,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
                                             │  │ send()    │  │
                                             │  │  ↓        │  │
                                             │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
-                                            │  │  ↓   ↓    │  │    → Pillow → PNG
+                                            │  │  ↓   ↓    │  │    → Playwright(HTML→PNG) или Pillow → PNG
                                             │  │ текст PN  │  │    → POST /uploads
                                             │  │       G   │  │    → PUT → token
                                             │  └───────────┘  │    → POST /messages
@@ -194,8 +194,19 @@ MAX_ALLOWED_USERS=ваш_id_в_max
 
 ### 4. Включить таблицы-картинки (опционально)
 
+Рекомендуемый рендер — **HTML→PNG через Playwright/Chromium** (аккуратные таблицы,
+нативные эмодзи, никакого переполнения ячеек). Без браузера плагин автоматически
+фоллбэкает на классическую отрисовку через Pillow.
+
 ```bash
+# Вариант A (рекомендуется): HTML→PNG через Playwright.
+#   Использует установленный Chrome/Chromium (system) или скачивает bundled:
+pip install 'hermes-max-integration[tables] @ git+https://github.com/Realmagnum/hermes-max-integration.git'
+playwright install chromium          # один раз; либо установите Chrome/Chromium вручную
+
+# Вариант B (фоллбэк): классическая отрисовка через Pillow
 pip install Pillow
+
 echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
 ```
 
@@ -299,7 +310,7 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG через Pillow |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
@@ -400,7 +411,7 @@ await adapter.send_buttons(
 | 🟢 | ● | Хорошо (зелёный) | `#16a34a` |
 | 🟡 | ● | Средне (жёлтый) | `#ca8a04` |
 
-Если Pillow не установлен — автопереключение на текстовый `` `code` `` режим.
+Если ни Playwright/Chromium, ни Pillow не установлены — автопереключение на текстовый `` `code` `` режим.
 
 ---
 
