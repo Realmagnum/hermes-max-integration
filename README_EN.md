@@ -17,7 +17,7 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🟣 **Max Messenger** | Full gateway integration with max.ru |
 | 📡 **Dual Mode** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
 | 🎤 **STT Voice** | Auto-download voice → transcription by the Hermes core (core STT) |
-| 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
+| 🖼️ **Tables as Images** | Render markdown tables as PNGs via Playwright (primary) or Pillow (fallback), with colored status icons |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
 | 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
 | ✂️ **Auto-chunking** | Smart 4000-char message splitting preserving paragraphs |
@@ -27,7 +27,7 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
-| 🧪 **Tested** | pytest + pytest-asyncio, **126 tests** |
+| 🧪 **Tested** | pytest + pytest-asyncio, **167 tests** (`pytest --collect-only`) |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
 
@@ -138,7 +138,7 @@ We tried several approaches before settling on PNG:
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 94 tests |
+| Tests | ✅ Basic | ✅ 167 tests |
 | Interactive setup | ✅ | ✅ + tables |
 
 ## Architecture
@@ -152,7 +152,7 @@ We tried several approaches before settling on PNG:
                                             │  │ send()    │  │
                                             │  │  ↓        │  │
                                             │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
-                                            │  │  ↓   ↓    │  │    → Pillow → PNG
+                                            │  │  ↓   ↓    │  │    → Playwright(HTML→PNG) or Pillow → PNG
                                             │  │ text PNG  │  │    → POST /uploads
                                             │  │       │   │  │    → PUT → token
                                             │  └───────────┘  │    → POST /messages
@@ -467,7 +467,7 @@ hermes-max-integration/
 ├── skills/
 │   └── max-gateway/
 │       └── SKILL.md         # Agent skill
-├── tests/                   # pytest: 126 tests
+├── tests/                   # pytest: 167 tests
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)

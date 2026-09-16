@@ -38,7 +38,7 @@ All notable changes to the hermes-max-integration plugin.
 
 - **Ruff: 220 → 0 errors** in `adapter.py`/`mixins/` (PEP 604/585 annotations, imports, auto-fixes); tests clean too
 - **Bandit: High → 0** (only false-positive B105 — env var names, and intentional B104 — `0.0.0.0` for the webhook)
-- **Tests: 154** (was 129): +11 SSRF-guard cases, +2 table cache, +12 audio normalization
+- **Tests: 167** (154 at release time; the current number is determined by `pytest --collect-only`): +11 SSRF-guard cases, +2 table cache, +12 audio normalization, and wire regressions
 
 ### Docs
 
