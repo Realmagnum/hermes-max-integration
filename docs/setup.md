@@ -2,7 +2,10 @@
 
 ## Переменные окружения
 
-Плагин не имеет собственного файла настроек: значения берутся из окружения процесса Hermes (`.env`) и из `config.yaml` ядра. Приоритет для каждого параметра: **переменная окружения → `platforms.max.extra.*` в `config.yaml` → встроенное значение по умолчанию**. Исключение — `MAX_ALLOWED_USERS`: значения из окружения и из конфига **объединяются**, а не перезаписывают друг друга.
+Плагин не имеет собственного файла настроек: значения берутся из окружения процесса Hermes (`.env`) и из `config.yaml` ядра. Приоритет для каждого параметра: **переменная окружения → ключ блока `platforms.max` в `config.yaml` → встроенное значение по умолчанию**. Исключения:
+
+- `MAX_ALLOWED_USERS` — значения из окружения и из конфига **объединяются**, а не перезаписывают друг друга;
+- `MAX_GROUP_POLICY`, `MAX_HOME_CHANNEL` и `MAX_HOME_CHANNEL_NAME` — переменные окружения учитываются **только в env-only установке, когда `MAX_BOT_TOKEN` тоже задан в окружении**. Если токен лежит в `config.yaml`, эти три переменные молча игнорируются — задавайте `group_policy` / `home_channel` в блоке `platforms.max` (см. «Конфигурация ядра»).
 
 Тип `bool` принимает `1`, `true`, `yes`, `y`, `on` (регистр не важен); любое другое непустое значение трактуется как «выключено».
 
@@ -16,11 +19,11 @@
 | `MAX_WEBHOOK_PATH` | ❌ | строка | `/max/webhook` | Путь webhook-сервера |
 | `MAX_ALLOWED_USERS` | ❌ | список через запятую | пусто | Белый список user_id; объединяется со списком из конфига |
 | `MAX_ALLOW_ALL_USERS` | ❌ | bool | `false` | Разрешить любого пользователя |
-| `MAX_GROUP_POLICY` | ❌ | строка | `allowlist` | Политика групповых сообщений: `allowlist` — проверять списки, `closed` — игнорировать группы |
+| `MAX_GROUP_POLICY` | ❌ | строка | `allowlist` | Политика групповых сообщений: `allowlist` — проверять списки, `closed` — игнорировать группы (только env-only) |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | список через запятую | пусто | user_id, разрешённые в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | список через запятую | пусто | chat_id групп, разрешённых для бота |
-| `MAX_HOME_CHANNEL` | ❌ | строка | пусто | Канал по умолчанию для cron/send_message |
-| `MAX_HOME_CHANNEL_NAME` | ❌ | строка | `Max Home` | Имя канала по умолчанию; учитывается только если задан `MAX_HOME_CHANNEL` |
+| `MAX_HOME_CHANNEL` | ❌ | строка | пусто | Канал по умолчанию для cron/send_message (только env-only) |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | строка | `Max Home` | Имя канала по умолчанию; учитывается только если задан `MAX_HOME_CHANNEL` (только env-only) |
 | `MAX_TABLE_AS_IMAGE` | ❌ | bool | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | bool | `false` | Авто-установка Playwright + Chromium при первом рендере (нужен доступ в сеть, 1–2 мин) |
 | `MAX_CROSS_SESSION` | ❌ | bool | `true` | Кросс-платформенные /sessions и /resume |
@@ -50,23 +53,49 @@ MAX_CROSS_SESSION=false
 
 ## Конфигурация ядра
 
-Всё, что не перечислено выше, задаётся в `config.yaml` ядра Hermes. Ключи `platforms.max.extra` дублируют переменные окружения (приоритет ниже окружения):
+Всё, что не перечислено выше, задаётся в `config.yaml` ядра Hermes. Ключи блока `platforms.max` (приоритет ниже окружения):
 
-| Ключ `platforms.max` | Тип | По умолчанию | Эквивалент в окружении |
-|----------------------|-----|--------------|------------------------|
+| Ключ в блоке `platforms.max` | Тип | По умолчанию | Эквивалент в окружении |
+|------------------------------|-----|--------------|------------------------|
+| `enabled` | bool | — (при заданном токене включается автоматически) | — |
 | `token` | строка | — | `MAX_BOT_TOKEN` |
-| `extra.host` | строка | `0.0.0.0` | `MAX_WEBHOOK_HOST` |
-| `extra.port` | целое | `8646` | `MAX_WEBHOOK_PORT` |
-| `extra.path` | строка | `/max/webhook` | `MAX_WEBHOOK_PATH` |
-| `extra.webhook_url` | строка | пусто | `MAX_WEBHOOK_URL` |
-| `extra.webhook_secret` | строка | пусто | `MAX_WEBHOOK_SECRET` |
-| `extra.allowed_users` | список | `[]` | `MAX_ALLOWED_USERS` |
-| `extra.allow_all_users` | bool | `false` | `MAX_ALLOW_ALL_USERS` |
-| `extra.home_channel` | `{chat_id, name}` | — | `MAX_HOME_CHANNEL`, `MAX_HOME_CHANNEL_NAME` |
-| `extra.group_policy` | строка | `allowlist` | `MAX_GROUP_POLICY` |
-| `extra.group_allow_from` | список | `[]` | `MAX_GROUP_ALLOWED_USERS` |
-| `extra.group_allow_chats` | список | `[]` | `MAX_GROUP_ALLOWED_CHATS` |
-| `extra.cross_session` | bool | `true` | `MAX_CROSS_SESSION` |
+| `home_channel` | `{platform: max, chat_id, name, thread_id?}` | — | `MAX_HOME_CHANNEL`, `MAX_HOME_CHANNEL_NAME` |
+| `host` | строка | `0.0.0.0` | `MAX_WEBHOOK_HOST` |
+| `port` | целое | `8646` | `MAX_WEBHOOK_PORT` |
+| `path` | строка | `/max/webhook` | `MAX_WEBHOOK_PATH` |
+| `webhook_url` | строка | пусто | `MAX_WEBHOOK_URL` |
+| `webhook_secret` | строка | пусто | `MAX_WEBHOOK_SECRET` |
+| `allowed_users` | список строк | `[]` | `MAX_ALLOWED_USERS` (объединяется) |
+| `allow_all_users` | bool | `false` | `MAX_ALLOW_ALL_USERS` |
+| `group_policy` | строка | `allowlist` | `MAX_GROUP_POLICY` |
+| `group_allow_from` | строка через запятую | пусто | `MAX_GROUP_ALLOWED_USERS` |
+| `group_allow_chats` | строка через запятую | пусто | `MAX_GROUP_ALLOWED_CHATS` |
+| `table_as_image` | bool | `false` | `MAX_TABLE_AS_IMAGE` |
+| `cross_session` | bool | `true` | `MAX_CROSS_SESSION` |
+
+`enabled`, `token` и `home_channel` — типизированные ключи ядра, их нужно писать прямо в блоке `platforms.max`. Остальные ключи адаптер читает из `extra`, но ядро Hermes само переносит в `extra` любой нераспознанный ключ верхнего уровня блока, поэтому `platforms.max.table_as_image` и `platforms.max.extra.table_as_image` равнозначны. Записанный как `platforms.max.extra.home_channel` объект молча теряется — ядро читает `home_channel` только как ключ верхнего уровня.
+
+Пример `config.yaml`:
+
+```yaml
+platforms:
+  max:
+    enabled: true
+    token: "<токен>"
+    group_policy: closed
+    group_allow_from: "-123456,78901"
+    table_as_image: true
+    home_channel:
+      platform: max
+      chat_id: "-123456789"
+      name: "Max Home"
+```
+
+Поле `platform: max` внутри `home_channel` обязательно: без него загрузка конфига падает с `KeyError: 'platform'`. Не пишите этот блок вручную без необходимости — один раз отправьте `/sethome` в нужном чате, и ядро сохранит `platforms.max.home_channel` в правильной форме. Значение `MAX_HOME_CHANNEL` из окружения (в env-only установке) имеет приоритет над этим ключом.
+
+`group_allow_from` и `group_allow_chats` принимают **только строку через запятую** (`"-123456,78901"`), но не YAML-список: адаптер прогоняет значение через `str()` и затем разбирает по запятым, поэтому список `["-123456", "78901"]` превратился бы в мусорные элементы `["['-123456'", "'78901']"]`. Это зеркально `allowed_users`, где нужен именно список строк (одиночная строка там тоже не сработает — она разберётся по символам).
+
+`MAX_AUTO_INSTALL_PLAYWRIGHT` в `config.yaml` не дублируется: этот флаг читается только из окружения.
 
 Транскрипция голоса настраивается не здесь, а в секции `stt` конфига ядра — см. раздел STT в `docs/features.md`.
 

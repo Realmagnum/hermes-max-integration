@@ -2,7 +2,10 @@
 
 ## Environment Variables
 
-The plugin has no settings file of its own: values come from the Hermes process environment (`.env`) and from the core `config.yaml`. Precedence for every setting: **environment variable → `platforms.max.extra.*` in `config.yaml` → built-in default**. The exception is `MAX_ALLOWED_USERS`: values from the environment and from the config are **merged**, not overwritten.
+The plugin has no settings file of its own: values come from the Hermes process environment (`.env`) and from the core `config.yaml`. Precedence for every setting: **environment variable → `platforms.max` key in `config.yaml` → built-in default**. Exceptions:
+
+- `MAX_ALLOWED_USERS` — values from the environment and from the config are **merged**, not overwritten;
+- `MAX_GROUP_POLICY`, `MAX_HOME_CHANNEL` and `MAX_HOME_CHANNEL_NAME` — the environment variables are honoured **only in an env-only setup, where `MAX_BOT_TOKEN` is also set in the environment**. If the token lives in `config.yaml`, these three variables are silently ignored — set `group_policy` / `home_channel` in the `platforms.max` block instead (see "Core Configuration").
 
 The `bool` type accepts `1`, `true`, `yes`, `y`, `on` (case-insensitive); any other non-empty value means "off".
 
@@ -16,11 +19,11 @@ The `bool` type accepts `1`, `true`, `yes`, `y`, `on` (case-insensitive); any ot
 | `MAX_WEBHOOK_PATH` | ❌ | string | `/max/webhook` | Webhook server path |
 | `MAX_ALLOWED_USERS` | ❌ | comma-separated list | empty | user_id allowlist; merged with the config list |
 | `MAX_ALLOW_ALL_USERS` | ❌ | bool | `false` | Allow any user |
-| `MAX_GROUP_POLICY` | ❌ | string | `allowlist` | Group message policy: `allowlist` — check the allowlists, `closed` — ignore groups |
+| `MAX_GROUP_POLICY` | ❌ | string | `allowlist` | Group message policy: `allowlist` — check the allowlists, `closed` — ignore groups (env-only) |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | comma-separated list | empty | user_ids allowed in groups |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | comma-separated list | empty | Group chat_ids where the bot is allowed |
-| `MAX_HOME_CHANNEL` | ❌ | string | empty | Default channel for cron/send_message |
-| `MAX_HOME_CHANNEL_NAME` | ❌ | string | `Max Home` | Default channel name; only used when `MAX_HOME_CHANNEL` is set |
+| `MAX_HOME_CHANNEL` | ❌ | string | empty | Default channel for cron/send_message (env-only) |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | string | `Max Home` | Default channel name; only used when `MAX_HOME_CHANNEL` is set (env-only) |
 | `MAX_TABLE_AS_IMAGE` | ❌ | bool | `false` | Render tables as PNG (HTML→PNG via Playwright, Pillow fallback) |
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | bool | `false` | Auto-install Playwright + Chromium on first render (needs network, 1–2 min) |
 | `MAX_CROSS_SESSION` | ❌ | bool | `true` | Cross-platform /sessions and /resume |
@@ -50,23 +53,49 @@ A note on `MAX_GROUP_POLICY=allowlist`: `MAX_GROUP_ALLOWED_USERS`/`MAX_GROUP_ALL
 
 ## Core Configuration
 
-Anything not listed above is configured in the Hermes core `config.yaml`. The `platforms.max.extra` keys mirror the environment variables (lower precedence than the environment):
+Anything not listed above is configured in the Hermes core `config.yaml`. Keys of the `platforms.max` block (lower precedence than the environment):
 
-| `platforms.max` key | Type | Default | Environment equivalent |
-|---------------------|------|---------|------------------------|
+| Key in the `platforms.max` block | Type | Default | Environment equivalent |
+|----------------------------------|------|---------|------------------------|
+| `enabled` | bool | — (auto-enabled when a token is present) | — |
 | `token` | string | — | `MAX_BOT_TOKEN` |
-| `extra.host` | string | `0.0.0.0` | `MAX_WEBHOOK_HOST` |
-| `extra.port` | integer | `8646` | `MAX_WEBHOOK_PORT` |
-| `extra.path` | string | `/max/webhook` | `MAX_WEBHOOK_PATH` |
-| `extra.webhook_url` | string | empty | `MAX_WEBHOOK_URL` |
-| `extra.webhook_secret` | string | empty | `MAX_WEBHOOK_SECRET` |
-| `extra.allowed_users` | list | `[]` | `MAX_ALLOWED_USERS` |
-| `extra.allow_all_users` | bool | `false` | `MAX_ALLOW_ALL_USERS` |
-| `extra.home_channel` | `{chat_id, name}` | — | `MAX_HOME_CHANNEL`, `MAX_HOME_CHANNEL_NAME` |
-| `extra.group_policy` | string | `allowlist` | `MAX_GROUP_POLICY` |
-| `extra.group_allow_from` | list | `[]` | `MAX_GROUP_ALLOWED_USERS` |
-| `extra.group_allow_chats` | list | `[]` | `MAX_GROUP_ALLOWED_CHATS` |
-| `extra.cross_session` | bool | `true` | `MAX_CROSS_SESSION` |
+| `home_channel` | `{platform: max, chat_id, name, thread_id?}` | — | `MAX_HOME_CHANNEL`, `MAX_HOME_CHANNEL_NAME` |
+| `host` | string | `0.0.0.0` | `MAX_WEBHOOK_HOST` |
+| `port` | integer | `8646` | `MAX_WEBHOOK_PORT` |
+| `path` | string | `/max/webhook` | `MAX_WEBHOOK_PATH` |
+| `webhook_url` | string | empty | `MAX_WEBHOOK_URL` |
+| `webhook_secret` | string | empty | `MAX_WEBHOOK_SECRET` |
+| `allowed_users` | list of strings | `[]` | `MAX_ALLOWED_USERS` (merged) |
+| `allow_all_users` | bool | `false` | `MAX_ALLOW_ALL_USERS` |
+| `group_policy` | string | `allowlist` | `MAX_GROUP_POLICY` |
+| `group_allow_from` | comma-separated string | empty | `MAX_GROUP_ALLOWED_USERS` |
+| `group_allow_chats` | comma-separated string | empty | `MAX_GROUP_ALLOWED_CHATS` |
+| `table_as_image` | bool | `false` | `MAX_TABLE_AS_IMAGE` |
+| `cross_session` | bool | `true` | `MAX_CROSS_SESSION` |
+
+`enabled`, `token` and `home_channel` are typed core keys and must be written directly in the `platforms.max` block. The adapter reads the remaining keys from `extra`, but the Hermes core promotes every unrecognised top-level key of the block into `extra`, so `platforms.max.table_as_image` and `platforms.max.extra.table_as_image` are equivalent. A `home_channel` object written as `platforms.max.extra.home_channel` is silently dropped — the core only reads `home_channel` as a top-level key.
+
+Example `config.yaml`:
+
+```yaml
+platforms:
+  max:
+    enabled: true
+    token: "<token>"
+    group_policy: closed
+    group_allow_from: "-123456,78901"
+    table_as_image: true
+    home_channel:
+      platform: max
+      chat_id: "-123456789"
+      name: "Max Home"
+```
+
+The `platform: max` field inside `home_channel` is mandatory: without it config loading fails with `KeyError: 'platform'`. Do not hand-write this block unless you have to — send `/sethome` once in the target chat and the core will persist `platforms.max.home_channel` in the correct shape. A `MAX_HOME_CHANNEL` value from the environment (in an env-only setup) takes precedence over this key.
+
+`group_allow_from` and `group_allow_chats` accept **only a comma-separated string** (`"-123456,78901"`), not a YAML list: the adapter runs the value through `str()` and then splits on commas, so a list `["-123456", "78901"]` would degrade into garbage entries `["['-123456'", "'78901']"]`. This is the mirror image of `allowed_users`, which requires a list of strings (a bare string does not work there either — it is split per character).
+
+`MAX_AUTO_INSTALL_PLAYWRIGHT` is not mirrored in `config.yaml`: that flag is read from the environment only.
 
 Voice transcription is configured elsewhere — in the core config `stt` section; see the STT section in `docs/features_EN.md`.
 

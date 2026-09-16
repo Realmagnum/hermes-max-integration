@@ -311,7 +311,7 @@ cd ~/.hermes/plugins/max-platform
 
 Полная версия — с приоритетами, конфигом ядра и внутренними константами — в [docs/setup.md](docs/setup.md).
 
-Переменные окружения. Приоритет: **окружение → `platforms.max.extra` в `config.yaml` → значение по умолчанию** (`MAX_ALLOWED_USERS` объединяется со списком из конфига). Тип `bool` принимает `1/true/yes/y/on`.
+Переменные окружения. Приоритет: **окружение → ключ `platforms.max` в `config.yaml` → значение по умолчанию** (`MAX_ALLOWED_USERS` объединяется со списком из конфига). Исключение — `MAX_GROUP_POLICY`, `MAX_HOME_CHANNEL` и `MAX_HOME_CHANNEL_NAME`: они действуют только в env-only установке, когда `MAX_BOT_TOKEN` тоже задан в окружении; иначе задавайте `group_policy` / `home_channel` в блоке `platforms.max`. Тип `bool` принимает `1/true/yes/y/on`.
 
 | Переменная | Обязат. | Тип | По умолч. | Описание |
 |------------|---------|-----|-----------|----------|

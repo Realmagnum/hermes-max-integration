@@ -15,7 +15,10 @@ Verified per run:
 3. documented literal defaults match the code constants;
 4. the internal constants listed in the "internal constants" tables are really
    absent from the environment namespace (so they are not sold as configurable);
-5. RU and EN documents list the same set of env vars.
+5. RU and EN documents list the same set of env vars;
+6. the ``platforms.max`` config-table keys are really read by the adapter (via
+   ``extra.get(...)``) or are typed ``PlatformConfig`` keys, the adapter's extra
+   keys are all documented, and no row uses the non-canonical ``extra.`` prefix.
 
 Usage:  python3 scripts/check-config-reference.py [repo_root]
 
@@ -31,11 +34,22 @@ from pathlib import Path
 
 PROD_MODULES = ["adapter.py", "__init__.py", *[f"mixins/{p.name}" for p in sorted(Path("mixins").glob("*.py"))]]
 CONFIG_DOCS = ["README.md", "README_EN.md", "docs/setup.md", "docs/setup_EN.md"]
+CORE_CONFIG_DOCS = ["docs/setup.md", "docs/setup_EN.md"]
+
+# Keys consumed by typed ``PlatformConfig`` fields (gateway/config.py::_TYPED_KEYS).
+# Everything else in a platform block is promoted into ``extra`` and read by the adapter.
+# Keep in sync with the core when a typed key is added.
+CORE_TYPED_KEYS = frozenset({
+    "enabled", "token", "api_key", "home_channel", "reply_to_mode", "channel_overrides",
+    "extra", "gateway_restart_notification", "typing_indicator", "typing_status_text",
+})
 
 ENV_TOKEN = re.compile(r"\bMAX_[A-Z0-9_]+\b")
 TABLE_ROW = re.compile(r"^\s*\|")
 ENV_TABLE_HEADER = re.compile(r"^\s*\|\s*(Переменная|Variable|Env Variable)\b")
 CONST_TABLE_HEADER = re.compile(r"^\s*\|\s*(Константа|Constant)\b")
+CORE_TABLE_HEADER = re.compile(r"^\s*\|\s*(?:Ключ в блоке|Key in the)\b")
+EXTRA_GET = re.compile(r'extra\.get\("([A-Za-z0-9_]+)"')
 
 # Documented default -> literal that must exist in the source (first hit wins).
 LITERAL_DEFAULTS = {
@@ -116,6 +130,50 @@ def doc_env_vars(root: Path, rel: str) -> tuple[dict[str, int], dict[str, int]]:
     return env, const
 
 
+def doc_core_keys(root: Path, rel: str) -> dict[str, int]:
+    """Documented ``platforms.max`` config keys -> first line number.
+
+    Only the first cell of every row in the core-config table counts; the
+    "environment equivalent" column may legitimately mention ``MAX_*`` names.
+    """
+    path = root / rel
+    if not path.is_file():
+        return {}
+    keys: dict[str, int] = {}
+    in_table = False
+    for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not TABLE_ROW.match(line):
+            in_table = False
+            continue
+        if CORE_TABLE_HEADER.match(line):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        first = line.strip().strip("|").split("|")[0].strip()
+        if not first or set(first) <= set("-: "):
+            continue
+        key = first.strip("`").strip()
+        if key:
+            keys.setdefault(key, i)
+    return keys
+
+
+def code_extra_keys(root: Path) -> dict[str, str]:
+    """``extra`` keys read by the adapter -> first ``relpath:line`` occurrence."""
+    found: dict[str, str] = {}
+    for rel in ("adapter.py", *[f"mixins/{p.name}" for p in sorted((root / "mixins").glob("*.py"))]):
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in EXTRA_GET.finditer(text):
+            key = match.group(1)
+            line = text.count("\n", 0, match.start()) + 1
+            found.setdefault(key, f"{rel}:{line}")
+    return found
+
+
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
     problems: list[str] = []
@@ -165,12 +223,40 @@ def main() -> int:
         if not constants.get(rel):
             problems.append(f"{rel}: no internal-constants table found")
 
+    # 6. platforms.max config table vs. what the adapter/core actually read
+    core_docs = {rel: doc_core_keys(root, rel) for rel in CORE_CONFIG_DOCS}
+    for rel, keys in core_docs.items():
+        if not keys:
+            problems.append(f"{rel}: no platforms.max config table found")
+    core_documented = set().union(*core_docs.values()) if core_docs else set()
+    extra_keys = code_extra_keys(root)
+
+    for key in sorted(core_documented):
+        if key.startswith("extra."):
+            where = ", ".join(f"{rel}:{core_docs[rel][key]}" for rel in CORE_CONFIG_DOCS if key in core_docs[rel])
+            problems.append(
+                f"core config table uses the non-canonical extra. prefix: {key} ({where}) — "
+                f"write the plain key under platforms.max; the core promotes it into extra"
+            )
+        elif key not in CORE_TYPED_KEYS and key not in extra_keys:
+            where = ", ".join(f"{rel}:{core_docs[rel][key]}" for rel in CORE_CONFIG_DOCS if key in core_docs[rel])
+            problems.append(f"documented core key not read by the adapter and not typed: {key} ({where})")
+
+    for key in sorted(set(extra_keys) - core_documented):
+        problems.append(f"adapter reads extra[{key!r}] but it is missing from the platforms.max table ({extra_keys[key]})")
+
+    ru_core = set(core_docs.get("docs/setup.md", {}))
+    en_core = set(core_docs.get("docs/setup_EN.md", {}))
+    if ru_core != en_core:
+        problems.append(f"core config RU/EN mismatch: only RU {sorted(ru_core - en_core)}; only EN {sorted(en_core - ru_core)}")
+
     print(f"code env vars: {len(code)}  documented env vars: {len(all_documented)}")
     for name in sorted(all_documented):
         where = code.get(name, [])
         print(f"  {name:<28} {where[0] if where else '??'}")
     constants_doc = sorted(set(constants.get("docs/setup.md", {})) | set(constants.get("docs/setup_EN.md", {})))
     print(f"internal constants documented: {', '.join(constants_doc)}")
+    print(f"platforms.max keys documented: {', '.join(sorted(core_documented))}")
     if problems:
         print("\nFAIL")
         for p in problems:

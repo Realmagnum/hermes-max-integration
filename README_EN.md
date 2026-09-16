@@ -308,7 +308,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 
 The full version — with precedence, core config and internal constants — is in [docs/setup_EN.md](docs/setup_EN.md).
 
-Environment variables. Precedence: **environment → `platforms.max.extra` in `config.yaml` → built-in default** (`MAX_ALLOWED_USERS` is merged with the config list). The `bool` type accepts `1/true/yes/y/on`.
+Environment variables. Precedence: **environment → `platforms.max` key in `config.yaml` → built-in default** (`MAX_ALLOWED_USERS` is merged with the config list). The exception is `MAX_GROUP_POLICY`, `MAX_HOME_CHANNEL` and `MAX_HOME_CHANNEL_NAME`: they only apply in an env-only setup where `MAX_BOT_TOKEN` is also set in the environment; otherwise set `group_policy` / `home_channel` in the `platforms.max` block. The `bool` type accepts `1/true/yes/y/on`.
 
 | Variable | Required | Type | Default | Description |
 |----------|----------|------|---------|-------------|
