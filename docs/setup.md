@@ -104,6 +104,15 @@ curl -H "Authorization: ваш_токен" \
   https://platform-api.max.ru/subscriptions
 ```
 
+**Если регистрация не удалась** (HTTP 4xx/5xx, таймаут или `{"success": false}`),
+адаптер не переходит в состояние «connected»: порт освобождается, а в лог
+пишется причина. Пока подписка не зарегистрирована, `GET /ready` отдаёт
+`503 not_ready` — при этом `GET /health` остаётся `200`: liveness отвечает за
+живость HTTP-сервера, readiness — за то, что MAX действительно доставляет
+сюда апдейты. Коды 429/5xx/timeout считаются временными (gateway повторит
+подключение), остальные 4xx и `success: false` — постоянными (нужна правка
+конфигурации или прав у бота).
+
 ## Переключение режимов
 
 ### Long polling → Webhook
@@ -185,8 +194,12 @@ sudo systemctl status hermes-gateway
 ### Проверка
 
 ```bash
-# Health check
+# Health check (liveness)
 curl http://localhost:8646/health
+
+# Readiness check — MAX actually delivers updates to this webhook
+# 200 {"status":"ready"} = registered; 503 not_ready = subscription missing
+curl -i http://localhost:8646/ready
 
 # Статус плагина
 hermes gateway status

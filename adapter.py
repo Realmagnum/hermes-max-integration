@@ -42,6 +42,7 @@ from gateway.platforms.base import (
     cache_image_from_bytes,
 )
 
+from .mixins.base import _http_body_snippet, _is_retryable_http_status
 from .mixins.buttons import ButtonsMixin
 from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
     _ALLOWED_UPLOAD_HOSTS,
@@ -228,6 +229,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         )
         # Use webhook if URL is explicitly configured
         self._use_webhook: bool = bool(self._webhook_url)
+        # Webhook readiness: the server can be listening (health) while MAX is
+        # not delivering anything to it (not ready) — see /health vs /ready.
+        self._webhook_ready: bool = False
+        self._webhook_ready_reason: str = "webhook not started"
 
         # Access control
         self.allowed_users: list = extra.get("allowed_users", [])
@@ -346,33 +351,76 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             follow_redirects=False,
         )
 
-        # Verify token with /me
+        # Verify token with /me. A transport error, a non-200 status, an
+        # unparsable body or an explicit ``success: false`` must NOT be reported
+        # as a live connection: doing so makes the gateway claim a healthy
+        # adapter that can neither receive nor deliver a single message.
         try:
             resp = await self._http_client.get(f"{MAX_API_BASE}/me", timeout=httpx.Timeout(10.0))
-            if resp.status_code == 401:
-                await self._http_client.aclose()
-                self._http_client = None
-                self._set_fatal_error("invalid_token", "MAX bot token is invalid", retryable=False)
-                return False
-            if resp.status_code == 200:
-                d = resp.json()
-                logger.info("MAX: connected as @%s (id=%s)", d.get("username", "?"), d.get("user_id"))
-                # Register slash commands via PATCH /me/commands
-                try:
-                    await self._set_bot_commands()
-                except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                    logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
-            else:
-                logger.warning("MAX: /me returned %s", resp.status_code)
-        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            await self._http_client.aclose()
-            self._http_client = None
-            self._set_fatal_error("conn_fail", str(e), retryable=True)
+        except Exception as e:  # noqa: BLE001 — transport failure: nothing was established
+            await self._close_http_client()
+            self._set_fatal_error(
+                "conn_fail", f"/me transport error: {type(e).__name__}: {e}", retryable=True,
+            )
             return False
 
+        if resp.status_code != 200:
+            await self._close_http_client()
+            if resp.status_code == 401:
+                self._set_fatal_error("invalid_token", "MAX bot token is invalid", retryable=False)
+            else:
+                self._set_fatal_error(
+                    "conn_fail",
+                    f"/me returned HTTP {resp.status_code}{_http_body_snippet(resp)}",
+                    retryable=_is_retryable_http_status(resp.status_code),
+                )
+            logger.warning("MAX: /me returned HTTP %s — not connected", resp.status_code)
+            return False
+
+        try:
+            me = resp.json()
+        except ValueError:
+            me = None
+        if not isinstance(me, dict) or me.get("success") is False:
+            detail = me.get("message") if isinstance(me, dict) else "unparsable JSON body"
+            await self._close_http_client()
+            self._set_fatal_error(
+                "conn_fail",
+                f"/me did not return bot info: {detail or 'success=false'}",
+                retryable=False,
+            )
+            return False
+
+        logger.info("MAX: connected as @%s (id=%s)", me.get("username", "?"), me.get("user_id"))
+        # Register slash commands via PATCH /me/commands
+        try:
+            await self._set_bot_commands()
+        except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
+
         if self._use_webhook:
-            return await self._start_webhook()
-        return await self._start_polling()
+            started = await self._start_webhook()
+        else:
+            started = await self._start_polling()
+
+        if not started:
+            # _start_webhook/_start_polling recorded the fatal error and tore
+            # down whatever they partially started; the HTTP client is ours.
+            self._webhook_ready = False
+            logger.warning("MAX: receive path failed to start — not connected")
+            await self._close_http_client()
+            return False
+        return True
+
+    async def _close_http_client(self) -> None:
+        """Close and forget the HTTP client. Safe on a half-initialized adapter."""
+        client, self._http_client = self._http_client, None
+        if client is None:
+            return
+        try:
+            await client.aclose()
+        except Exception as exc:  # noqa: BLE001 — shutdown must not raise
+            logger.debug("MAX: http client close failed: %s", exc)
 
     async def disconnect(self) -> None:
         """Shut down the adapter."""
@@ -392,17 +440,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             task.cancel()
         self._background_tasks.clear()
 
-        if self._webhook_runner:
-            try:
-                await self._webhook_runner.cleanup()
-            except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                logger.debug("MAX: webhook cleanup error: %s", exc)
-            self._webhook_runner = None
-            self._webhook_app = None
+        await self._teardown_webhook_server()
 
-        if self._http_client:
-            await self._http_client.aclose()
-            self._http_client = None
+        await self._close_http_client()
 
         self._mark_disconnected()
         logger.info("MAX: disconnected")

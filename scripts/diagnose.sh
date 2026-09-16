@@ -124,12 +124,22 @@ fi
 
 # ── 4. Mode-specific: health endpoint / poll errors ──────────────────
 if [ "$MODE" = "webhook" ]; then
-    desc="Health endpoint"
-    health=$(curl -s --max-time 5 http://localhost:8646/health 2>/dev/null | tr -d '[:space:]' || echo "")
-    if [ "$health" = '{"status":"ok"}' ]; then
+    # Liveness and readiness are separate: the HTTP server can be up (/health)
+    # while MAX is not delivering anything (/ready 503 = registration failed
+    # or the subscription is gone). Only both together mean a working bot.
+    desc="Webhook liveness (/health) + readiness (/ready)"
+    health=$(curl -s --max-time 5 http://localhost:8646/health 2>/dev/null | tr -d '[:space:]' || true)
+    ready_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8646/ready 2>/dev/null || true)
+    ready_code="${ready_code:-000}"
+    if [ "$health" = '{"status":"ok"}' ] && [ "$ready_code" = "200" ]; then
         check 4 "$desc" "pass"
     else
-        echo -e "       Got: $health"
+        echo -e "       /health: ${health:-<no response>} (liveness — HTTP server up)"
+        if [ "$ready_code" = "200" ]; then
+            echo -e "       /ready:  200 (MAX delivers to this server)"
+        else
+            echo -e "       /ready:  $ready_code (MAX is NOT delivering — subscription missing/rejected)"
+        fi
         check 4 "$desc" "fail"
     fi
 else
