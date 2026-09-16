@@ -22,7 +22,8 @@
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume (owner-only, см. features.md) |
+| `MAX_CROSS_SESSION_USERS` | ❌ | — | MAX user ID (через запятую), которым разрешены кросс-платформенные команды; по умолчанию — `MAX_ALLOWED_USERS` |
 
 ## Режимы подключения
 

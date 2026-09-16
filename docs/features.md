@@ -220,7 +220,10 @@ _ALLOWED_UPLOAD_HOSTS = {
 
 ### Как работает
 
-Адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы.
+При явном включении адаптер перехватывает `/sessions` и `/resume` до ядра и запрашивает `SessionDB` без
+фильтра платформы. Команда выключена по умолчанию и доступна только явно указанным владельцам: она
+выдаёт заголовки, превью и ID сессий **всех** платформ, поэтому `allow_all_users` сам по себе такого
+доступа не даёт.
 
 ### Команды
 
@@ -237,11 +240,17 @@ _ALLOWED_UPLOAD_HOSTS = {
 platforms:
   max:
     extra:
-      allow_admin_from:
-        - "95825064"  # ваш MAX user_id
+      cross_session: true
+      cross_session_users:            # owner-only; по умолчанию — MAX_ALLOWED_USERS
+        - "95825064"                  # ваш MAX user_id
+      allow_admin_from:               # требуется ядру для /resume --all
+        - "95825064"
 ```
 
-Отключение: `MAX_CROSS_SESSION=false` в `.env`.
+Или в `.env`: `MAX_CROSS_SESSION=true` и `MAX_CROSS_SESSION_USERS=95825064`.
+
+Отключение (значение по умолчанию): `MAX_CROSS_SESSION=false` в `.env` или `cross_session: false`
+в `extra` — возвращает стандартное поведение ядра (только MAX-сессии).
 
 ## Standalone отправитель
 

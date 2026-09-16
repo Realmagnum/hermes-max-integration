@@ -29,7 +29,7 @@
 | 🎞️ **Голосовые/Видео/Документы** | Отдельные методы `send_voice`, `send_video`, `send_document` |
 | ⚡ **Индикатор ввода** | Отображение набора текста для всех типов чатов |
 | 🔧 **Standalone-отправитель** | Отправка сообщений из cron/send_message через `_standalone_send` с нативной доставкой файлов. `hermes send "текст MEDIA:/file"` — работает без модификации ядра |
-| 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. Включено по умолчанию (`MAX_CROSS_SESSION=true`) |
+| 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. **Выключено по умолчанию**; включается явно (`MAX_CROSS_SESSION=true`) и работает только для указанных владельцев (owner-only) |
 | 🧪 **Тесты** | pytest + pytest-asyncio, **126 тестов** |
 | 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
 | 📋 **Слеш-команды** | 20 команд (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) через MAX API `PATCH /me/commands` |
@@ -327,7 +327,8 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume (см. ниже) |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume (owner-only, см. ниже) |
+| `MAX_CROSS_SESSION_USERS` | ❌ | — | MAX user ID (через запятую), которым разрешены кросс-платформенные команды; по умолчанию — `MAX_ALLOWED_USERS` |
 
 ---
 
@@ -335,7 +336,9 @@ cd ~/.hermes/plugins/max-platform
 
 **Зачем:** ядро Hermes по умолчанию показывает сессии только в пределах одной платформы — из MAX видны только MAX-сессии. Это корректно для multi-tenant, но неудобно, когда один пользователь работает с нескольких платформ.
 
-**Как работает:** адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы и форматирует ответ.
+**Как работает:** при явном включении адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы и форматирует ответ.
+
+**Безопасность:** команда **выключена по умолчанию** и доступна только явно указанным владельцам — она выдаёт заголовки, превью и ID сессий **всех** платформ. `allow_all_users` сам по себе такого доступа не даёт; неавторизованный вызывающий получает обычное поведение ядра (только MAX-сессии).
 
 | Команда | Действие | Пример вывода |
 |---------|----------|--------------|
@@ -343,16 +346,21 @@ cd ~/.hermes/plugins/max-platform
 | `/sessions search <q>` | Поиск по всем сессиям | `🔍 Sessions matching "traefik"` |
 | `/resume <id>` | Переключиться на любую сессию | (переключает без ошибки) |
 
-**Требование:** для `/resume --all` добавьте `max` в `platforms:` config.yaml:
+**Включение (owner-only):**
 ```yaml
+# ~/.hermes/config.yaml
 platforms:
   max:
     extra:
-      allow_admin_from:
-        - "95825064"  # ваш MAX user_id
+      cross_session: true
+      cross_session_users:      # по умолчанию — MAX_ALLOWED_USERS
+        - "95825064"            # ваш MAX user_id
+      allow_admin_from:         # требуется ядру для /resume --all
+        - "95825064"
 ```
+или в `.env`: `MAX_CROSS_SESSION=true` и `MAX_CROSS_SESSION_USERS=95825064`.
 
-**Отключение:** `MAX_CROSS_SESSION=false` в `.env` — вернёт стандартное поведение ядра (только MAX-сессии).
+**Отключение (значение по умолчанию):** `MAX_CROSS_SESSION=false` в `.env` или `cross_session: false` в `extra` — вернёт стандартное поведение ядра (только MAX-сессии).
 
 ---
 

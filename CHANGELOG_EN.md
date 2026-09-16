@@ -2,6 +2,13 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [Unreleased]
+
+### Security
+
+- **SEC-05: cross-platform sessions are off by default and owner-only.** `/sessions` and `/resume` were intercepted before core unconditionally (`cross_session` defaulted to `true`) and exposed titles/previews/IDs of sessions on every platform to anyone the general allowlist admitted — including the empty-`MAX_ALLOWED_USERS` + `allow_all_users=false` case. Access now requires an explicit opt-in (`MAX_CROSS_SESSION=true` / `cross_session: true`) **and** a caller from the owner list (`MAX_CROSS_SESSION_USERS` / `cross_session_users`, defaulting to a non-empty `MAX_ALLOWED_USERS`); `allow_all_users` alone never grants it. The check runs before any side effect (session-store query, outbound message, `/resume --all` rewrite) and is repeated inside the handler. A non-owner falls through to the core's normal per-platform scoping.
+- A bare `/sessions search` no longer becomes `/resume --all search`; the second "search" is treated as the search form and replies with a usage hint.
+
 ## [2.9.0] — 2026-08-17
 
 ### Refactor

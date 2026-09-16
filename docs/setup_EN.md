@@ -22,7 +22,8 @@
 | `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (for testing) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform /sessions and /resume |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume (owner-only, see features_EN.md) |
+| `MAX_CROSS_SESSION_USERS` | ❌ | — | MAX user IDs (comma-separated) allowed to use the cross-platform commands; defaults to `MAX_ALLOWED_USERS` |
 
 ## Connection Modes
 

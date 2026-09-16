@@ -198,13 +198,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         if self._table_as_image:
             self._table_image_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-        # Cross-platform session commands (/sessions, /resume across all platforms)
-        self._cross_session: bool = _coerce_bool(
-            os.getenv("MAX_CROSS_SESSION")
-            or extra.get("cross_session", True),  # enabled by default
-            True,
-        )
-
         # Webhook settings
         self._webhook_host: str = (
             os.getenv("MAX_WEBHOOK_HOST")
@@ -255,6 +248,33 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or str(extra.get("group_allow_chats", ""))
         )
 
+        # Cross-platform session commands (/sessions, /resume across ALL platforms).
+        # SEC-05: deny by default — this path bypasses the core's per-platform
+        # session scoping and exposes titles/previews/IDs of every platform, so it
+        # requires an explicit opt-in *and* an explicitly authorised owner caller.
+        self._cross_session: bool = _coerce_bool(
+            os.getenv("MAX_CROSS_SESSION")
+            or extra.get("cross_session", False),
+            False,
+        )
+        _cross_users_raw = (
+            os.getenv("MAX_CROSS_SESSION_USERS")
+            or extra.get("cross_session_users", "")
+        )
+        if isinstance(_cross_users_raw, (list, tuple, set)):
+            _cross_users_raw = ",".join(str(v) for v in _cross_users_raw)
+        self._cross_session_users: set[str] = set(_parse_list(str(_cross_users_raw or "")))
+        if not self._cross_session_users and not self._allow_all_users:
+            # A non-empty explicit user allowlist doubles as the owner set. An
+            # empty allowlist or allow_all_users stays fail-closed (deny all).
+            self._cross_session_users = set(self._allowed_users_set)
+        if self._cross_session and not self._cross_session_users:
+            logger.warning(
+                "MAX: MAX_CROSS_SESSION is enabled but no cross-session owner is "
+                "configured (MAX_CROSS_SESSION_USERS or a non-empty "
+                "MAX_ALLOWED_USERS) — cross-platform session access stays denied"
+            )
+
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
         self._webhook_runner: Any = None  # aiohttp.web.AppRunner
@@ -277,6 +297,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
         self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
         self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
+
+    def _cross_session_allowed(self, user_id: str) -> bool:
+        """SEC-05: deny-by-default authorization for cross-platform session commands.
+
+        Grants access only when the feature is explicitly opted in
+        (``cross_session`` / ``MAX_CROSS_SESSION``) *and* the caller is an
+        explicitly configured owner (``cross_session_users`` /
+        ``MAX_CROSS_SESSION_USERS``, or a non-empty ``MAX_ALLOWED_USERS``
+        allowlist). ``allow_all_users`` alone never grants cross-platform
+        visibility into other platforms' sessions.
+        """
+        if not self._cross_session or not user_id:
+            return False
+        return str(user_id) in self._cross_session_users
 
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
@@ -710,22 +744,29 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else "[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
-        if text and self._cross_session:
+        # SEC-05: authorise BEFORE any side effect (SessionDB queries, outbound
+        # messages, core command rewriting). Callers that are not opted-in owners
+        # fall through unchanged to the core, which applies its own per-platform
+        # scoping — and its own explicit-admin check for `--all`.
+        if text and self._cross_session and self._cross_session_allowed(user_id):
             if text.startswith('/sessions'):
                 args = text[len('/sessions'):].strip()
-                if args and not args.lower().startswith('search '):
+                args_lower = args.lower()
+                # `/sessions search [query]` is our listing/search form; anything
+                # else non-empty is a session title/ID for the core.
+                if args and args_lower != 'search' and not args_lower.startswith('search '):
                     # Has a target ID → let core handle with --all override
                     text = f"/resume --all {args}"
                 else:
                     # Plain /sessions or /sessions search → our handler (all platforms)
-                    await self._handle_cross_sessions(text, scoped_chat_id)
+                    await self._handle_cross_sessions(text, scoped_chat_id, user_id)
                     return None
             elif text.startswith('/resume'):
                 if '--all' not in text and '--cross-room' not in text:
                     parts = text.split(maxsplit=1)
                     if len(parts) == 1:
                         # /resume with no args → our handler (all platforms)
-                        await self._handle_cross_sessions('/sessions', scoped_chat_id)
+                        await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
                         return None
                     else:
                         # /resume <target> → rewrite with --all for core
