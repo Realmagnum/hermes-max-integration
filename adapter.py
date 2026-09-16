@@ -68,6 +68,10 @@ POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
 UPLOAD_DELAY = 2.0
 
+# Interactive model-picker sessions: a button tap is honoured only while its
+# session is younger than this. Sliding — every accepted tap refreshes it.
+MODEL_PICKER_TTL_SECONDS = 15 * 60
+
 # SSRF allowlist is in .mixins.media_upload
 
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy reverse proxy; порт защищён host firewall
@@ -276,7 +280,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._exec_approval_state: dict[str, str] = {}   # approval_id → session_key
         self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
         self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
-        self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
+        self._model_picker_state: dict[str, dict] = {}    # scoped chat → picker session (owner/message bound)
 
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
@@ -1716,6 +1720,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
           model:pick:{model}:{provider} — model selected, switch
           model:page:{provider}:{page} — page navigation
           model:back — back to provider list
+
+        Every tap is gated through :meth:`_model_picker_state_for`, so a tap is
+        only honoured when it belongs to a live session of *this* user, came
+        from the picker message that session is currently showing, and has not
+        outlived ``MODEL_PICKER_TTL_SECONDS``.
         """
         # Build the correct scoped_chat matching how send_model_picker stores state.
         # If chat_id (raw numeric) is present, the message was in a group → "chat:{id}".
@@ -1725,15 +1734,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         else:
             scoped_chat = f"user:{user_id}"
 
+        state = self._model_picker_state_for(
+            scoped_chat, user_id=user_id, message_id=self._callback_message_id(raw_payload),
+        )
+        if state is None:
+            return None
+
         parts = data.split(":", 3)
 
         if len(parts) >= 3 and parts[1] == "provider":
             # Provider selected
             provider_slug = parts[2]
-            state = self._model_picker_state.get(scoped_chat)
-
-            msg_id = state.get("provider_msg_id", "") if state else ""
-            await self._on_model_provider_selected(scoped_chat, provider_slug, msg_id)
+            await self._on_model_provider_selected(
+                scoped_chat, provider_slug, str(state.get("provider_msg_id", "")), state=state,
+            )
             return None
 
         if len(parts) >= 4 and parts[1] == "page":
@@ -1743,9 +1757,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 page = int(parts[3])
             except ValueError:
                 page = 0
-            state = self._model_picker_state.get(scoped_chat)
-            if state:
-                await self._on_model_page_selected(scoped_chat, provider_slug, page)
+            await self._on_model_page_selected(scoped_chat, provider_slug, page, state=state)
             return None
 
         if len(parts) >= 3 and parts[1] == "pick":
@@ -1755,14 +1767,108 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             model_id = parts[2]
             provider_slug = parts[3] if len(parts) >= 4 else ""
             if provider_slug:
-                return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
+                return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id, state=state)
 
         if data == "model:back":
-            await self._on_model_back(scoped_chat, user_id)
+            await self._on_model_back(scoped_chat, user_id, state=state)
             return None
 
         logger.warning("MAX: unhandled model callback: %s", data)
         return None
+
+    # ── Model picker session state ───────────────────────────────────────
+
+    @staticmethod
+    def _callback_message_id(payload: dict[str, Any]) -> str:
+        """Message id a callback button was attached to, "" when not exposed.
+
+        MAX sends the pressed message inside ``message``; the id lives in
+        ``message.body.mid`` (``message.mid`` in the documented callback
+        envelope). Absent ids are tolerated — the tap is then only checked
+        against owner and TTL, never against a guessed message id.
+        """
+        msg = payload.get("message") or {}
+        callback = payload.get("callback") or payload.get("message_callback") or {}
+        body = msg.get("body") or {}
+        return str(
+            body.get("mid")
+            or msg.get("mid")
+            or callback.get("mid")
+            or callback.get("message_id")
+            or ""
+        )
+
+    @staticmethod
+    def _model_picker_owner(chat_id: str, metadata: dict[str, Any] | None) -> str:
+        """User id owning a picker session, "" when it cannot be known yet.
+
+        Core builds the ``send_model_picker`` metadata for routing, not for
+        identity, so the requester is only knowable up front in a DM
+        (``chat_id`` = ``user:<id>``). In a group the session binds to the
+        first user who taps a button (see ``_model_picker_state_for``).
+        """
+        for key in ("owner_user_id", "user_id"):
+            value = (metadata or {}).get(key)
+            if value:
+                return str(value)
+        prefix, _, rest = str(chat_id).partition(":")
+        return rest if prefix == "user" and rest else ""
+
+    def _prune_model_picker_state(self, now: float | None = None) -> None:
+        """Drop expired picker sessions so abandoned pickers stop being actionable."""
+        now = time.monotonic() if now is None else now
+        expired = [
+            key for key, state in self._model_picker_state.items()
+            if now - float(state.get("updated_at") or 0.0) > MODEL_PICKER_TTL_SECONDS
+        ]
+        for key in expired:
+            self._model_picker_state.pop(key, None)
+            logger.info("MAX: model picker session expired: %s", key)
+
+    def _model_picker_state_for(
+        self, key: str, *, user_id: str = "", message_id: str = "",
+    ) -> dict[str, Any] | None:
+        """Resolve the live picker session for a button tap, or None.
+
+        Enforced, in order: the session exists and is not older than
+        ``MODEL_PICKER_TTL_SECONDS`` (sliding — an accepted tap refreshes it),
+        the tapping user owns the session, and — when the payload exposes the
+        pressed message id — the tap comes from the picker message the session
+        is currently showing rather than a superseded one. Only a tap that
+        clears every check binds an unowned (group) session.
+        """
+        self._prune_model_picker_state()
+        state = self._model_picker_state.get(key)
+        if not state:
+            logger.info("MAX: model picker tap without a live session (%s)", key)
+            return None
+
+        owner = str(state.get("owner_user_id") or "")
+        if owner and str(user_id) != owner:
+            logger.warning(
+                "MAX: ignoring model picker tap from non-owner user=%s owner=%s chat=%s",
+                user_id, owner, key,
+            )
+            return None
+
+        expected = {
+            str(state.get(field)) for field in ("provider_msg_id", "model_msg_id")
+            if state.get(field)
+        }
+        if message_id and expected and str(message_id) not in expected:
+            logger.info(
+                "MAX: ignoring stale model picker button mid=%s (expected %s, chat=%s)",
+                message_id, sorted(expected), key,
+            )
+            return None
+
+        if not owner and user_id:
+            # Group session: bind it to the first user whose tap was accepted.
+            state["owner_user_id"] = str(user_id)
+            logger.info("MAX: model picker session %s bound to user %s", key, user_id)
+
+        state["updated_at"] = time.monotonic()
+        return state
 
     # ═════════════════════════════════════════════════════════════════════
     # Model picker
@@ -1823,6 +1929,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
+            now = time.monotonic()
+            # Session is bound to its owner and to the message currently showing
+            # the buttons, and expires after MODEL_PICKER_TTL_SECONDS of disuse.
             self._model_picker_state[str(chat_id)] = {
                 "provider_msg_id": result.message_id,  # ID сообщения с провайдерами (текст+кнопки)
                 "providers": providers,
@@ -1830,14 +1939,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 "on_model_selected": on_model_selected,
                 "current_model": current_model,
                 "current_provider": current_provider,
+                "owner_user_id": self._model_picker_owner(chat_id, metadata),
+                "created_at": now,
+                "updated_at": now,
             }
         return result
 
     async def _on_model_provider_selected(
-        self, chat_id: str, provider_slug: str, message_id: str, page: int = 0, is_pagination: bool = False
+        self, chat_id: str, provider_slug: str, message_id: str, page: int = 0, is_pagination: bool = False,
+        state: dict[str, Any] | None = None,
     ) -> None:
         """Step 2: Show models for the selected provider (with pagination)."""
-        state = self._model_picker_state.get(str(chat_id))
+        if state is None:
+            state = self._model_picker_state.get(str(chat_id))
         if not state:
             return
 
@@ -1936,10 +2050,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 self._model_picker_state[str(chat_id)] = state
 
     async def _on_model_page_selected(
-        self, chat_id: str, provider_slug: str, page: int
+        self, chat_id: str, provider_slug: str, page: int, state: dict[str, Any] | None = None,
     ) -> None:
         """Handle page navigation in model picker."""
-        state = self._model_picker_state.get(str(chat_id))
+        if state is None:
+            state = self._model_picker_state.get(str(chat_id))
         if not state:
             return
 
@@ -1947,17 +2062,25 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         model_msg_id = state.get("model_msg_id", "")
         if not model_msg_id:
             # Fallback: show from scratch
-            await self._on_model_provider_selected(chat_id, provider_slug, "", page)
+            await self._on_model_provider_selected(chat_id, provider_slug, "", page, state=state)
             return
 
         # Pass model_msg_id as message_id and is_pagination=True
-        await self._on_model_provider_selected(chat_id, provider_slug, model_msg_id, page, is_pagination=True)
+        await self._on_model_provider_selected(
+            chat_id, provider_slug, model_msg_id, page, is_pagination=True, state=state,
+        )
 
     async def _on_model_picked(
         self, chat_id: str, model_id: str, provider_slug: str, user_id: str,
+        state: dict[str, Any] | None = None,
     ) -> MessageEvent | None:
         """Step 3: Model selected — call on_model_selected callback."""
-        state = self._model_picker_state.pop(str(chat_id), None)
+        key = str(chat_id)
+        if state is None:
+            state = self._model_picker_state.pop(key, None)
+        elif self._model_picker_state.get(key) is state:
+            # Claim the session once: a replayed tap finds no state and is ignored.
+            self._model_picker_state.pop(key, None)
         if not state:
             return None
 
@@ -1984,9 +2107,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         return None
 
-    async def _on_model_back(self, chat_id: str, user_id: str) -> None:
+    async def _on_model_back(
+        self, chat_id: str, user_id: str, state: dict[str, Any] | None = None,
+    ) -> None:
         """Go back to provider selection."""
-        state = self._model_picker_state.get(str(chat_id))
+        if state is None:
+            state = self._model_picker_state.get(str(chat_id))
         if not state:
             return
 
