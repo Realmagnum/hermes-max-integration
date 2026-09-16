@@ -20,6 +20,7 @@ import httpx
 import pytest
 
 from tests.conftest import (
+    BOT_USER_ID,
     DIALOG_CHAT_ID,
     DIALOG_USER_ID,
     bot_started_update,
@@ -38,17 +39,13 @@ ACCEPT_AFFIX = re.compile(r"^\(\d+/\d+\)\n")
 class TestInboundRouting:
     """`_build_event` must classify a dialog as a DM and a chat as a group."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUILD-04: a captured dialog update carries "
-            "message.recipient = {chat_id, chat_type: 'dialog', user_id} and the "
-            "adapter routes it as chat:<chat_id> group, ignoring chat_type; the "
-            "source document maps a dialog to recipient.user_id. Fix in a "
-            "dedicated task, then drop this marker."
-        ),
-    )
     async def test_captured_dialog_routes_to_dm(self, make_adapter):
+        """A captured dialog carries recipient.chat_id *and* chat_type=dialog.
+
+        The document's normalisation table maps a dialog to
+        ``recipient.user_id`` — the service ``chat_id`` must not turn it into a
+        group.
+        """
         a = make_adapter()
         event = await a._build_event(dm_message_created())
 
@@ -62,6 +59,31 @@ class TestInboundRouting:
         a = make_adapter()
         payload = dm_message_created()
         payload["message"]["recipient"] = {"chat_type": "dialog"}
+
+        event = await a._build_event(payload)
+
+        assert event is not None
+        assert event.source.chat_type == "dm"
+        assert event.source.chat_id == f"user:{DIALOG_USER_ID}"
+
+    async def test_dialog_chat_type_wins_over_stray_chat_id(self, make_adapter):
+        """Mixed payload: a `dialog` hint outranks an id from the chat object."""
+        a = make_adapter()
+        payload = dm_message_created()
+        payload["message"]["recipient"] = {"chat_type": "dialog", "user_id": BOT_USER_ID}
+        payload["chat"] = {"chat_id": DIALOG_CHAT_ID, "type": "chat"}
+
+        event = await a._build_event(payload)
+
+        assert event is not None
+        assert event.source.chat_type == "dm"
+        assert event.source.chat_id == f"user:{DIALOG_USER_ID}"
+
+    async def test_missing_chat_fields_keep_the_dm_fallback(self, make_adapter):
+        a = make_adapter()
+        payload = dm_message_created()
+        payload["message"]["recipient"] = {}
+        payload["message"].pop("chat_id", None)
 
         event = await a._build_event(payload)
 
@@ -104,6 +126,27 @@ class TestInboundRouting:
         assert second is None
 
 
+def _group_callback(
+    payload: str,
+    *,
+    chat_id: int = GROUP_CHAT_ID,
+    user_id: int = DIALOG_USER_ID,
+) -> dict:
+    """Captured `message_callback` shape, rewritten for a group chat.
+
+    No live capture for the group variant exists; per the documented schema a
+    chat/channel carries `chat_id` in `message.recipient` and no
+    `chat_type: "dialog"`.
+    """
+    update = message_callback(payload, user_id=user_id)
+    update["message"]["recipient"] = {
+        "chat_id": chat_id,
+        "type": "chat",
+        "title": "Test Group",
+    }
+    return update
+
+
 class TestCallbackRouting:
     """Button presses resolve against captured `message_callback` payloads."""
 
@@ -132,6 +175,110 @@ class TestCallbackRouting:
 
         assert await a._on_callback(payload) is None
         assert max_api.requests == []
+
+    async def test_captured_dialog_callback_replies_to_the_dialog(
+        self, make_adapter, max_api, monkeypatch
+    ):
+        """An approval pressed in a captured dialog is acked in that dialog.
+
+        `message.recipient.chat_id` here is the dialog's service id, not a
+        group: the ack must address `user_id` and never a chat.
+        """
+        import tools.approval as approval_mod
+
+        monkeypatch.setattr(approval_mod, "has_blocking_approval", lambda key: True)
+        monkeypatch.setattr(
+            approval_mod, "resolve_gateway_approval", lambda key, choice: 1
+        )
+
+        a = make_adapter()
+        await a.send_exec_approval(
+            f"user:{DIALOG_USER_ID}", command="rm -rf /", session_key="sess-1"
+        )
+        approval_id = _flat_button_payloads(
+            max_api.json_body(max_api.calls("POST", "/messages")[0])
+        )[0].split(":")[2]
+        max_api.requests.clear()
+
+        await a._on_callback(message_callback(f"exec:once:{approval_id}"))
+
+        ack = max_api.calls("POST", "/messages")[-1]
+        assert max_api.params(ack) == {"user_id": str(DIALOG_USER_ID)}
+        assert "chat_id" not in max_api.params(ack)
+        assert "Approved (once)" in max_api.json_body(ack)["text"]
+
+    async def test_captured_group_callback_replies_to_the_group(
+        self, make_adapter, max_api, monkeypatch
+    ):
+        """The group counterpart: scope is chat:<id>, addressed by chat_id."""
+        import tools.approval as approval_mod
+
+        monkeypatch.setattr(approval_mod, "has_blocking_approval", lambda key: True)
+        monkeypatch.setattr(
+            approval_mod, "resolve_gateway_approval", lambda key, choice: 1
+        )
+
+        a = make_adapter()
+        a._exec_approval_state["grp123"] = "sess-1"
+
+        await a._on_callback(_group_callback("exec:once:grp123"))
+
+        ack = max_api.calls("POST", "/messages")[-1]
+        assert max_api.params(ack) == {"chat_id": str(GROUP_CHAT_ID)}
+
+    async def test_captured_dialog_model_callback_reaches_picker_state(
+        self, make_adapter, max_api
+    ):
+        """A dialog callback keys the picker state exactly as the sender stored it."""
+        a = make_adapter()
+
+        async def on_selected(chat_id, model_id, provider_slug):
+            return "ok"
+
+        a._model_picker_state[f"user:{DIALOG_USER_ID}"] = {
+            "provider_msg_id": "mid-provider",
+            "models": ["deepseek-v3"],
+            "providers": [
+                {"slug": "deepseek", "name": "DeepSeek", "models": ["deepseek-v3"]},
+            ],
+            "session_key": "test",
+            "on_model_selected": on_selected,
+            "current_model": "gpt-4",
+            "current_provider": "openrouter",
+        }
+
+        await a._on_callback(message_callback("model:provider:deepseek"))
+
+        posts = max_api.calls("POST", "/messages")
+        assert posts, "a dialog callback must reach the picker"
+        assert max_api.params(posts[-1]) == {"user_id": str(DIALOG_USER_ID)}
+        assert "chat_id" not in max_api.params(posts[-1])
+
+    async def test_captured_group_model_callback_uses_group_scope(
+        self, make_adapter, max_api
+    ):
+        a = make_adapter()
+
+        async def on_selected(chat_id, model_id, provider_slug):
+            return "ok"
+
+        a._model_picker_state[f"chat:{GROUP_CHAT_ID}"] = {
+            "provider_msg_id": "mid-provider",
+            "models": ["deepseek-v3"],
+            "providers": [
+                {"slug": "deepseek", "name": "DeepSeek", "models": ["deepseek-v3"]},
+            ],
+            "session_key": "test",
+            "on_model_selected": on_selected,
+            "current_model": "gpt-4",
+            "current_provider": "openrouter",
+        }
+
+        await a._on_callback(_group_callback("model:provider:deepseek"))
+
+        posts = max_api.calls("POST", "/messages")
+        assert posts, "the group callback must reach the picker"
+        assert max_api.params(posts[-1]) == {"chat_id": str(GROUP_CHAT_ID)}
 
 
 # ═════════════════════════════════════════════════════════════════════════

@@ -171,17 +171,6 @@ class TestModelCallback:
         # State should be cleared
         assert "user:42" not in a._model_picker_state
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUILD-04 routing: a captured dialog callback carries "
-            "message.recipient.chat_id, so the picker looks its state up under "
-            "'chat:<id>' while `send_model_picker` stored it under 'user:<id>' — "
-            "in a real DM the model picker answers to nothing at all. Same root "
-            "cause as TestInboundRouting::test_captured_dialog_routes_to_dm; fix "
-            "there and drop this marker."
-        ),
-    )
     async def test_captured_dialog_callback_finds_picker_state(self, make_adapter, max_api):
         a = make_adapter()
 
