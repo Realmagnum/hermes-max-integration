@@ -44,26 +44,60 @@ If these docs changed, follow the current official docs instead of this skill.
    Official path after moderation:
    `Chat-bots → Go → Advanced settings → Configure → Token`
 5. Save token as `MAX_BOT_TOKEN` in Hermes `.env`. Do not echo the token back.
-6. Configure webhook bind settings (default):
-   ```
+6. Choose how updates are delivered. The mode is selected **only** by the
+   presence of `MAX_WEBHOOK_URL` (`adapter.py:226,230`):
+
+   **Long polling (simpler, no HTTPS):**
+   - Just set `MAX_BOT_TOKEN` and restart.
+   - ⚠️ On startup in this mode the adapter **deletes** any existing webhook
+     subscription in MAX API (`adapter.py:418–450`): webhook and long polling
+     are mutually exclusive.
+
+   **Webhook (production) — both values are mandatory:**
+   - `MAX_WEBHOOK_URL` — public HTTPS URL; without it the adapter silently stays
+     in long polling and deletes your manual subscription on its first start.
+   - `MAX_WEBHOOK_SECRET` — the same secret registered in MAX API; without it
+     the endpoint accepts events from any sender (`mixins/webhook.py:63–68`).
+     5–256 characters.
+   ```bash
+   MAX_WEBHOOK_URL=https://max.example.com/max/webhook
+   MAX_WEBHOOK_SECRET=my-secret-abc123
    MAX_WEBHOOK_HOST=0.0.0.0
    MAX_WEBHOOK_PORT=8646
    MAX_WEBHOOK_PATH=/max/webhook
    ```
-7. Create a public HTTPS tunnel to `http://localhost:8646` or use the user's HTTPS domain.
-8. Register subscription:
+7. Put a public HTTPS tunnel/reverse proxy in front of `http://127.0.0.1:8646`
+   (MAX API only connects over HTTPS on port 443). Caddy example:
+   ```caddyfile
+   max.example.com {
+       reverse_proxy 127.0.0.1:8646
+   }
+   ```
+8. Restart the gateway — the adapter registers the subscription itself with the
+   URL and secret from step 6 (`mixins/webhook.py:129–147`). A manual curl is
+   only needed when the subscription was created externally: then the URL,
+   secret and `update_types` must match the auto-registration, otherwise the
+   secret will not match `MAX_WEBHOOK_SECRET`:
    ```bash
    curl -X POST "https://platform-api.max.ru/subscriptions" \
-     -H "Authorization: ***" \
+     -H "Authorization: $MAX_BOT_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"url":"https://YOUR-DOMAIN/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"CHANGE_ME_5_256_CHARS"}'
+     -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
    ```
-9. Restart and verify:
+   ⚠️ A manual subscription without `MAX_WEBHOOK_URL` is useless: the plugin
+   starts in long polling and deletes it.
+9. Verify that webhook mode is actually active:
    ```bash
    hermes gateway restart
    hermes gateway status
    curl http://localhost:8646/health
+   # Expected: {"status":"ok"}
+   curl "https://platform-api.max.ru/subscriptions" -H "Authorization: $MAX_BOT_TOKEN"
+   # Expected: a subscription pointing at your MAX_WEBHOOK_URL
    ```
+   The gateway log must contain `MAX: webhook on 0.0.0.0:8646/max/webhook`. If it
+   says `MAX: long polling started`, `MAX_WEBHOOK_URL` was not picked up and the
+   subscription will be deleted on startup.
 10. Ask the user to send a real message to the Max bot and verify Hermes answers.
 
 ## Voice Messages (STT)
@@ -91,6 +125,6 @@ Transcription is performed by the **Hermes core** (>= 0.20.0) — the plugin onl
     curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" -H "Authorization: ***"
     ```
   - **Auto-fix (v2.1.4+):** The plugin now auto-cleans stale webhook subscriptions on startup when running in long-polling mode.
-  - **Prevention:** Don't set `MAX_WEBHOOK_URL` in .env unless you have a working reverse proxy in front of port 8646. When switching modes, always clean up the old subscription first.
+  - **Prevention:** Don't set `MAX_WEBHOOK_URL` in .env unless you have a working reverse proxy in front of port 8646. When switching modes, always clean up the old subscription first. If step 6 of the procedure is followed (`MAX_WEBHOOK_URL` and `MAX_WEBHOOK_SECRET` are set), the auto-cleanup never fires — the adapter runs in webhook mode.
 - Keep tunnel/gateway running while using Max.
 - Max API requires Russian Federation jurisdiction for bot registration.

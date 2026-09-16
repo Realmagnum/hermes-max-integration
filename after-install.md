@@ -36,6 +36,8 @@
    **Long polling (проще, без HTTPS):**
    - Просто установите `MAX_BOT_TOKEN` и перезапустите. Адаптер автоматически использует long-polling.
    - Публичный URL не нужен. Подходит для разработки.
+   - ⚠️ При старте в этом режиме адаптер удаляет существующие подписки вебхука в MAX API
+     (`adapter.py:418–450`) — режимы взаимоисключающи.
 
    **Webhook (продакшен) — требуется reverse proxy:**
    - MAX API стучится **только на порт 443** по HTTPS.
@@ -50,7 +52,9 @@
      ```bash
      cloudflared tunnel --url http://localhost:8646
      ```
-   - В `.env` пропишите публичный URL и секрет:
+   - В `.env` обязательны **оба** параметра режима: `MAX_WEBHOOK_URL` (публичный HTTPS-URL —
+     это единственный переключатель webhook-режима, `adapter.py:226,230`) и `MAX_WEBHOOK_SECRET`
+     (5–256 символов; сервер сверяет его с заголовком `X-Max-Bot-Api-Secret`, `mixins/webhook.py:63–68`):
      ```bash
      MAX_WEBHOOK_URL=https://max.example.com/max/webhook
      MAX_WEBHOOK_SECRET=my-secret-abc123
@@ -58,13 +62,16 @@
      MAX_WEBHOOK_PORT=8646
      MAX_WEBHOOK_PATH=/max/webhook
      ```
-   - Зарегистрируйте подписку в MAX API (адаптер делает это автоматически при старте, но можно и вручную):
+   - Подписку адаптер регистрирует сам при старте с URL и секретом из `.env`
+     (`mixins/webhook.py:129–147`). Ручной curl нужен только для подписки, созданной извне;
+     тогда URL, секрет и `update_types` должны совпадать с авторегистрацией:
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \
-       -H "Authorization: ***" \
+       -H "Authorization: $MAX_BOT_TOKEN" \
        -H "Content-Type: application/json" \
-       -d '{"url":"https://max.example.com/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"my-secret-abc123"}'
+       -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
      ```
+     ⚠️ Без `MAX_WEBHOOK_URL` в `.env` плагин стартует в long-polling и удалит такую подписку.
 
 5. **Перезапустите шлюз Hermes:**
    ```bash
