@@ -167,32 +167,37 @@ await adapter.send_buttons(
 
 ### Confirm/Clarify
 
-**Confirm:**
+Публичного метода `adapter.clarify()` нет. Ядро вызывает адаптер через
+`send_clarify`, а ответ пользователя приходит callback'ом с префиксом
+`clarify:{clarify_id}:{index|other}`.
+
+**Отправка вопроса:**
+
 ```python
-result = await adapter.clarify(
+result = await adapter.send_clarify(
     chat_id="chat:123",
-    question="Подтвердить действие?",
-    options=["Да", "Нет"],
+    question="Какой сервер выбрать?",
+    choices=["web-01", "db-main"],   # None → вопрос уходит обычным текстом
+    clarify_id="clr-42",
+    session_key="telegram:42",
 )
 ```
 
-**Clarify:**
-```python
-result = await adapter.clarify(
-    chat_id="chat:123",
-    question="Какой сервер выбрать?",
-    options=["web-01", "db-main"],
-)
-```
+**Ответ (callback):** `clarify:clr-42:0`, `clarify:clr-42:1`, …,
+`clarify:clr-42:other` (последний переводит сессию в режим ожидания
+свободного текста). Обработчик — `_handle_clarify_callback`.
+Подтверждение опасных команд — отдельный префикс `exec`, подтверждение
+slash-команд — `sc` (полная таблица в `docs/api.md`).
 
 ## Загрузка файлов
 
 ### Двухшаговая загрузка
 
-1. `POST /uploads?type=image` → получить upload URL
-2. `PUT <upload_url>` → загрузить файл
-3. Получить CDN token
-4. `POST /messages` с `attachments: [{type: "image", payload: {token: "..."}}]`
+1. `POST /uploads?type=image` → получить upload URL (поле `url`) и, для
+   audio/video, сразу `token`
+2. `POST <url>` multipart-формой с полем `data` → получить `token`
+   (для image/file)
+3. `POST /messages` с `attachments: [{type: "image", payload: {token: "..."}}]`
 
 ### SSRF Allowlist
 
@@ -209,12 +214,18 @@ _ALLOWED_UPLOAD_HOSTS = {
 
 ### Методы отправки
 
-| Метод | Тип | Описание |
-|-------|-----|----------|
-| `send_voice()` | voice | Голосовое сообщение |
-| `send_video()` | video | Видеосообщение |
-| `send_document()` | document | Документ |
-| `send_image()` | image | Изображение (через CDN) |
+`_upload_send(chat_id, path, type, ...)` передаёт в MAX attachment-тип, а не
+имя метода: `send_voice()` шлёт `type=audio`, `send_document()` — `type=file`.
+
+| Метод | Attachment `type` | Описание |
+|-------|-------------------|----------|
+| `send_voice()` | `audio` | Голосовое сообщение |
+| `send_video()` | `video` | Видеосообщение |
+| `send_document()` | `file` | Документ |
+| `send_image_file()` | `image` | Изображение из файла (через CDN) |
+| `send_image()` | `image` (`payload.url`) | Изображение по внешнему URL, без загрузки |
+| `send_multiple_images()` | `image` | Несколько изображений одним сообщением |
+| `send_animation()` | `image` | GIF (в MAX отправляется как изображение) |
 
 ## Кросс-платформенные сессии
 
