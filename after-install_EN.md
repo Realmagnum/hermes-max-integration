@@ -22,7 +22,16 @@ Next steps:
    ```bash
    hermes gateway setup
    ```
-   Choose **Max**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and optional secret.
+   Choose **Max**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and the secret.
+
+   > ⚠️ **Safe configuration is owner-only.** Always set
+   > `MAX_ALLOWED_USERS=<your MAX user_id>`: an empty list with
+   > `MAX_ALLOW_ALL_USERS=false` does **not** close access. In webhook mode
+   > `MAX_WEBHOOK_SECRET` is mandatory (an empty value only logs a warning, SEC-04), and
+   > `MAX_WEBHOOK_HOST` should be `127.0.0.1` behind a reverse proxy. If more than one
+   > person uses the bot, set `MAX_CROSS_SESSION=false` (SEC-05).
+   > Full picture: [docs/security_EN.md](docs/security_EN.md). Public and multi-user
+   > deployments are not supported until SEC-01…07 are closed.
 
 3. **Voice messages:** transcription is performed by the Hermes core (>= 0.20.0) — the plugin only downloads and caches audio. For Russian, set in `config.yaml`:
    ```yaml

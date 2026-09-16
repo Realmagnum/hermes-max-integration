@@ -189,6 +189,12 @@ MAX_BOT_TOKEN=your_token_here
 MAX_ALLOWED_USERS=your_max_user_id
 ```
 
+> ⚠️ **The safe default configuration is owner-only.** Always set `MAX_ALLOWED_USERS`:
+> an empty list with `MAX_ALLOW_ALL_USERS=false` does **not** close access — anyone who
+> can message the bot reaches the core. If more than one person uses the bot, or it is
+> reachable from a group, set `MAX_CROSS_SESSION=false`.
+> What is and is not protected today: [docs/security_EN.md](docs/security_EN.md).
+
 ### 4. Enable table images (optional)
 
 The recommended renderer is **HTML→PNG via Playwright/Chromium** (clean tables,
@@ -310,12 +316,12 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 |-------------|----------|---------|-------------|
 | `MAX_BOT_TOKEN` | ✅ | — | Bot token from Max Platform |
 | `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | API base URL (docs now recommend `https://platform-api2.max.ru`) |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
+| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host (use `127.0.0.1` behind a reverse proxy) |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret; **mandatory in webhook mode** — an empty value only logs a warning (SEC-04) |
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
+| `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs; **an empty value does not close access** — always set it |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
@@ -394,10 +400,11 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 
 ## Documentation
 
-- [Setup](docs/setup.md) — .env, webhook, security, deployment
-- [Features](docs/features.md) — STT, tables, streaming, buttons, files
-- [API](docs/api.md) — MAX API formats, callbacks, file upload
-- [Troubleshooting](docs/troubleshooting.md) — errors, diagnose.sh, logs
+- [Setup](docs/setup_EN.md) — .env, webhook, deployment
+- [Security](docs/security_EN.md) — honest model: what is protected, what is not, known issues
+- [Features](docs/features_EN.md) — STT, tables, streaming, buttons, files
+- [API](docs/api_EN.md) — MAX API formats, callbacks, file upload
+- [Troubleshooting](docs/troubleshooting_EN.md) — errors, diagnose.sh, logs
 
 ## Troubleshooting
 
@@ -484,16 +491,34 @@ serves stale images.
 
 ## Security
 
-| Measure | Detail |
-|---------|--------|
-| 🛡️ **SSRF Protection** | Upload URLs validated against `*.max.ru` / `*.oneme.ru` whitelist |
-| 🔐 **Token Safety** | `Authorization` header never forwarded on HTTP redirects |
-| 🔑 **Webhook Secret** | Constant-time comparison via `secrets.compare_digest` |
-| 🔊 **Voice Privacy** | Audio cache stored with `0700` permissions |
-| 🧹 **Error Sanitization** | Tokens/URLs stripped from error messages |
-| 🔍 **CI Hardening** | `bandit` SAST + `pip-audit` on every push |
+What is **actually** implemented and what limitations remain: see
+[docs/security_EN.md](docs/security_EN.md). Summary:
 
-Full audit and fixes: commit `e87ee64`.
+| Measure | Detail and limitations |
+|---------|------------------------|
+| 🔐 **Token and redirects** | the download HTTP client is created with `follow_redirects=False`, but the `Authorization` header is still sent to the original attachment URL (SEC-02, open) |
+| 🛡️ **Inbound URL filter** | rejects non-http(s) schemes and literal private/loopback/link-local/reserved IPs, `localhost`, `*.local`; host names pass without any DNS check (SEC-03, open). The `*.max.ru` / `*.oneme.ru` allowlist applies to **outbound** uploads only |
+| 🔑 **Webhook secret** | compared with `secrets.compare_digest`; an empty secret only logs a warning and processing continues (SEC-04, open) |
+| 🔊 **Voice privacy** | the audio cache directory is created with `mode=0o700` (effectively limited by umask) |
+| 🧹 **Logs** | userinfo and query strings are stripped from URLs; no guarantee that third-party exception texts are clean |
+| 🔍 **CI** | `.github/workflows/ci.yml` runs ruff, pytest, bandit and pip-audit, but ruff/bandit skip `mixins/`, triggering is limited to `main`, and actual execution on the hosting runner is unverified |
+| 🚧 **Access** | allowlists and group policies exist, but an empty list does not close access (SEC-05/SEC-06, open) |
+
+Also note: cross-platform sessions are **enabled by default** (`MAX_CROSS_SESSION=true`)
+and their access check is incomplete — with an empty `MAX_ALLOWED_USERS`, `/sessions`
+reaches the core and exposes titles/previews/IDs of sessions from **all** platforms
+(SEC-05). Keep it on only in a single-owner deployment and set
+`MAX_CROSS_SESSION=false` for a bot reachable by several people.
+
+**Do not use the plugin in a public or multi-user deployment until SEC-01…07 are closed.**
+This section and `docs/security_EN.md` are not a security guarantee: absence of findings
+does not imply absence of vulnerabilities.
+
+**Audits performed:** `e87ee64` (2026-07-17, fixes for 10 vulnerabilities),
+`70eb490`/`d9626b5` (2026-07-18, 5 MEDIUM/LOW plus `nosec B104`), `e632014` (2026-08-17,
+redirects, SSRF guard, empty-secret warning), and the backlog of the current audit —
+`abd2f0f` (2026-09-15, baseline `b004c573`: 7 SEC, 8 CODE, 4 BUILD, 10 DOC). Full pytest,
+Ruff, Bandit and pip-audit were not run at audit time and no real MAX E2E was performed.
 
 ## Project History
 

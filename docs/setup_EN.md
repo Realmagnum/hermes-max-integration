@@ -143,9 +143,49 @@ curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
 
 ## Security
 
+The honest security model — what is protected, what is not, and which tasks are open:
+[docs/security_EN.md](security_EN.md). Below is the minimally safe configuration.
+
+### Safe defaults (single owner)
+
+```bash
+# ~/.hermes/.env
+MAX_BOT_TOKEN=<bot token>
+MAX_ALLOWED_USERS=<your MAX user_id>          # mandatory
+MAX_CROSS_SESSION=false                       # until SEC-05 is closed
+MAX_WEBHOOK_SECRET=<long random string>       # mandatory in webhook mode
+MAX_WEBHOOK_HOST=127.0.0.1                    # behind a reverse proxy
+```
+
+- **Always set `MAX_ALLOWED_USERS`.** An empty list with `MAX_ALLOW_ALL_USERS=false`
+  does **not** close access: anyone able to message the bot reaches the core
+  (SEC-05/SEC-06).
+- **Groups:** `MAX_GROUP_POLICY=closed`, or `allowlist` with **both** lists populated —
+  an empty list under the `allowlist` policy means "allowed" and lists combine with OR
+  (SEC-06).
+- **`MAX_CROSS_SESSION=false`** if more than one person uses the bot: with `true`,
+  `/sessions` bypasses the platform filter and exposes titles and previews of sessions
+  from all platforms (SEC-05).
+- Do not enable **`MAX_ALLOW_ALL_USERS=true`** on a bot reachable from the network.
+
 ### Webhook Secret
 
 Secret is sent by MAX as raw value in `X-Max-Bot-Api-Secret` header, not as HMAC signature. Plugin uses `secrets.compare_digest()` for timing-safe comparison.
+
+An empty secret produces **only a log warning**; webhook processing continues and the
+`user_id` is taken from the request JSON (SEC-04). So the secret is mandatory, and the
+port must be closed at the network level as well — do not rely on the plugin.
+
+### Ingress and firewall
+
+- Bind the webhook listener to `127.0.0.1` (`MAX_WEBHOOK_HOST=127.0.0.1`); MAX connects
+  to port 443 only, so TLS terminates on a reverse proxy
+  (Caddy/Nginx/Traefik/Cloudflare Tunnel).
+- Port `8646` **must not** be reachable from the internet: allow inbound 443 to the
+  reverse proxy only.
+- The built-in webhook rate limit (30 requests / 10 s per IP, in memory) resets on
+  restart and does not distinguish clients behind a proxy — burst protection only.
+- `/health` is served without authentication and only proves the process is up.
 
 ### Access Control
 
@@ -155,7 +195,7 @@ Secret is sent by MAX as raw value in `X-Max-Bot-Api-Secret` header, not as HMAC
 MAX_ALLOWED_USERS=123456789,987654321
 ```
 
-**Allow all:**
+**Allow all** (deliberate public deployments only):
 
 ```bash
 MAX_ALLOW_ALL_USERS=true
@@ -171,6 +211,12 @@ MAX_GROUP_POLICY=closed
 MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
 ```
+
+### What is not protected
+
+SSRF through DNS, the token sent to an attachment URL, group approvals, incoming media
+limits, and more — see the SEC-01…07 table in [docs/security_EN.md](security_EN.md).
+Until those are closed the plugin is not intended for public or multi-user deployments.
 
 ## Deployment
 
