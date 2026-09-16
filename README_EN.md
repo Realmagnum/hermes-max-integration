@@ -316,6 +316,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret |
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
+| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Extra media-download origins (comma-separated); `*.max.ru` / `*.oneme.ru` are allowed by default |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
@@ -486,7 +487,7 @@ serves stale images.
 
 | Measure | Detail |
 |---------|--------|
-| 🛡️ **SSRF Protection** | Upload URLs validated against `*.max.ru` / `*.oneme.ru` whitelist |
+| 🛡️ **SSRF Protection** | Uploads validated against `*.max.ru` / `*.oneme.ru` whitelist; downloads use the same whitelist, HTTPS only, all A/AAAA records checked and the connection pinned to the validated IP (anti-rebinding), redirects never followed. Extra origins via `download_allowed_hosts` / `MAX_DOWNLOAD_ALLOWED_HOSTS` |
 | 🔐 **Token Safety** | `Authorization` header never forwarded on HTTP redirects |
 | 🔑 **Webhook Secret** | Constant-time comparison via `secrets.compare_digest` |
 | 🔊 **Voice Privacy** | Audio cache stored with `0700` permissions |
