@@ -108,9 +108,9 @@ Each status cell gets a colored icon: ✓ green, ✗ red, ⚠ orange, ◷ amber,
 
 ### Why images instead of native tables?
 
-**Telegram** supports markdown tables natively — just send `| A | B |` with `format=markdown`, and the client renders columns, borders, and alignment automatically.
+**Telegram:** the classic parse modes (`parse_mode=Markdown`, `MarkdownV2`, `HTML`) do **not** support tables — `| A | B |` with `format=markdown` does not create one. Tables arrived only with Bot API 10.1 (June 11, 2026) as part of Rich Messages, via the separate `sendRichMessage` method (`RichBlockTable`).
 
-**MAX** does not support tables in markdown. The supported formatting is limited to `*italic*`, `**bold**`, `` `code` ``, `[links](url)`, `# headings`, `> quotes`. Pipe syntax (`| A | B |`) and fenced code blocks (`` ``` ``) are not in the supported list.
+**MAX** supports tables in neither Markdown nor HTML. The official formatting list (dev.max.ru/docs-api, "Форматирование текста в сообщениях", checked 2026-09-16) covers italic, bold, strikethrough, underline, monospace, links, mentions, highlight, headings and quotes; tables and fenced blocks are not in it.
 
 We tried several approaches before settling on PNG:
 
@@ -122,7 +122,7 @@ We tried several approaches before settling on PNG:
 | Plain text with `\|` and `---` | Readable but looks messy without monospace |
 | **Pillow PNG** ✅ | **Full control: colors, borders, icons, fonts** |
 
-**Bottom line:** PNG images deliver what Telegram provides natively — clean tables with colored status badges. Bonus: images can be forwarded and don't depend on the client's markdown parser. Trade-off: cell text is not copyable.
+**Bottom line:** PNG images provide what MAX has no native format for — clean tables with colored status badges (Telegram needs Bot API 10.1+ and `sendRichMessage` for the same result). Bonus: images can be forwarded and don't depend on the client's markdown parser. Trade-off: cell text is not copyable.
 
 ## Comparison with Upstream
 
@@ -277,16 +277,14 @@ Check active subscriptions: `GET /subscriptions` with the same token.
 
 When using reasoning models (DeepSeek R1, Claude Opus, Gemini Thinking, etc.), the reasoning block (`💭 **Reasoning:**`) is automatically prepended to the final response.
 
-To ensure reasoning appears as a **fresh separate message** (rather than an edit of the last streamed draft), add to `~/.hermes/config.yaml`:
+To have reasoning appear as a **fresh separate message** (rather than an edit of the last streamed draft), core exposes `streaming.fresh_final_after_seconds`:
 
 ```yaml
-display:
-  platforms:
-    max:
-      fresh_final_after_seconds: 10
+streaming:
+  fresh_final_after_seconds: 10
 ```
 
-This tells the gateway to deliver the final answer as a new message if streaming lasted longer than 10 seconds — the reasoning block is included in full. Without this setting, reasoning is prepended to the last streaming edit and may go unnoticed.
+**Important (verified on Hermes core 0.21.3, 2026-09-16):** the key is read only from the top-level `streaming:` section (not `display.platforms.max.*`) and is applied to **Telegram only** — `gateway/run_turn.py` forces `0.0` for every other platform. It therefore does nothing for MAX: reasoning stays a prefix on the final edit. If reasoning is not visible in MAX, check your core's streaming/reasoning behaviour instead of setting this key as a "MAX fix".
 
 ### 🔍 Diagnostics
 
@@ -365,9 +363,9 @@ hermes send --to max:USER_ID "📦 Files: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xlsx"
     - Multipart POST to CDN → file token
     - `POST /messages` with `attachments: [{"type": "file", "payload": {"token": token}}]`
 
-All files use `type=file` — MAX CDN does not validate content, guaranteeing delivery for any safe extension (.txt, .md, .png, .jpg, .mp3, .pdf, .doc, .xlsx, etc.).
+All files are sent as `type=file`. MAX officially supports only "common formats" for `file` (e.g. TXT, DOC, PDF), up to 4 GB, and a `file` may be combined only with a keyboard attachment in the same message (dev.max.ru/docs-api/methods/POST/uploads and POST /messages, checked 2026-09-16).
 
-⚠️ **MAX CDN limitation:** Extensions `.exe`, `.apk`, `.bat`, `.msi` and other potentially dangerous types are rejected by MAX CDN (HTTP 415 — "File extension is forbidden"). This is a platform limitation, not addressable from the plugin.
+⚠️ **MAX CDN limitation:** Extensions `.exe`, `.apk`, `.bat`, `.msi` and other potentially dangerous types are rejected by MAX (HTTP 415 — "File extension is forbidden"); an unsupported extension returns the same error. This is a platform limitation, not addressable from the plugin, and delivery of "any reasonable extension" is **not** guaranteed — stick to MAX's supported format list.
 
 For **in-session** file delivery (via gateway), use `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — these use the adapter with retry on `attachment.not.ready`.
 
@@ -386,6 +384,8 @@ python3 scripts/apply-core-fix.py       # apply
 python3 scripts/apply-core-fix.py --revert  # revert
 ```
 
+⚠️ **Core-version compatibility (verified on Hermes 0.21.3, 2026-09-16).** The script looks for the markers `# --- Non-media platforms ---` and `if media_files and not message.strip()` in `tools/send_message_tool.py`. Core 0.21.3 reworked that section (it now has a `_PLUGIN_STANDALONE_MEDIA` registry), the markers are gone, and the script exits with `❌ Could not find insertion marker in core file.` — neither apply nor `--revert` takes effect. A run against a copy of core confirmed the live install is not modified, but media-only delivery is not enabled either. Check the markers against your core version before applying; if they differ, the script needs adapting (or wait for native MAX support in core).
+
 After applying:
 ```bash
 hermes send --to max:USER_ID "MEDIA:/tmp/image.png"      # ✅ works
@@ -398,6 +398,7 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 - [Features](docs/features.md) — STT, tables, streaming, buttons, files
 - [API](docs/api.md) — MAX API formats, callbacks, file upload
 - [Troubleshooting](docs/troubleshooting.md) — errors, diagnose.sh, logs
+- [External claims verification](docs/external-claims_EN.md) — MAX/Telegram doc check, sources and date
 
 ## Troubleshooting
 
