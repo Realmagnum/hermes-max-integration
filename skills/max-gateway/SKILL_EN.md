@@ -85,6 +85,7 @@ Transcription is performed by the **Hermes core** (>= 0.20.0) — the plugin onl
 - Use `Authorization: ***` not query params and not `Bearer <token>`.
 - Webhook must be HTTPS with a trusted certificate.
 - If `secret` is configured, Max sends it raw in `X-Max-Bot-Api-Secret`; compare it directly with constant-time comparison.
+- **A secret is mandatory for the webhook (fail closed).** Without `MAX_WEBHOOK_SECRET` the adapter refuses to start the webhook (`webhook_secret_required`) — an unprotected endpoint would let anyone forge a `user_id`. The header is verified before the body is read. To debug without a secret use long polling, or `MAX_WEBHOOK_INSECURE_DEV=true` with `MAX_WEBHOOK_HOST=127.0.0.1` only.
 - **🚨 CRITICAL: Webhook and Long Polling are mutually exclusive.** If a webhook subscription exists in MAX API, `/updates` returns empty and ALL messages go to the webhook URL instead. Even after removing `MAX_WEBHOOK_URL` from .env and restarting, the stale subscription persists in MAX API and silently blocks message delivery.
   - **Fix:** Delete the old subscription:
     ```bash

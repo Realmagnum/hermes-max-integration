@@ -59,6 +59,10 @@ Next steps:
      MAX_WEBHOOK_PORT=8646
      MAX_WEBHOOK_PATH=/max/webhook
      ```
+     `MAX_WEBHOOK_SECRET` is mandatory: without it the gateway refuses to start
+     webhook mode (fail closed). To debug locally without a secret use long
+     polling, or `MAX_WEBHOOK_INSECURE_DEV=true` together with
+     `MAX_WEBHOOK_HOST=127.0.0.1`.
    - Register the subscription in MAX API (the adapter does this automatically on startup, but manual registration is also possible):
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \

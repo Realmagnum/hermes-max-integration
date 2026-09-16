@@ -2,6 +2,25 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [Unreleased]
+
+### Security
+
+- **SEC-04: the webhook no longer starts without a secret (fail closed).** Previously an
+  empty `MAX_WEBHOOK_SECRET` only produced a warning — the public endpoint accepted any
+  event and took the sender from the JSON body, so an allowed `user_id` could be forged.
+  `_start_webhook()` now refuses to start and raises the fatal
+  `webhook_secret_required` error instead.
+- **The `X-Max-Bot-Api-Secret` header is verified before the request body.** An
+  unauthenticated call gets `403` before the JSON is read or parsed (and before the body
+  size is checked), and `_verify_raw_secret` no longer treats an empty secret as a match.
+- **Explicit `MAX_WEBHOOK_INSECURE_DEV` dev opt-in:** allows a secretless webhook only
+  when `MAX_WEBHOOK_HOST` is loopback (`127.0.0.1`/`::1`/`localhost`); any other host is
+  rejected with `webhook_insecure_dev_non_loopback`.
+- The webhook body is capped at `WEBHOOK_MAX_BODY_BYTES` (1 MB) — anything larger gets
+  `413`.
+- Interactive setup warns that webhook mode will not start without a secret.
+
 ## [2.9.0] — 2026-08-17
 
 ### Refactor

@@ -58,6 +58,10 @@
      MAX_WEBHOOK_PORT=8646
      MAX_WEBHOOK_PATH=/max/webhook
      ```
+     `MAX_WEBHOOK_SECRET` обязателен: без него gateway отказывается запускать
+     webhook-режим (fail-closed). Для локальной отладки без секрета используйте
+     long polling либо `MAX_WEBHOOK_INSECURE_DEV=true` вместе с
+     `MAX_WEBHOOK_HOST=127.0.0.1`.
    - Зарегистрируйте подписку в MAX API (адаптер делает это автоматически при старте, но можно и вручную):
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \

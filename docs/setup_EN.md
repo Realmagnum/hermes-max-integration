@@ -9,7 +9,8 @@
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for `X-Max-Bot-Api-Secret` |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for `X-Max-Bot-Api-Secret`; **required in webhook mode** |
+| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook — loopback `MAX_WEBHOOK_HOST` only (dev) |
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
 | `MAX_ALLOWED_USERS` | ❌ | — | User whitelist (comma-separated) |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
@@ -52,10 +53,11 @@ Long polling is ideal for:
 ```bash
 MAX_BOT_TOKEN=your_token
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret
+MAX_WEBHOOK_SECRET=your-secret   # required: without it the webhook won't start
 ```
 
-Webhook required for production. Needs public HTTPS URL.
+Webhook required for production. Needs a public HTTPS URL **and** a secret: without
+`MAX_WEBHOOK_SECRET` the gateway refuses to bring up the endpoint (fail closed).
 
 ## Webhook Setup
 
@@ -111,13 +113,14 @@ curl -H "Authorization: your_token" \
 ```bash
 # 1. Add to ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret
+MAX_WEBHOOK_SECRET=your-secret   # required
 
 # 2. Restart
 sudo systemctl restart hermes-gateway
 ```
 
 On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers subscription in MAX API.
+Without a secret the start never happens — the gateway logs `webhook_secret_required` and stays disconnected.
 
 ### Webhook → Long polling
 
@@ -146,6 +149,12 @@ curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
 ### Webhook Secret
 
 Secret is sent by MAX as raw value in `X-Max-Bot-Api-Secret` header, not as HMAC signature. Plugin uses `secrets.compare_digest()` for timing-safe comparison.
+
+The secret is mandatory in webhook mode: without `MAX_WEBHOOK_SECRET` the server does
+not start (fail closed), and the header is verified **before** the request body is
+read or parsed. The only exception is the explicit dev opt-in
+`MAX_WEBHOOK_INSECURE_DEV=true`, which works only with
+`MAX_WEBHOOK_HOST=127.0.0.1`/`::1`/`localhost`.
 
 ### Access Control
 

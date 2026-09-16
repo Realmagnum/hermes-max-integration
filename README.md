@@ -244,13 +244,25 @@ hermes gateway restart
 ```bash
 # 1. Добавить в ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=my-secret
+MAX_WEBHOOK_SECRET=my-secret      # ОБЯЗАТЕЛЕН в webhook-режиме
 
 # 2. Перезапустить
 sudo systemctl restart hermes-gateway
 ```
 
 При старте: `_start_webhook()` → открывает `0.0.0.0:8646` → регистрирует подписку в MAX API → сообщения приходят на webhook URL.
+
+### 🔒 Обязательный секрет вебхука (fail-closed)
+
+Webhook-режим **не запустится без `MAX_WEBHOOK_SECRET`**. Gateway логирует ошибку
+`webhook_secret_required` и остаётся отключённым — публичный endpoint, принимающий
+события без проверки, позволил бы подделать разрешённый `user_id`. Заголовок
+`X-Max-Bot-Api-Secret` проверяется **до** чтения и разбора тела запроса.
+
+Для локальной отладки без секрета есть явный opt-in: `MAX_WEBHOOK_INSECURE_DEV=true`
+работает **только** при `MAX_WEBHOOK_HOST=127.0.0.1` (или `::1`/`localhost`). Любой
+другой хост (включая `0.0.0.0`) отвергается. Проще всего для разработки использовать
+long polling — секрет и HTTPS не нужны.
 
 ### Переключение Webhook → Long polling
 
@@ -316,7 +328,8 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт вебхука |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь вебхука |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret`; **обязателен в webhook-режиме** |
+| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета — только при `MAX_WEBHOOK_HOST` = loopback (dev) |
 | `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS (включает webhook-режим) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |

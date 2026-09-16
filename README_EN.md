@@ -241,13 +241,26 @@ The choice happens in `connect()` with one line: `self._use_webhook = bool(self.
 ```bash
 # 1. Add to ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=my-secret
+MAX_WEBHOOK_SECRET=my-secret      # REQUIRED in webhook mode
 
 # 2. Restart
 sudo systemctl restart hermes-gateway
 ```
 
 On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers a subscription in MAX API → messages arrive via webhook.
+
+### 🔒 Webhook secret is mandatory (fail closed)
+
+Webhook mode **will not start without `MAX_WEBHOOK_SECRET`**. The gateway logs the
+`webhook_secret_required` error and stays disconnected — a public endpoint that
+accepts events without verification would let anyone forge an allowed `user_id`.
+The `X-Max-Bot-Api-Secret` header is verified **before** the request body is read
+or parsed.
+
+For local debugging without a secret there is an explicit opt-in:
+`MAX_WEBHOOK_INSECURE_DEV=true` works **only** with `MAX_WEBHOOK_HOST=127.0.0.1`
+(or `::1`/`localhost`). Any other host (including `0.0.0.0`) is rejected. The
+simplest development setup remains long polling — no secret and no HTTPS needed.
 
 ### Switching Webhook → Long polling
 
@@ -313,7 +326,8 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret; **required in webhook mode** |
+| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook — loopback `MAX_WEBHOOK_HOST` only (dev) |
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |

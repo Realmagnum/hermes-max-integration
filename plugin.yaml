@@ -28,9 +28,12 @@ requires_env:
 
 optional_env:
   - name: MAX_WEBHOOK_SECRET
-    description: "Webhook secret for X-Max-Bot-Api-Secret verification"
+    description: "Webhook secret for X-Max-Bot-Api-Secret verification — required in webhook mode"
     prompt: "Webhook secret (5-256 chars)"
     password: true
+  - name: MAX_WEBHOOK_INSECURE_DEV
+    description: "Loopback-only development escape hatch: allow a secretless webhook when bound to 127.0.0.1 (true/false, default: false). Never enable on a public host."
+    prompt: "Allow secretless webhook on loopback (dev only)"
   - name: MAX_WEBHOOK_HOST
     description: "Local bind host for webhook server, default 0.0.0.0"
     prompt: "Webhook host"
