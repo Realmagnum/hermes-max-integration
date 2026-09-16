@@ -55,3 +55,18 @@ optional_env:
   - name: MAX_CROSS_SESSION
     description: "Enable cross-platform session listing — /sessions shows sessions from ALL platforms (CLI, Telegram, Discord, WebUI). /resume <id> switches to any session. Set to false to restore default per-platform scoping. (true/false, default: true)"
     prompt: "Cross-platform session commands"
+  - name: MAX_QUEUE_MAXSIZE
+    description: "Hard cap on inbound updates waiting to be processed (backpressure). When full, MAX_OVERLOAD_POLICY decides what is dropped. (default: 1000)"
+    prompt: "Inbound queue hard cap"
+  - name: MAX_MAX_CONCURRENCY
+    description: "Maximum number of messages processed concurrently (default: 8)"
+    prompt: "Max concurrent message handlers"
+  - name: MAX_OVERLOAD_POLICY
+    description: "What to do when the inbound queue is full: drop_oldest keeps the freshest messages, drop_newest keeps the backlog and rejects new ones. (default: drop_oldest)"
+    prompt: "Overload policy (drop_oldest/drop_newest)"
+  - name: MAX_DEDUP_MAX
+    description: "Hard cap on remembered message IDs used for duplicate suppression (default: 5000)"
+    prompt: "Dedup table hard cap"
+  - name: MAX_DEDUP_TTL
+    description: "Seconds a message ID is remembered for duplicate suppression (default: 300)"
+    prompt: "Dedup TTL (seconds)"

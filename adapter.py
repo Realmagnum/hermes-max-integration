@@ -74,6 +74,21 @@ DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy rever
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
 
+# ── Backpressure / dedup defaults (CODE-08) ──────────────────────────────
+# Bounded ingress queue: hard cap on events waiting to be dispatched.
+DEFAULT_QUEUE_MAXSIZE = 1000
+# Hard cap on concurrently running handle_message() tasks.
+DEFAULT_MAX_CONCURRENCY = 8
+# Dedup table: hard cap on remembered message IDs and TTL of an entry.
+DEFAULT_DEDUP_MAX = 5000
+DEFAULT_DEDUP_TTL = 300.0
+# Explicit overload policy when the ingress queue is full:
+#   drop_oldest — evict the oldest queued event, keep the freshest (default)
+#   drop_newest — reject the incoming event, keep the queued backlog
+OVERLOAD_DROP_OLDEST = "drop_oldest"
+OVERLOAD_DROP_NEWEST = "drop_newest"
+OVERLOAD_POLICIES = (OVERLOAD_DROP_OLDEST, OVERLOAD_DROP_NEWEST)
+
 # Audio cache anchor (also parent of table_images dir)
 AUDIO_CACHE_DIR = Path(
     os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))
@@ -255,20 +270,91 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or str(extra.get("group_allow_chats", ""))
         )
 
+        # Backpressure: bounded ingress queue + bounded handler concurrency
+        # (CODE-08). Both are explicit hard caps; the overload policy decides
+        # what happens when the queue is saturated.
+        try:
+            self._queue_maxsize: int = max(
+                1,
+                int(
+                    os.getenv("MAX_QUEUE_MAXSIZE")
+                    or extra.get("queue_maxsize", DEFAULT_QUEUE_MAXSIZE)
+                ),
+            )
+        except (TypeError, ValueError):
+            self._queue_maxsize = DEFAULT_QUEUE_MAXSIZE
+        try:
+            self._max_concurrency: int = max(
+                1,
+                int(
+                    os.getenv("MAX_MAX_CONCURRENCY")
+                    or extra.get("max_concurrency", DEFAULT_MAX_CONCURRENCY)
+                ),
+            )
+        except (TypeError, ValueError):
+            self._max_concurrency = DEFAULT_MAX_CONCURRENCY
+        self._overload_policy: str = str(
+            os.getenv("MAX_OVERLOAD_POLICY")
+            or extra.get("overload_policy", OVERLOAD_DROP_OLDEST)
+        ).strip().lower()
+        if self._overload_policy not in OVERLOAD_POLICIES:
+            logger.warning(
+                "MAX: unknown overload policy %r — falling back to %s",
+                self._overload_policy, OVERLOAD_DROP_OLDEST,
+            )
+            self._overload_policy = OVERLOAD_DROP_OLDEST
+
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
         self._webhook_runner: Any = None  # aiohttp.web.AppRunner
         self._webhook_site: Any = None
         self._webhook_app: Any = None
-        self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
+        self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue(
+            maxsize=self._queue_maxsize,
+        )
         self._poll_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
+        # Only the handle_message() tasks spawned by the queue drain loop —
+        # used for the concurrency bound (long-lived helpers such as the poll
+        # loop must not consume a handler slot).
+        self._handler_tasks: set[asyncio.Task] = set()
         self._stop: asyncio.Event = asyncio.Event()
         self._running: bool = False
 
-        # Dedup: mid → timestamp (max 5000 entries to prevent memory exhaustion)
+        # Dedup: mid → timestamp (hard cap on entries, TTL on freshness)
         self._seen_msgs: dict[str, float] = {}
-        self._SEEN_MSGS_MAX = 5000
+        try:
+            self._SEEN_MSGS_MAX = max(
+                1,
+                int(
+                    os.getenv("MAX_DEDUP_MAX")
+                    or extra.get("dedup_max", DEFAULT_DEDUP_MAX)
+                ),
+            )
+        except (TypeError, ValueError):
+            self._SEEN_MSGS_MAX = DEFAULT_DEDUP_MAX
+        try:
+            self._DEDUP_TTL = max(
+                1.0,
+                float(
+                    os.getenv("MAX_DEDUP_TTL")
+                    or extra.get("dedup_ttl", DEFAULT_DEDUP_TTL)
+                ),
+            )
+        except (TypeError, ValueError):
+            self._DEDUP_TTL = DEFAULT_DEDUP_TTL
+
+        # Backpressure metrics (exposed via /health)
+        self._stats: dict[str, int] = {
+            "enqueued": 0,
+            "dispatched": 0,
+            "dropped_oldest": 0,
+            "dropped_newest": 0,
+            "duplicate_suppressed": 0,
+            "queue_peak": 0,
+            "handlers_peak": 0,
+        }
+        self._drop_log_interval = 50  # throttle overload warnings
         # DM routing: chat_id → user_id
         self._dm_user_ids: dict[str, str] = {}
 
@@ -391,6 +477,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         for task in list(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
+        self._handler_tasks.clear()
+
+        # Drop queued-but-undispatched events: after a reconnect they are
+        # stale, and MAX will not re-deliver them (the poll marker advanced).
+        drained = 0
+        while True:
+            try:
+                self._message_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self._message_queue.task_done()
+            drained += 1
+        if drained:
+            logger.debug("MAX: dropped %d stale queued event(s) on disconnect", drained)
 
         if self._webhook_runner:
             try:
@@ -406,6 +506,84 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         self._mark_disconnected()
         logger.info("MAX: disconnected")
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Backpressure, ingress queue and dedup (CODE-08)
+    # ═════════════════════════════════════════════════════════════════════
+
+    def _note_overload(self, policy: str, depth: int) -> None:
+        """Count an overload drop and log it with throttling."""
+        key = "dropped_oldest" if policy == OVERLOAD_DROP_OLDEST else "dropped_newest"
+        self._stats[key] += 1
+        total = self._stats["dropped_oldest"] + self._stats["dropped_newest"]
+        if total == 1 or total % self._drop_log_interval == 0:
+            logger.warning(
+                "MAX: ingress queue full (maxsize=%d, depth=%d) — dropped %d event(s), policy=%s",
+                self._queue_maxsize, depth, total, policy,
+            )
+
+    def _enqueue_event(self, event: MessageEvent) -> bool:
+        """Enqueue an inbound event under an explicit overload policy.
+
+        Returns True when the event entered the queue, False when it was
+        dropped. Never blocks, so a saturated adapter cannot stall the
+        poll loop or the webhook HTTP handler.
+        """
+        try:
+            self._message_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            if self._overload_policy == OVERLOAD_DROP_NEWEST:
+                self._note_overload(OVERLOAD_DROP_NEWEST, self._message_queue.qsize())
+                return False
+            # drop_oldest: evict the head of the backlog to make room for the
+            # freshest event, then retry once.
+            try:
+                self._message_queue.get_nowait()
+                self._message_queue.task_done()
+            except asyncio.QueueEmpty:  # pragma: no cover — racer drained it for us
+                pass
+            self._note_overload(OVERLOAD_DROP_OLDEST, self._message_queue.qsize())
+            try:
+                self._message_queue.put_nowait(event)
+            except asyncio.QueueFull:  # pragma: no cover — only if a racer refilled it
+                self._stats["dropped_newest"] += 1
+                return False
+        self._stats["enqueued"] += 1
+        self._stats["queue_peak"] = max(self._stats["queue_peak"], self._message_queue.qsize())
+        return True
+
+    def _remember_mid(self, mid: str, now: float) -> None:
+        """Record a message id under a guaranteed hard cap.
+
+        Expired entries are pruned first; if the table is still at the cap all
+        of its entries are fresh, the oldest entries are evicted FIFO so the
+        advertised cap holds even under a sustained burst.
+        """
+        if len(self._seen_msgs) >= self._SEEN_MSGS_MAX:
+            cutoff = now - self._DEDUP_TTL
+            if any(ts < cutoff for ts in self._seen_msgs.values()):
+                self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if v >= cutoff}
+            while len(self._seen_msgs) >= self._SEEN_MSGS_MAX:
+                self._seen_msgs.pop(next(iter(self._seen_msgs)))
+        self._seen_msgs[mid] = now
+
+    def _is_duplicate(self, mid: str, now: float) -> bool:
+        """True when `mid` was already seen inside the dedup TTL window."""
+        seen_at = self._seen_msgs.get(mid)
+        return seen_at is not None and now - seen_at < self._DEDUP_TTL
+
+    def backpressure_stats(self) -> dict[str, Any]:
+        """Snapshot of queue/concurrency/dedup state for /health and tests."""
+        return {
+            **self._stats,
+            "queue_depth": self._message_queue.qsize(),
+            "queue_maxsize": self._queue_maxsize,
+            "active_handlers": len(self._handler_tasks),
+            "max_concurrency": self._max_concurrency,
+            "dedup_entries": len(self._seen_msgs),
+            "dedup_max": self._SEEN_MSGS_MAX,
+            "overload_policy": self._overload_policy,
+        }
 
     # ═════════════════════════════════════════════════════════════════════
     # Long polling
@@ -483,7 +661,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     for u in data.get("updates", []):
                         event = await self._build_event(u)
                         if event is not None:
-                            await self._message_queue.put(event)
+                            # Bounded ingress: never block the poll loop; a
+                            # saturated queue drops per the overload policy.
+                            self._enqueue_event(event)
                     marker = data.get("marker", 0)
                     if marker:
                         last_marker = marker
@@ -502,8 +682,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # Webhook server
     # ═════════════════════════════════════════════════════════════════════
 
+    async def _wait_for_handler_slot(self) -> None:
+        """Block until fewer than `max_concurrency` handlers are in flight."""
+        while self._running and len(self._handler_tasks) >= self._max_concurrency:
+            pending = set(self._handler_tasks)
+            if not pending:
+                return
+            done, _remainder = await asyncio.wait(
+                pending, timeout=1.0, return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                self._handler_tasks.discard(task)
+
     async def _queue_poll_loop(self) -> None:
-        """Drain the message queue and dispatch to the gateway runner."""
+        """Drain the bounded message queue with bounded handler concurrency."""
         while self._running:
             try:
                 event = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
@@ -513,10 +705,25 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 break
             if not self._running:
                 break
+            # Backpressure on handler count: wait for a slot instead of
+            # spawning an unbounded number of concurrent handle_message tasks.
+            await self._wait_for_handler_slot()
+            if not self._running:
+                break
             try:
+                self._stats["dispatched"] += 1
                 task = asyncio.create_task(self.handle_message(event))
                 self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
+                self._handler_tasks.add(task)
+                self._stats["handlers_peak"] = max(
+                    self._stats["handlers_peak"], len(self._handler_tasks),
+                )
+
+                def _forget(t: asyncio.Task) -> None:
+                    self._background_tasks.discard(t)
+                    self._handler_tasks.discard(t)
+
+                task.add_done_callback(_forget)
             except Exception:
                 logger.exception("MAX: failed to enqueue event")
 
@@ -625,16 +832,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         # Store DM mapping
         self._dm_user_ids[str(chat_id_str or user_id)] = user_id
 
-        # Dedup
+        # Dedup with a hard cap on remembered IDs (CODE-08)
         mid = str(body.get("mid") or message.get("mid") or message.get("message_id") or "")
         if mid:
             now = time.time()
-            if mid in self._seen_msgs and now - self._seen_msgs[mid] < 300:
+            if self._is_duplicate(mid, now):
+                self._stats["duplicate_suppressed"] += 1
                 return None
-            self._seen_msgs[mid] = now
-            # Prune old entries + hard limit
-            if len(self._seen_msgs) > self._SEEN_MSGS_MAX or len(self._seen_msgs) > 100:
-                self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
+            self._remember_mid(mid, now)
 
         # Access control
         if (not self._allow_all_users and self._allowed_users_set

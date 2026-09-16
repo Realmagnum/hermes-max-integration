@@ -70,7 +70,12 @@ class WebhookMixin(MaxBaseMixin):
         app = web.Application()
 
         async def health_handler(req: web.Request) -> web.Response:
-            return web.json_response({"status": "ok"})
+            # CODE-08: expose backpressure metrics (queue depth/drops, handler
+            # concurrency, dedup table) alongside the liveness status.
+            return web.json_response({
+                "status": "ok",
+                "backpressure": self.backpressure_stats(),
+            })
 
         # Rate limiter for webhook (per-IP, in-memory, cleaned every 5 min)
         _webhook_hits: dict[str, list] = {}
@@ -113,7 +118,9 @@ class WebhookMixin(MaxBaseMixin):
 
             event = await self._build_event(payload)
             if event is not None:
-                await self._message_queue.put(event)
+                # CODE-08: bounded, non-blocking enqueue — a saturated adapter
+                # must not stall the HTTP handler.
+                self._enqueue_event(event)
             return web.Response(text="ok")
 
         app.router.add_get("/health", health_handler)
