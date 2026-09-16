@@ -43,6 +43,7 @@ from gateway.platforms.base import (
 )
 
 from .mixins.buttons import ButtonsMixin
+from .mixins.callback_auth import CallbackAuthMixin
 from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
     _ALLOWED_UPLOAD_HOSTS,
     MediaUploadMixin,
@@ -160,7 +161,7 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
 
-class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
+class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
     """MAX messenger platform adapter (voice transcription via Hermes core STT)."""
 
     def __init__(self, config: PlatformConfig):
@@ -272,10 +273,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         # DM routing: chat_id → user_id
         self._dm_user_ids: dict[str, str] = {}
 
-        # Interactive button state tracking
-        self._exec_approval_state: dict[str, str] = {}   # approval_id → session_key
-        self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
-        self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
+        # Interactive button state tracking (SEC-01): owner/chat/message-bound
+        # records with TTL — see mixins/callback_auth.py. The attribute names
+        # _exec_approval_state / _slash_confirm_state / _clarify_state are
+        # aliases onto the same registry.
+        self._init_callback_auth()
         self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
 
     # ═════════════════════════════════════════════════════════════════════
@@ -742,6 +744,18 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             chat_type=chat_type,
             user_id=user_id,
             user_name=user_name,
+        )
+
+        # SEC-01: remember who owns this conversation so prompts triggered by
+        # this turn (approval / slash-confirm / clarify / model picker) can be
+        # bound to that user — outbound prompts receive only a session key.
+        try:
+            session_key = self._source_session_key(source)
+        except Exception as exc:  # noqa: BLE001 — ownership is best-effort here
+            logger.debug("MAX: could not derive session key for owner tracking: %s", exc)
+            session_key = ""
+        self._remember_interaction_owner(
+            session_key=session_key, chat_id=scoped_chat_id, user_id=user_id,
         )
 
         return MessageEvent(
@@ -1552,8 +1566,31 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         )
         chat_id = str(raw_chat_id)
 
+        # Message the buttons live on — the third binding of SEC-01. MAX puts
+        # it in message.body.mid; tolerate the flatter shapes seen in the wild.
+        body = (msg.get("body") or {}) if msg else {}
+        message_id = str(
+            body.get("mid") or msg.get("mid") or msg.get("message_id") or ""
+        )
+
         logger.info("MAX: callback received: data=%s from user=%s chat_id=%s",
                      data, user_id, chat_id)
+
+        # Prompts are registered against the *scoped* chat id ("chat:777" /
+        # "user:42"); callbacks carry the raw numeric group id. Normalise once
+        # so the bound-chat check compares like with like.
+        scoped_chat = f"chat:{chat_id}" if chat_id else f"user:{user_id}"
+
+        # ── Common authorization gate (SEC-01) ───────────────────────────
+        # Runs before any handler so no dispatch path can pop state or reach a
+        # resolver without passing the same checks (exec approval, slash
+        # confirm, clarify, model picker).
+        if not self._is_callback_user_allowed(user_id):
+            logger.warning(
+                "MAX: ignoring callback from unauthorized user=%s chat_id=%s data=%s",
+                user_id, chat_id, data,
+            )
+            return None
 
         # Dispatch based on prefix
         parts = data.split(":", 2)
@@ -1561,22 +1598,31 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         if prefix == "exec":
             # Dangerous command approval buttons
-            return await self._handle_exec_callback(data, user_id, payload)
+            return await self._handle_exec_callback(
+                data, user_id, payload, chat_id=scoped_chat, message_id=message_id,
+            )
         elif prefix == "sc":
             # Slash-command confirmation buttons
-            return await self._handle_slash_confirm_callback(data, user_id, payload)
+            return await self._handle_slash_confirm_callback(
+                data, user_id, payload, chat_id=scoped_chat, message_id=message_id,
+            )
         elif prefix == "clarify":
             # Clarify choice buttons
-            return await self._handle_clarify_callback(data, user_id, payload)
+            return await self._handle_clarify_callback(
+                data, user_id, payload, chat_id=scoped_chat, message_id=message_id,
+            )
         elif prefix == "model":
             # Model picker buttons
-            return await self._handle_model_callback(data, user_id, payload, chat_id)
+            return await self._handle_model_callback(
+                data, user_id, payload, chat_id, message_id=message_id,
+            )
         else:
             logger.warning("MAX: unknown callback prefix: %s", prefix)
             return None
 
     async def _handle_exec_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any],
+        chat_id: str = "", message_id: str = "",
     ) -> MessageEvent | None:
         """Route exec approval button to resolve_gateway_approval."""
         # Format: exec:{choice}:{approval_id}
@@ -1586,10 +1632,29 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         choice = parts[1]   # once / session / always / deny
         approval_id = parts[2]
 
-        session_key = self._exec_approval_state.pop(approval_id, None)
+        # SEC-01: the presser must be the owner of this approval, in the bound
+        # chat, on the bound prompt message. Unauthorized presses neither call
+        # the resolver nor delete the owner's pending state.
+        record, reason = self._consume_interaction(
+            "exec", approval_id,
+            user_id=user_id, chat_id=chat_id, message_id=message_id,
+        )
+        if record is None:
+            if reason == "unknown":
+                logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
+                await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
+            elif reason == "expired":
+                await self.send(f"user:{user_id}", "❌ This approval has expired.")
+            else:
+                logger.warning(
+                    "MAX: refusing approval %s from user=%s chat=%s: %s",
+                    approval_id, user_id, chat_id, reason,
+                )
+            return None
+
+        session_key = str(record.get("session_key") or "")
         if not session_key:
-            logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
-            await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
+            logger.warning("MAX: approval %s has no session key — ignoring", approval_id)
             return None
 
         from tools.approval import has_blocking_approval, resolve_gateway_approval
@@ -1620,7 +1685,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_slash_confirm_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any],
+        chat_id: str = "", message_id: str = "",
     ) -> MessageEvent | None:
         """Route slash-confirm button to tools.slash_confirm.resolve."""
         # Format: sc:{choice}:{confirm_id}
@@ -1630,9 +1696,24 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         choice = parts[1]     # once / always / cancel
         confirm_id = parts[2]
 
-        session_key = self._slash_confirm_state.pop(confirm_id, None)
+        # SEC-01: same owner/chat/message gate as exec approvals.
+        record, reason = self._consume_interaction(
+            "sc", confirm_id,
+            user_id=user_id, chat_id=chat_id, message_id=message_id,
+        )
+        if record is None:
+            if reason != "unknown":
+                logger.warning(
+                    "MAX: refusing slash-confirm %s from user=%s chat=%s: %s",
+                    confirm_id, user_id, chat_id, reason,
+                )
+            else:
+                logger.warning("MAX: unknown confirm_id in callback: %s", confirm_id)
+            return None
+
+        session_key = str(record.get("session_key") or "")
         if not session_key:
-            logger.warning("MAX: unknown confirm_id in callback: %s", confirm_id)
+            logger.warning("MAX: slash-confirm %s has no session key — ignoring", confirm_id)
             return None
 
         from tools import slash_confirm as _sc
@@ -1646,7 +1727,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_clarify_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any],
+        chat_id: str = "", message_id: str = "",
     ) -> MessageEvent | None:
         """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
         # Format: clarify:{clarify_id}:{choice_index}
@@ -1656,9 +1738,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         clarify_id = parts[1]
         choice_idx = parts[2]
 
-        session_key = self._clarify_state.pop(clarify_id, None)
-        if not session_key:
-            logger.warning("MAX: unknown clarify_id in callback: %s", clarify_id)
+        # SEC-01: a stranger must not answer somebody else's clarify prompt.
+        record, reason = self._consume_interaction(
+            "clarify", clarify_id,
+            user_id=user_id, chat_id=chat_id, message_id=message_id,
+        )
+        if record is None:
+            if reason != "unknown":
+                logger.warning(
+                    "MAX: refusing clarify %s from user=%s chat=%s: %s",
+                    clarify_id, user_id, chat_id, reason,
+                )
+            else:
+                logger.warning("MAX: unknown clarify_id in callback: %s", clarify_id)
             return None
 
         try:
@@ -1708,6 +1800,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
     async def _handle_model_callback(
         self, data: str, user_id: str, raw_payload: dict[str, Any], chat_id: str,
+        message_id: str = "",
     ) -> MessageEvent | None:
         """Route model picker button callbacks.
 
@@ -1724,6 +1817,25 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             scoped_chat = f"chat:{chat_id}"
         else:
             scoped_chat = f"user:{user_id}"
+
+        # SEC-01: the picker state is owner-bound too — another participant of
+        # the same chat must not switch the owner's model (see CODE-06 for the
+        # stale-message angle).
+        picker_state = self._model_picker_state.get(scoped_chat)
+        if picker_state is not None:
+            reason = self._model_picker_deny_reason(
+                picker_state, user_id=user_id, message_id=message_id,
+            )
+            if reason:
+                if reason == "expired picker state":
+                    self._model_picker_state.pop(scoped_chat, None)
+                logger.warning(
+                    "MAX: refusing model callback %s from user=%s chat=%s: %s",
+                    data, user_id, scoped_chat, reason,
+                )
+                return None
+            # Sliding TTL: an active picker stays usable while it is being used.
+            picker_state["expires_at"] = self._callback_clock() + self._callback_ttl
 
         parts = data.split(":", 3)
 
@@ -1767,6 +1879,25 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # ═════════════════════════════════════════════════════════════════════
     # Model picker
     # ═════════════════════════════════════════════════════════════════════
+
+    def _model_picker_deny_reason(
+        self, state: dict[str, Any], *, user_id: str, message_id: str = "",
+    ) -> str:
+        """Return why ``state`` must not be driven by this press, or "" (SEC-01)."""
+        owner = str(state.get("owner_user_id") or "")
+        if not owner:
+            return "unbound picker (owner unknown)"
+        if str(user_id) != owner:
+            return f"user {user_id} is not the picker owner ({owner})"
+        if self._callback_clock() >= float(state.get("expires_at") or 0.0):
+            return "expired picker state"
+        bound_mids = {
+            str(state.get(key) or "") for key in ("provider_msg_id", "model_msg_id")
+        }
+        bound_mids.discard("")
+        if bound_mids and message_id and str(message_id) not in bound_mids:
+            return "stale picker button (message id mismatch)"
+        return ""
 
     async def send_model_picker(
         self,
@@ -1823,6 +1954,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
+            # Drop expired pickers so abandoned ones cannot pile up.
+            now = self._callback_clock()
+            for stale_chat, stale in list(self._model_picker_state.items()):
+                if now >= float(stale.get("expires_at") or 0.0):
+                    self._model_picker_state.pop(stale_chat, None)
             self._model_picker_state[str(chat_id)] = {
                 "provider_msg_id": result.message_id,  # ID сообщения с провайдерами (текст+кнопки)
                 "providers": providers,
@@ -1830,6 +1966,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 "on_model_selected": on_model_selected,
                 "current_model": current_model,
                 "current_provider": current_provider,
+                # SEC-01: owner binding + TTL — see _model_picker_deny_reason.
+                "owner_user_id": self._resolve_interaction_owner(
+                    session_key, chat_id, metadata,
+                ),
+                "expires_at": self._callback_clock() + self._callback_ttl,
             }
         return result
 
