@@ -55,3 +55,6 @@ optional_env:
   - name: MAX_CROSS_SESSION
     description: "Enable cross-platform session listing — /sessions shows sessions from ALL platforms (CLI, Telegram, Discord, WebUI). /resume <id> switches to any session. Set to false to restore default per-platform scoping. (true/false, default: true)"
     prompt: "Cross-platform session commands"
+  - name: MAX_EDIT_THROTTLE
+    description: "Minimum seconds between streaming edits of the same message (default: 0.2). Applies per chat/message; content queued inside the window is flushed automatically."
+    prompt: "Streaming edit throttle in seconds (e.g. 0.2)"

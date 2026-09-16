@@ -52,12 +52,19 @@ class TestDetectImageMime:
 
 
 class TestStreamingThrottle:
-    """Tests for edit_message streaming throttle."""
+    """Tests for edit_message streaming throttle.
+
+    Throttle state is per (chat_id, message_id) since CODE-03 — the deep
+    concurrency/flush coverage lives in tests/test_streaming_isolation.py.
+    """
+
+    THROTTLE = 0.02
 
     def _make_adapter(self):
         from gateway.config import PlatformConfig
         cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
         a = adapter.MaxAdapter(cfg)
+        a._edit_throttle = self.THROTTLE
         a._http_client = AsyncMock()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -65,6 +72,17 @@ class TestStreamingThrottle:
         a._http_client.put = AsyncMock(return_value=mock_resp)
         a.send_typing = AsyncMock()
         return a
+
+    @staticmethod
+    def _state(a, chat_id="user:42", message_id="mid-1"):
+        return a._edit_states[adapter.MaxAdapter._edit_state_key(chat_id, message_id)]
+
+    @staticmethod
+    def _cancel_pending(a):
+        for state in a._edit_states.values():
+            if state.flush_task is not None:
+                state.flush_task.cancel()
+        a._edit_states.clear()
 
     @pytest.mark.asyncio
     async def test_first_edit_goes_through(self):
@@ -74,6 +92,7 @@ class TestStreamingThrottle:
         a._http_client.put.assert_called_once()
         # Typing should be renewed
         a.send_typing.assert_called_once_with("user:42")
+        self._cancel_pending(a)
 
     @pytest.mark.asyncio
     async def test_rapid_edits_throttled(self):
@@ -86,41 +105,41 @@ class TestStreamingThrottle:
         # Second edit immediately — throttled
         result2 = await a.edit_message("user:42", "mid-1", "second")
         assert result2.success is True
-        # Should only have one actual HTTP call (second was throttled)
+        # Should only have one immediate HTTP call (second was queued)
         assert a._http_client.put.call_count == 1
+        self._cancel_pending(a)
 
     @pytest.mark.asyncio
     async def test_rapid_edit_stores_pending_content(self):
-        """Throttled edit stores content in _pending_edit (Fix 2)."""
+        """Throttled edit queues its content on that message's state."""
         a = self._make_adapter()
 
         # First edit goes through
         await a.edit_message("user:42", "mid-1", "first")
-        assert getattr(a, "_pending_edit", None) is None
+        assert self._state(a).pending_text is None
 
         # Second edit — throttled, content stored
         await a.edit_message("user:42", "mid-1", "second content")
-        assert getattr(a, "_pending_edit", None) == "second content"
+        assert self._state(a).pending_text == "second content"
+        self._cancel_pending(a)
 
     @pytest.mark.asyncio
-    async def test_pending_content_cleared_on_next_edit(self):
-        """After throttle expires, _pending_edit is cleared."""
+    async def test_pending_content_delivered_by_flush(self):
+        """After the throttle expires the queued content is sent (Fix 2)."""
         a = self._make_adapter()
 
-        # First edit goes through
         await a.edit_message("user:42", "mid-1", "first")
-        assert getattr(a, "_pending_edit", None) is None
-
-        # Simulate time passing beyond 200ms throttle
-        import time as _time
-        a._last_edit_at = _time.monotonic() - 1.0  # 1 second ago
-
-        # Second edit now goes through
         await a.edit_message("user:42", "mid-1", "second")
-        # Pending should be cleared
-        assert getattr(a, "_pending_edit", None) is None
-        # HTTP call should have happened
-        assert a._http_client.put.call_count >= 2
+
+        import asyncio
+
+        await asyncio.sleep(self.THROTTLE * 3)
+
+        assert self._state(a).pending_text is None
+        assert a._http_client.put.call_count == 2
+        _, kwargs = a._http_client.put.call_args
+        assert kwargs["json"]["text"] == "second"
+        self._cancel_pending(a)
 
     @pytest.mark.asyncio
     async def test_edit_message_converts_tables(self):
@@ -143,20 +162,21 @@ class TestStreamingThrottle:
         assert "|---|---|" not in text  # separator should be removed
         assert "<pre>" not in text  # no HTML tags
         assert "```" not in text  # no code fences
+        self._cancel_pending(a)
 
     @pytest.mark.asyncio
-    async def test_finalize_resets_throttle(self):
+    async def test_finalize_bypasses_throttle_and_releases_state(self):
         a = self._make_adapter()
 
         # First edit
         await a.edit_message("user:42", "mid-1", "first")
         assert a._http_client.put.call_count == 1
 
-        # Finalize edit — always goes through, resets throttle
+        # Finalize edit — always goes through, releases the per-message state
         result = await a.edit_message("user:42", "mid-1", "final", finalize=True)
         assert result.success is True
         assert a._http_client.put.call_count == 2
-        assert getattr(a, "_last_edit_at", 0.0) == 0.0
+        assert adapter.MaxAdapter._edit_state_key("user:42", "mid-1") not in a._edit_states
 
 
 class TestTypingRenewal:

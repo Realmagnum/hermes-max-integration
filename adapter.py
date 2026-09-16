@@ -21,10 +21,12 @@ Configuration in ~/.hermes/.env:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import mimetypes
 import os
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -67,6 +69,13 @@ MAX_MESSAGE_LENGTH = 4000
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
 UPLOAD_DELAY = 2.0
+
+# Streaming edit throttle. Per-message state lives in MaxAdapter._edit_states,
+# so two concurrent chats can never consume each other's slot (CODE-03).
+EDIT_THROTTLE_SECONDS = 0.2
+# Upper bound on tracked (chat, message) streams; idle entries are pruned first
+# so a long-lived adapter cannot grow one state per message forever.
+EDIT_STATES_MAX = 256
 
 # SSRF allowlist is in .mixins.media_upload
 
@@ -156,6 +165,35 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    """Coerce env/config strings to a non-negative float."""
+    if value is None or value == "":
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+@dataclass
+class _StreamEditState:
+    """Per-(chat, message) streaming-edit bookkeeping (CODE-03).
+
+    Kept per message instead of on the adapter so concurrent streams cannot
+    share a throttle slot. ``last_edit_at`` gates the next PUT, ``pending_text``
+    holds the content of a throttled call until ``flush_task`` delivers it, and
+    ``lock`` serialises the direct and timer-driven PUT for one message.
+    """
+
+    chat_id: str
+    message_id: str
+    last_edit_at: float = 0.0
+    pending_text: str | None = None
+    flush_task: asyncio.Task | None = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
@@ -278,6 +316,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
         self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
 
+        # Streaming edit throttle — one state entry per (chat_id, message_id)
+        self._edit_throttle: float = _coerce_float(
+            os.getenv("MAX_EDIT_THROTTLE") or extra.get("edit_throttle"),
+            EDIT_THROTTLE_SECONDS,
+        )
+        self._edit_states: dict[str, _StreamEditState] = {}
+
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
     # ═════════════════════════════════════════════════════════════════════
@@ -391,6 +436,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         for task in list(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
+
+        # Cancel pending streaming-edit flush timers (CODE-03) so a closed
+        # adapter cannot PUT against a closed client.
+        pending_flushes = [
+            state.flush_task
+            for state in self._edit_states.values()
+            if state.flush_task is not None and not state.flush_task.done()
+        ]
+        self._edit_states.clear()
+        for task in pending_flushes:
+            task.cancel()
+        for task in pending_flushes:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
         if self._webhook_runner:
             try:
@@ -1276,6 +1335,121 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             logger.info("MAX: split outbound message into %s chunks for %s", len(chunks), chat_id)
         return last_result or SendResult(success=False, error="No content to send")
 
+    # ═════════════════════════════════════════════════════════════════════
+    # Streaming edits — per-message throttle with guaranteed flush (CODE-03)
+    # ═════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _edit_state_key(chat_id: str, message_id: str) -> str:
+        """State key: one entry per (chat, message) pair.
+
+        message_id alone is unique in MAX, but chat_id is folded into the key so
+        typing renewal always targets the right chat and a duplicate/stale mid
+        from another chat can never collide with this stream's slot.
+        """
+        return f"{chat_id}\x00{message_id}"
+
+    def _get_edit_state(self, chat_id: str, message_id: str) -> _StreamEditState:
+        key = self._edit_state_key(chat_id, message_id)
+        state = self._edit_states.get(key)
+        if state is None:
+            if len(self._edit_states) >= EDIT_STATES_MAX:
+                self._prune_edit_states()
+            state = _StreamEditState(chat_id=chat_id, message_id=message_id)
+            self._edit_states[key] = state
+        return state
+
+    def _prune_edit_states(self) -> None:
+        """Drop the oldest idle streams so tracked state stays bounded.
+
+        Only entries with nothing queued and no live flush timer are eligible,
+        oldest ``last_edit_at`` first. Dropping one merely costs that message a
+        fresh throttle window on its next edit.
+        """
+        idle = [
+            (key, state)
+            for key, state in self._edit_states.items()
+            if state.pending_text is None
+            and (state.flush_task is None or state.flush_task.done())
+        ]
+        idle.sort(key=lambda item: item[1].last_edit_at)
+        for key, _state in idle[: max(1, len(idle) // 2)]:
+            self._edit_states.pop(key, None)
+
+    @staticmethod
+    def _cancel_flush_task(state: _StreamEditState) -> None:
+        """Cancel the pending flush timer for one message, if any."""
+        task = state.flush_task
+        state.flush_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _discard_edit_state(self, chat_id: str, message_id: str) -> None:
+        """Drop per-message state and its timer (stream finished)."""
+        state = self._edit_states.pop(self._edit_state_key(chat_id, message_id), None)
+        if state is not None:
+            self._cancel_flush_task(state)
+
+    async def _perform_edit(self, state: _StreamEditState, content: str) -> SendResult:
+        """Truncate/normalise ``content`` and PUT it to MAX (single attempt)."""
+        text = content[:MAX_MESSAGE_LENGTH - 3] + "..." if len(content) > MAX_MESSAGE_LENGTH else content
+        text = self._convert_markdown_tables(text)
+        body = {"text": text, "format": "markdown"}
+        try:
+            resp = await self._http_client.put(
+                f"{MAX_API_BASE}/messages",
+                params={"message_id": state.message_id},
+                json=body,
+            )
+            resp.raise_for_status()
+            # MAX clears typing indicator on message edit — renew it
+            await self.send_typing(state.chat_id)
+            return SendResult(success=True, message_id=state.message_id, raw_response=resp.json())
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            logger.error("MAX: edit_message failed: %s", e)
+            return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
+
+    def _schedule_flush(self, state: _StreamEditState) -> None:
+        """(Re)start the timer that delivers throttled content.
+
+        A newer throttled edit cancels the older timer and restarts it, so the
+        last queued content always wins and is delivered even when no further
+        edit_message call ever arrives.
+        """
+        self._cancel_flush_task(state)
+        key = self._edit_state_key(state.chat_id, state.message_id)
+        try:
+            state.flush_task = asyncio.create_task(self._flush_pending_edit(key))
+        except RuntimeError:  # no running loop — nothing to schedule on
+            logger.debug("MAX: no event loop for streaming edit flush")
+
+    async def _flush_pending_edit(self, key: str) -> None:
+        """Deliver content stored by the last throttled edit_message call."""
+        state = self._edit_states.get(key)
+        if state is None:
+            return
+        try:
+            while True:
+                remaining = self._edit_throttle - (time.monotonic() - state.last_edit_at)
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+                text = state.pending_text
+                if text is None:
+                    return
+                state.pending_text = None
+                async with state.lock:
+                    state.last_edit_at = time.monotonic()
+                    await self._perform_edit(state, text)
+                if state.pending_text is None:
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — flush must never kill the loop
+            logger.error("MAX: pending edit flush failed: %s", exc)
+        finally:
+            if self._edit_states.get(key) is state:
+                state.flush_task = None
+
     async def edit_message(
         self,
         chat_id: str,
@@ -1286,49 +1460,35 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     ) -> SendResult:
         """Edit an existing message — for streaming support.
 
-        Throttles edits to 800ms minimum interval to avoid MAX rate limits.
+        Throttling is tracked per (chat_id, message_id), so two concurrent chats
+        each keep their own slot and can no longer suppress each other's PUT.
+        A throttled edit is never dropped: it is stored and delivered by its own
+        timer once the throttle window expires. ``finalize=True`` always sends
+        immediately and releases the per-message state.
         Renews typing indicator after each edit (MAX clears it on edit).
         """
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
 
-        # Streaming throttle: minimum 200ms between edits to avoid flooding.
-        # Unlike the old 800ms throttle, this stores the content when skipped
-        # so no edit is ever silently lost.
+        state = self._get_edit_state(chat_id, message_id)
         now = time.monotonic()
-        last = getattr(self, "_last_edit_at", 0.0)
-        if not finalize and last > 0 and (now - last) < 0.2:
-            self._pending_edit = content
+
+        if not finalize and state.last_edit_at > 0 and (now - state.last_edit_at) < self._edit_throttle:
+            state.pending_text = content
+            self._schedule_flush(state)
             logger.debug("MAX: edit_message throttled, content queued")
             return SendResult(success=True, message_id=message_id)
 
-        # If there was a throttled edit, merge it with the current content.
-        # The content parameter already carries the full accumulated text from
-        # the agent, so _pending_edit is used only for internal bookkeeping —
-        # no actual merging needed on the wire, the agent already concatenated.
-        if getattr(self, "_pending_edit", None) is not None:
-            self._pending_edit = None
+        # Unthrottled path (or finalize): this content supersedes anything queued.
+        self._cancel_flush_task(state)
+        state.pending_text = None
+        async with state.lock:
+            state.last_edit_at = time.monotonic()
+            result = await self._perform_edit(state, content)
 
-        self._last_edit_at = now
         if finalize:
-            self._last_edit_at = 0.0
-
-        text = content[:MAX_MESSAGE_LENGTH - 3] + "..." if len(content) > MAX_MESSAGE_LENGTH else content
-        text = self._convert_markdown_tables(text)
-        body = {"text": text, "format": "markdown"}
-        try:
-            resp = await self._http_client.put(
-                f"{MAX_API_BASE}/messages",
-                params={"message_id": message_id},
-                json=body,
-            )
-            resp.raise_for_status()
-            # MAX clears typing indicator on message edit — renew it
-            await self.send_typing(chat_id)
-            return SendResult(success=True, message_id=message_id, raw_response=resp.json())
-        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.error("MAX: edit_message failed: %s", e)
-            return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
+            self._discard_edit_state(chat_id, message_id)
+        return result
 
     async def delete_message(self, chat_id: str, message_id: str) -> SendResult:
         """Delete a message by ID."""
