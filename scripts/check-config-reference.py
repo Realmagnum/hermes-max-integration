@@ -32,7 +32,6 @@ import re
 import sys
 from pathlib import Path
 
-PROD_MODULES = ["adapter.py", "__init__.py", *[f"mixins/{p.name}" for p in sorted(Path("mixins").glob("*.py"))]]
 CONFIG_DOCS = ["README.md", "README_EN.md", "docs/setup.md", "docs/setup_EN.md"]
 CORE_CONFIG_DOCS = ["docs/setup.md", "docs/setup_EN.md"]
 
@@ -71,10 +70,20 @@ INTERNAL_CONSTANTS = {
 }
 
 
+def mixin_modules(root: Path) -> list[str]:
+    """``mixins/*.py`` paths relative to ``root`` — never resolved against the CWD."""
+    return [f"mixins/{p.name}" for p in sorted((root / "mixins").glob("*.py"))]
+
+
+def prod_modules(root: Path) -> list[str]:
+    """Production modules scanned for env reads, relative to ``root``."""
+    return ["adapter.py", "__init__.py", *mixin_modules(root)]
+
+
 def code_env_vars(root: Path) -> dict[str, list[str]]:
     """Env names read by production code -> where they appear (relpath:line)."""
     found: dict[str, list[str]] = {}
-    for rel in PROD_MODULES:
+    for rel in prod_modules(root):
         path = root / rel
         if not path.is_file():
             continue
@@ -162,7 +171,7 @@ def doc_core_keys(root: Path, rel: str) -> dict[str, int]:
 def code_extra_keys(root: Path) -> dict[str, str]:
     """``extra`` keys read by the adapter -> first ``relpath:line`` occurrence."""
     found: dict[str, str] = {}
-    for rel in ("adapter.py", *[f"mixins/{p.name}" for p in sorted((root / "mixins").glob("*.py"))]):
+    for rel in ("adapter.py", *mixin_modules(root)):
         path = root / rel
         if not path.is_file():
             continue
@@ -201,7 +210,7 @@ def main() -> int:
 
     # 3. literal defaults present in the source
     src_parts = []
-    for rel in PROD_MODULES:
+    for rel in prod_modules(root):
         if (root / rel).is_file():
             src_parts.append(f"# {rel}\n" + (root / rel).read_text(encoding="utf-8"))
     src = "\n".join(src_parts)
