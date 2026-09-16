@@ -49,6 +49,22 @@ sys.modules.setdefault("adapter", adapter)
 sys.modules.setdefault("max", sys.modules[_NAMESPACE])
 sys.modules.setdefault("max.adapter", adapter)
 
+# Mirror every already-loaded submodule to the `max.` alias as well.
+#
+# Aliasing only the package is not enough: a later `import
+# max.mixins.table_renderer` would execute the source a second time and create
+# a *separate* module object with its own globals. Tests that patch
+# `max.mixins.table_renderer._playwright_importable` would then patch that
+# doppelgänger while `adapter` keeps calling the real module's globals — the
+# patch silently has no effect (only attributes reached through shared
+# singletons, e.g. `subprocess.run`, still appear to work, which makes the
+# failure look like a product bug). Register the same objects under both names.
+if sys.modules.get("max") is sys.modules[_NAMESPACE]:
+    _PREFIX = _NAMESPACE + "."
+    for _name, _module in list(sys.modules.items()):
+        if _name.startswith(_PREFIX) and _module is not None:
+            sys.modules["max." + _name[len(_PREFIX):]] = _module
+
 
 @pytest.fixture
 def max_config():
