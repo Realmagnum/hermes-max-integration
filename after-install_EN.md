@@ -4,7 +4,10 @@ Next steps:
 
 1. **Install runtime dependencies:**
    ```bash
-   pip install aiohttp httpx
+   # Plugin directory (active Hermes profile) and the interpreter of its venv:
+   cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
+   HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+   "$HERMES_PY" -m pip install aiohttp httpx
    ```
 
    **Tables as images (optional):** HTML→PNG rendering via Playwright/Chromium.
@@ -12,8 +15,8 @@ Next steps:
    the package won't reach the plugin runtime. Windows:
    `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
    ```bash
-   python -m pip install 'playwright>=1.40'
-   python -m playwright install chromium    # ~115 MB, one-time
+   "$HERMES_PY" -m pip install 'playwright>=1.40'
+   "$HERMES_PY" -m playwright install chromium    # ~115 MB, one-time
    ```
    Or enable auto-install (the plugin installs the package and browser itself on
    the first table render): add `MAX_AUTO_INSTALL_PLAYWRIGHT=true` to `~/.hermes/.env`.

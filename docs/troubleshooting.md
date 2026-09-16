@@ -104,17 +104,21 @@ ls -la ~/.hermes/audio_cache/max_audio_*.ogg
 
 **Решение:**
 ```bash
+# Каталог плагина (активный профиль Hermes) и Python его venv:
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+
 # Диагностика: что отсутствует?
-python scripts/setup-playwright.py --check-only
+"$HERMES_PY" scripts/setup-playwright.py --check-only
 
 # Установить недостающее (идемпотентно):
-python scripts/setup-playwright.py
+"$HERMES_PY" scripts/setup-playwright.py
 # либо вручную:
-python -m pip install 'playwright>=1.40'
-python -m playwright install chromium
+"$HERMES_PY" -m pip install 'playwright>=1.40'
+"$HERMES_PY" -m playwright install chromium
 
 # Фоллбэк-рендер без браузера:
-python -m pip install Pillow
+"$HERMES_PY" -m pip install Pillow
 
 hermes gateway restart
 ```

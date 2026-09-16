@@ -192,6 +192,4 @@ curl http://localhost:8646/health
 hermes gateway status
 ```
 
-### Docker
 
-See [docs/docker.md](docs/docker.md) (in development).

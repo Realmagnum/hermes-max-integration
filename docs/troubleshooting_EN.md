@@ -104,17 +104,21 @@ missing (fallback). Both must be installed into the Hermes gateway Python (venv)
 
 **Solution:**
 ```bash
+# Plugin directory (active Hermes profile) and the interpreter of its venv:
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+
 # Diagnostics: what is missing?
-python scripts/setup-playwright.py --check-only
+"$HERMES_PY" scripts/setup-playwright.py --check-only
 
 # Install what's missing (idempotent):
-python scripts/setup-playwright.py
+"$HERMES_PY" scripts/setup-playwright.py
 # or manually:
-python -m pip install 'playwright>=1.40'
-python -m playwright install chromium
+"$HERMES_PY" -m pip install 'playwright>=1.40'
+"$HERMES_PY" -m playwright install chromium
 
 # Fallback renderer without a browser:
-python -m pip install Pillow
+"$HERMES_PY" -m pip install Pillow
 
 hermes gateway restart
 ```

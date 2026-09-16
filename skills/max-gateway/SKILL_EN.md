@@ -28,9 +28,11 @@ If these docs changed, follow the current official docs instead of this skill.
 ## Procedure
 
 1. Verify Hermes is installed: `hermes --version`
-2. Install plugin dependencies:
+2. Install plugin dependencies into the same Python the Hermes gateway runs in
+   (the core venv; resolve it from the `hermes` shebang):
    ```bash
-   pip install aiohttp httpx
+   HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+   "$HERMES_PY" -m pip install aiohttp httpx
    ```
 3. Install and enable the plugin:
    ```bash

@@ -89,8 +89,10 @@ to classic Pillow rendering.
 
 **Pillow/Playwright not installed:**
 ```bash
-python scripts/setup-playwright.py          # installs playwright + Chromium
-python -m pip install Pillow                # fallback renderer
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # plugin directory
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # gateway venv interpreter
+"$HERMES_PY" scripts/setup-playwright.py    # installs playwright + Chromium
+"$HERMES_PY" -m pip install Pillow          # fallback renderer
 ```
 
 **Text truncated:**
