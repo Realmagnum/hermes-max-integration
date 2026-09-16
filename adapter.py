@@ -25,6 +25,7 @@ import logging
 import mimetypes
 import os
 import time
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -64,6 +65,10 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 MAX_MESSAGE_LENGTH = 4000
+# Text budget per chunk: MAX_MESSAGE_LENGTH minus headroom for the "(i/n)\n"
+# numbering prefix that the sender prepends to every chunk of a split message.
+OUTBOUND_CHUNK_MARGIN = 100
+OUTBOUND_CHUNK_LIMIT = max(500, MAX_MESSAGE_LENGTH - OUTBOUND_CHUNK_MARGIN)
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
 UPLOAD_DELAY = 2.0
@@ -156,6 +161,80 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+# ── Outbound chunking (CODE-02) ──────────────────────────────────────────
+#
+# The chunker is lossless by construction: it never trims, drops or re-joins
+# characters, so ``"".join(chunks) == content`` for any input. Boundary
+# whitespace therefore survives a split, which is what makes the concatenated
+# payload equal to the source text.
+
+
+def _split_keep_separators(text: str, sep: str) -> list[str]:
+    """Split ``text`` on ``sep``, keeping each separator on the piece before it.
+
+    ``"".join(result) == text`` holds for every input, including empty pieces
+    (``"a\\n\\nb".split("\\n")`` -> ``["a", "", "b"]`` -> ``["a\\n", "\\n", "b"]``).
+    """
+    pieces = text.split(sep)
+    result = [piece + sep for piece in pieces[:-1]]
+    if pieces[-1]:
+        result.append(pieces[-1])
+    return result
+
+
+def _iter_text_segments(text: str, limit: int) -> Iterator[str]:
+    """Yield ordered segments of ``text``, each no longer than ``limit``.
+
+    Concatenating the segments reproduces ``text`` exactly. Splitting prefers
+    boundaries in this order: line, word, character — a word longer than the
+    limit is the only case that gets cut mid-word.
+    """
+    for line in _split_keep_separators(text, "\n"):
+        if len(line) <= limit:
+            yield line
+            continue
+        for word in _split_keep_separators(line, " "):
+            if len(word) <= limit:
+                yield word
+            else:
+                for start in range(0, len(word), limit):
+                    yield word[start:start + limit]
+
+
+def _pack_segments(segments: Iterable[str], limit: int) -> list[str]:
+    """Greedily pack segments into chunks of at most ``limit`` characters."""
+    chunks: list[str] = []
+    current = ""
+    for segment in segments:
+        if current and len(current) + len(segment) > limit:
+            chunks.append(current)
+            current = segment
+        else:
+            current += segment
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _move_leading_whitespace(chunks: list[str], cap: int) -> None:
+    """Move a chunk's leading whitespace onto the previous chunk while it fits.
+
+    In-place, and never moves a chunk's last character, so the concatenation of
+    ``chunks`` is unchanged (losslessness is preserved). ``cap`` is the maximum
+    allowed length of a chunk's text — the caller sets it so that the numbered
+    payload still fits the API limit. Keeps a message from starting with a blank
+    line when a chunk boundary lands inside a paragraph break.
+    """
+    for idx in range(1, len(chunks)):
+        while (
+            len(chunks[idx]) > 1
+            and chunks[idx][0] in " \t\n"
+            and len(chunks[idx - 1]) < cap
+        ):
+            chunks[idx - 1] += chunks[idx][0]
+            chunks[idx] = chunks[idx][1:]
 
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
@@ -1105,62 +1184,53 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # Outbound: send messages
     # ═════════════════════════════════════════════════════════════════════
 
-    def _split_outbound_text(self, content: str) -> list[str]:
-        """Split long outbound text into Max-sized chunks (≤4000 chars).
+    def _split_outbound_text(
+        self, content: str, limit: int | None = None
+    ) -> list[str]:
+        """Split long outbound text into Max-sized chunks (≤ ``limit`` chars).
 
-        Preserves paragraph boundaries where possible; hard-splits long
-        paragraphs by word, then by character as a last resort.
+        Lossless: ``"".join(result) == content`` for every input — the splitter
+        never trims or re-joins characters, so nothing is dropped at a chunk
+        boundary. Splits prefer paragraph, then line, then word boundaries and
+        only cut mid-word for a word longer than the limit.
         """
-        limit = max(500, min(MAX_MESSAGE_LENGTH, 4000) - 100)
-        if len(content) <= limit:
+        budget = OUTBOUND_CHUNK_LIMIT if limit is None else max(1, limit)
+        if len(content) <= budget:
             return [content]
+        segments = _iter_text_segments(content, budget)
+        return _pack_segments(segments, budget)
 
-        chunks: list[str] = []
-        current = ""
+    def _numbered_outbound_chunks(self, content: str) -> list[str]:
+        """Chunk ``content`` and prepend the ``(i/n)\\n`` numbering prefix.
 
-        def flush() -> None:
-            nonlocal current
-            if current:
-                chunks.append(current.strip())
-                current = ""
-
-        for block in content.split("\n\n"):
-            block = block.strip()
-            if not block:
-                continue
-            candidate = f"{current}\n\n{block}" if current else block
-            if len(candidate) <= limit:
-                current = candidate
-                continue
-            flush()
-            if len(block) <= limit:
-                current = block
-                continue
-            # Very long paragraph: split by lines then words
-            line_current = ""
-            for line in block.splitlines() or [block]:
-                for word in line.split(" "):
-                    if not word:
-                        continue
-                    if len(word) > limit:
-                        if line_current:
-                            chunks.append(line_current.strip())
-                            line_current = ""
-                        for i in range(0, len(word), limit):
-                            chunks.append(word[i:i + limit])
-                        continue
-                    candidate_word = f"{line_current} {word}" if line_current else word
-                    if len(candidate_word) <= limit:
-                        line_current = candidate_word
-                    else:
-                        chunks.append(line_current.strip())
-                        line_current = word
-                if line_current and len(line_current) + 1 <= limit:
-                    line_current += "\n"
-            if line_current:
-                chunks.append(line_current.strip())
-        flush()
-        return chunks or [content[:limit]]
+        The prefix is accounted for *before* splitting (CODE-02): the split is
+        re-run with a reduced text budget until the number of chunks — and
+        therefore the prefix width — is stable, so the sender never has to
+        truncate a chunk after the fact. ``"".join`` of the returned texts with
+        the prefixes removed reproduces ``content`` exactly, and no payload
+        exceeds ``MAX_MESSAGE_LENGTH``.
+        """
+        budget = OUTBOUND_CHUNK_LIMIT
+        chunks = self._split_outbound_text(content, budget)
+        for _ in range(8):  # prefix width changes at most once per digit count
+            if len(chunks) <= 1:
+                break
+            prefix_len = len(f"({len(chunks)}/{len(chunks)})\n")
+            if prefix_len >= budget:
+                break  # pragma: no cover - defensive: 3900-char budget never yields this
+            renumbered = self._split_outbound_text(content, budget - prefix_len)
+            stable = len(renumbered) == len(chunks)
+            chunks = renumbered
+            if stable:
+                break
+        if len(chunks) <= 1:
+            return chunks
+        total = len(chunks)
+        prefix_len = len(f"({total}/{total})\n")
+        # Leading whitespace may move onto the previous chunk, but only within
+        # the API limit (MAX_MESSAGE_LENGTH) that the prefix is not using.
+        _move_leading_whitespace(chunks, MAX_MESSAGE_LENGTH - prefix_len)
+        return [f"({idx}/{total})\n{text}" for idx, text in enumerate(chunks, start=1)]
 
     async def send(
         self,
@@ -1227,14 +1297,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             content = self._convert_markdown_tables(content)
 
         # ── Send ───────────────────────────────────────────────────────
-        chunks = self._split_outbound_text(content)
+        # Numbering prefixes are budgeted before the split, so no chunk is
+        # truncated after the fact (CODE-02).
+        chunks = self._numbered_outbound_chunks(content)
         last_result: SendResult | None = None
 
         for idx, text in enumerate(chunks, start=1):
-            if len(chunks) > 1:
-                prefix = f"({idx}/{len(chunks)})\n"
-                text = prefix + text[:max(0, 3900 - len(prefix))]
-
             body: dict[str, Any] = {
                 "text": text,
                 "format": "markdown",
