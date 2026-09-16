@@ -146,14 +146,19 @@ grep -A3 'max:' ~/.hermes/config.yaml | grep fresh_final
 - Webhook не работает
 - Нет ошибок в логах
 
-**Причина:** MinCifry CA не в стандартных бандлах
+**Причина:** CA MAX API отсутствует в стандартных бандлах Python/ОС.
 
-**Решение:**
+**Решение:** плагин не предоставляет переключателя для отключения проверки SSL — переменной `MAX_INSECURE_SSL` в коде нет (`adapter.py`), и такой способ «лечения» неприменим. Добавьте CA в доверенные:
+
 ```bash
-# Для тестов
-MAX_INSECURE_SSL=true
+# Вариант 1: системное хранилище (пример для Debian/Ubuntu)
+sudo cp max-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
 
-# Для production — добавить CA в систему
+# Вариант 2: только для процесса Hermes
+# SSL_CERT_FILE=/path/to/ca-bundle.crt hermes gateway restart
+
+# Проверка цепочки до API
+curl -v https://platform-api.max.ru/me 2>&1 | grep -i "SSL\|certificate"
 ```
 
 ### 7. MAX API auth format error

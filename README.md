@@ -309,25 +309,39 @@ cd ~/.hermes/plugins/max-platform
 
 ## Справочник конфигурации
 
-| Переменная | Обязат. | По умолч. | Описание |
-|------------|---------|-----------|----------|
-| `MAX_BOT_TOKEN` | ✅ | — | Токен бота |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | Базовый URL API (документация рекомендует `https://platform-api2.max.ru`) |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука |
-| `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт вебхука |
-| `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь вебхука |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
-| `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS (включает webhook-режим) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей |
-| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
-| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
-| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
-| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере таблицы (нужен доступ в сеть, 1–2 мин) |
-| `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
-| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume (см. ниже) |
+Полная версия — с приоритетами, конфигом ядра и внутренними константами — в [docs/setup.md](docs/setup.md).
+
+Переменные окружения. Приоритет: **окружение → `platforms.max.extra` в `config.yaml` → значение по умолчанию** (`MAX_ALLOWED_USERS` объединяется со списком из конфига). Тип `bool` принимает `1/true/yes/y/on`.
+
+| Переменная | Обязат. | Тип | По умолч. | Описание |
+|------------|---------|-----|-----------|----------|
+| `MAX_BOT_TOKEN` | ✅ | строка | — | Токен бота |
+| `MAX_WEBHOOK_URL` | ❌ | строка | пусто | Публичный HTTPS URL; непустое значение включает webhook-режим |
+| `MAX_WEBHOOK_SECRET` | ❌ | строка | пусто | Ожидаемое значение заголовка `X-Max-Bot-Api-Secret` |
+| `MAX_WEBHOOK_HOST` | ❌ | строка | `0.0.0.0` | Хост webhook-сервера |
+| `MAX_WEBHOOK_PORT` | ❌ | целое | `8646` | Порт webhook-сервера |
+| `MAX_WEBHOOK_PATH` | ❌ | строка | `/max/webhook` | Путь webhook-сервера |
+| `MAX_ALLOWED_USERS` | ❌ | список | пусто | Белый список user_id (объединяется с конфигом) |
+| `MAX_ALLOW_ALL_USERS` | ❌ | bool | `false` | Разрешить всех пользователей |
+| `MAX_GROUP_POLICY` | ❌ | строка | `allowlist` | `allowlist` — проверять списки, `closed` — игнорировать группы |
+| `MAX_GROUP_ALLOWED_USERS` | ❌ | список | пусто | ID пользователей, разрешённых в группах |
+| `MAX_GROUP_ALLOWED_CHATS` | ❌ | список | пусто | ID групп, разрешённых для бота |
+| `MAX_HOME_CHANNEL` | ❌ | строка | пусто | Канал по умолчанию для cron/send_message |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | строка | `Max Home` | Имя канала (учитывается только при заданном `MAX_HOME_CHANNEL`) |
+| `MAX_TABLE_AS_IMAGE` | ❌ | bool | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | bool | `false` | Авто-установка Playwright + Chromium при первом рендере таблицы (нужен доступ в сеть, 1–2 мин) |
+| `MAX_CROSS_SESSION` | ❌ | bool | `true` | Кросс-платформенные /sessions и /resume (см. ниже) |
+
+Пример `.env`:
+
+```bash
+MAX_BOT_TOKEN=<токен>
+MAX_ALLOWED_USERS=95825064
+MAX_TABLE_AS_IMAGE=true
+# MAX_CROSS_SESSION=false
+```
+
+**Внутренние константы** (в `.env` не настраиваются): базовый URL API `https://platform-api.max.ru`, лимит длины сообщения 4000 символов, лимит исходящего файла 50 МиБ, лимит тела webhook 1 МиБ, таймауты polling 5 с, кэши `$HERMES_HOME/audio_cache` (0700) и `$HERMES_HOME/table_images`, ширина колонки текстовой таблицы — до 38 символов. Полный список — в [docs/setup.md](docs/setup.md).
 
 ---
 
@@ -516,7 +530,7 @@ grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
 
 ### SSL ошибки с MAX API
 
-MAX использует сертификаты Минцифры РФ. Для тестирования: `MAX_INSECURE_SSL=true`
+Плагин **не** реализует отключение проверки SSL: переменной `MAX_INSECURE_SSL` в коде нет, и через настройки плагина проверку сертификата ослабить нельзя. Если цепочка сертификатов API не проходит, добавьте нужный CA в системное хранилище доверия (или задайте `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` для процесса Hermes) — подробнее в [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ### Голос не транскрибируется
 

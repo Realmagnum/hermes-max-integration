@@ -306,24 +306,39 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 
 ## Configuration Reference
 
-| Env Variable | Required | Default | Description |
-|-------------|----------|---------|-------------|
-| `MAX_BOT_TOKEN` | ✅ | — | Bot token from Max Platform |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | API base URL (docs now recommend `https://platform-api2.max.ru`) |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
-| `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
-| `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret |
-| `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
-| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
-| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
-| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG images (HTML→PNG via Playwright, Pillow fallback) |
-| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first table render (needs network, 1–2 min) |
-| `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
-| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
+The full version — with precedence, core config and internal constants — is in [docs/setup_EN.md](docs/setup_EN.md).
+
+Environment variables. Precedence: **environment → `platforms.max.extra` in `config.yaml` → built-in default** (`MAX_ALLOWED_USERS` is merged with the config list). The `bool` type accepts `1/true/yes/y/on`.
+
+| Variable | Required | Type | Default | Description |
+|----------|----------|------|---------|-------------|
+| `MAX_BOT_TOKEN` | ✅ | string | — | Bot token |
+| `MAX_WEBHOOK_URL` | ❌ | string | empty | Public HTTPS URL; a non-empty value enables webhook mode |
+| `MAX_WEBHOOK_SECRET` | ❌ | string | empty | Expected value of the `X-Max-Bot-Api-Secret` header |
+| `MAX_WEBHOOK_HOST` | ❌ | string | `0.0.0.0` | Webhook server host |
+| `MAX_WEBHOOK_PORT` | ❌ | integer | `8646` | Webhook server port |
+| `MAX_WEBHOOK_PATH` | ❌ | string | `/max/webhook` | Webhook server path |
+| `MAX_ALLOWED_USERS` | ❌ | list | empty | user_id allowlist (merged with the config) |
+| `MAX_ALLOW_ALL_USERS` | ❌ | bool | `false` | Allow all users |
+| `MAX_GROUP_POLICY` | ❌ | string | `allowlist` | `allowlist` — check the allowlists, `closed` — ignore groups |
+| `MAX_GROUP_ALLOWED_USERS` | ❌ | list | empty | User IDs allowed to interact in group chats |
+| `MAX_GROUP_ALLOWED_CHATS` | ❌ | list | empty | Chat group IDs where the bot is allowed |
+| `MAX_HOME_CHANNEL` | ❌ | string | empty | Default cron/send_message target |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | string | `Max Home` | Channel name (only used when `MAX_HOME_CHANNEL` is set) |
+| `MAX_TABLE_AS_IMAGE` | ❌ | bool | `false` | Render tables as PNG images (HTML→PNG via Playwright, Pillow fallback) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | bool | `false` | Auto-install Playwright + Chromium on first table render (needs network, 1–2 min) |
+| `MAX_CROSS_SESSION` | ❌ | bool | `true` | Cross-platform /sessions and /resume (see below) |
+
+Example `.env`:
+
+```bash
+MAX_BOT_TOKEN=<token>
+MAX_ALLOWED_USERS=95825064
+MAX_TABLE_AS_IMAGE=true
+# MAX_CROSS_SESSION=false
+```
+
+**Internal constants** (not configurable via `.env`): API base URL `https://platform-api.max.ru`, message length limit 4000 characters, outbound file limit 50 MiB, webhook body limit 1 MiB, polling timeouts 5 s, caches `$HERMES_HOME/audio_cache` (0700) and `$HERMES_HOME/table_images`, text table column width up to 38 characters. The full list is in [docs/setup_EN.md](docs/setup_EN.md).
 
 ## Table Image Symbol Reference
 
@@ -430,7 +445,7 @@ grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
 
 ### SSL errors with Max API
 
-Max uses Russian MinCifry CA certificates. For testing: `MAX_INSECURE_SSL=true`
+The plugin does **not** implement an SSL-verification override: there is no `MAX_INSECURE_SSL` variable in the code, and certificate checking cannot be relaxed through plugin settings. If the API certificate chain does not validate, add the required CA to the system trust store (or set `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` for the Hermes process) — see [docs/troubleshooting_EN.md](docs/troubleshooting_EN.md) for details.
 
 ### Voice not transcribing
 

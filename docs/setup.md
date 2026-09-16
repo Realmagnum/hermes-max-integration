@@ -2,27 +2,91 @@
 
 ## Переменные окружения
 
-| Переменная | Обязательная | По умолчанию | Описание |
-|------------|--------------|--------------|----------|
-| `MAX_BOT_TOKEN` | ✅ | — | Токен бота MAX |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | Базовый URL API (документация рекомендует `https://platform-api2.max.ru`) |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост webhook |
-| `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт webhook |
-| `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь webhook |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
-| `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS URL (включает webhook-режим) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей (через запятую) |
-| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
-| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
-| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
-| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере |
-| `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
-| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume |
+Плагин не имеет собственного файла настроек: значения берутся из окружения процесса Hermes (`.env`) и из `config.yaml` ядра. Приоритет для каждого параметра: **переменная окружения → `platforms.max.extra.*` в `config.yaml` → встроенное значение по умолчанию**. Исключение — `MAX_ALLOWED_USERS`: значения из окружения и из конфига **объединяются**, а не перезаписывают друг друга.
+
+Тип `bool` принимает `1`, `true`, `yes`, `y`, `on` (регистр не важен); любое другое непустое значение трактуется как «выключено».
+
+| Переменная | Обязательная | Тип | По умолчанию | Описание |
+|------------|--------------|-----|--------------|----------|
+| `MAX_BOT_TOKEN` | ✅ | строка | — | Токен бота MAX |
+| `MAX_WEBHOOK_URL` | ❌ | строка | пусто | Публичный HTTPS URL; непустое значение включает webhook-режим |
+| `MAX_WEBHOOK_SECRET` | ❌ | строка | пусто | Ожидаемое значение заголовка `X-Max-Bot-Api-Secret` |
+| `MAX_WEBHOOK_HOST` | ❌ | строка | `0.0.0.0` | Хост webhook-сервера |
+| `MAX_WEBHOOK_PORT` | ❌ | целое | `8646` | Порт webhook-сервера (нечисловое значение — ошибка при старте) |
+| `MAX_WEBHOOK_PATH` | ❌ | строка | `/max/webhook` | Путь webhook-сервера |
+| `MAX_ALLOWED_USERS` | ❌ | список через запятую | пусто | Белый список user_id; объединяется со списком из конфига |
+| `MAX_ALLOW_ALL_USERS` | ❌ | bool | `false` | Разрешить любого пользователя |
+| `MAX_GROUP_POLICY` | ❌ | строка | `allowlist` | Политика групповых сообщений: `allowlist` — проверять списки, `closed` — игнорировать группы |
+| `MAX_GROUP_ALLOWED_USERS` | ❌ | список через запятую | пусто | user_id, разрешённые в группах |
+| `MAX_GROUP_ALLOWED_CHATS` | ❌ | список через запятую | пусто | chat_id групп, разрешённых для бота |
+| `MAX_HOME_CHANNEL` | ❌ | строка | пусто | Канал по умолчанию для cron/send_message |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | строка | `Max Home` | Имя канала по умолчанию; учитывается только если задан `MAX_HOME_CHANNEL` |
+| `MAX_TABLE_AS_IMAGE` | ❌ | bool | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | bool | `false` | Авто-установка Playwright + Chromium при первом рендере (нужен доступ в сеть, 1–2 мин) |
+| `MAX_CROSS_SESSION` | ❌ | bool | `true` | Кросс-платформенные /sessions и /resume |
+
+Пример `.env`:
+
+```bash
+# Минимум — long polling
+MAX_BOT_TOKEN=<токен>
+
+# Webhook-режим (дополнительно)
+MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
+MAX_WEBHOOK_SECRET=<секрет>
+
+# Ограничение доступа и режимы
+MAX_ALLOWED_USERS=95825064
+MAX_GROUP_POLICY=allowlist
+MAX_TABLE_AS_IMAGE=true
+MAX_CROSS_SESSION=false
+```
+
+Оговорка про `MAX_GROUP_POLICY=allowlist`: списки `MAX_GROUP_ALLOWED_USERS`/`MAX_GROUP_ALLOWED_CHATS` проверяются по OR, и пустой список означает «без ограничения». При обоих пустых списках групповые сообщения не фильтруются (открытый пункт SEC-06 в BACKLOG).
+
+### Переменные вспомогательных скриптов
+
+`scripts/diagnose.sh` дополнительно читает `MAX_HOME_CHANNEL_THREAD_ID` как запасную цель для `--send`. Python-код плагина эту переменную не использует.
+
+## Конфигурация ядра
+
+Всё, что не перечислено выше, задаётся в `config.yaml` ядра Hermes. Ключи `platforms.max.extra` дублируют переменные окружения (приоритет ниже окружения):
+
+| Ключ `platforms.max` | Тип | По умолчанию | Эквивалент в окружении |
+|----------------------|-----|--------------|------------------------|
+| `token` | строка | — | `MAX_BOT_TOKEN` |
+| `extra.host` | строка | `0.0.0.0` | `MAX_WEBHOOK_HOST` |
+| `extra.port` | целое | `8646` | `MAX_WEBHOOK_PORT` |
+| `extra.path` | строка | `/max/webhook` | `MAX_WEBHOOK_PATH` |
+| `extra.webhook_url` | строка | пусто | `MAX_WEBHOOK_URL` |
+| `extra.webhook_secret` | строка | пусто | `MAX_WEBHOOK_SECRET` |
+| `extra.allowed_users` | список | `[]` | `MAX_ALLOWED_USERS` |
+| `extra.allow_all_users` | bool | `false` | `MAX_ALLOW_ALL_USERS` |
+| `extra.home_channel` | `{chat_id, name}` | — | `MAX_HOME_CHANNEL`, `MAX_HOME_CHANNEL_NAME` |
+| `extra.group_policy` | строка | `allowlist` | `MAX_GROUP_POLICY` |
+| `extra.group_allow_from` | список | `[]` | `MAX_GROUP_ALLOWED_USERS` |
+| `extra.group_allow_chats` | список | `[]` | `MAX_GROUP_ALLOWED_CHATS` |
+| `extra.cross_session` | bool | `true` | `MAX_CROSS_SESSION` |
+
+Транскрипция голоса настраивается не здесь, а в секции `stt` конфига ядра — см. раздел STT в `docs/features.md`.
+
+## Внутренние константы
+
+Эти значения зашиты в код и переменными окружения не переопределяются. Они перечислены, чтобы их не искали в `.env`:
+
+| Константа | Значение | Где определено |
+|-----------|----------|----------------|
+| Базовый URL API (`MAX_API_BASE`) | `https://platform-api.max.ru` | `adapter.py`, `mixins/*.py` |
+| Лимит длины сообщения (`MAX_MESSAGE_LENGTH`) | 4000 символов (лимит MAX API) | `adapter.py`, `mixins/*.py` |
+| Лимит исходящего файла (`MAX_FILE_SIZE`) | 50 МиБ | `mixins/media_upload.py` |
+| Лимит тела webhook (`WEBHOOK_MAX_BODY_BYTES`) | 1 МиБ | `mixins/webhook.py` |
+| `POLL_TIMEOUT` / `POLL_ERROR_DELAY` / `UPLOAD_DELAY` | 5 с / 5 с / 2 с | `adapter.py` |
+| Каталог кэша аудио | `$HERMES_HOME/audio_cache` (права 0700) | `adapter.py` |
+| Каталог кэша PNG-таблиц | `$HERMES_HOME/table_images` | `adapter.py` |
+| Таблица как текст: ширина колонки | не более 38 символов | `mixins/table_renderer.py` |
+| Таблица как PNG: размеры полотна | ~1200 px по ширине, `max-width: 820px`, шрифт 14 px (HTML) / 18–20 px (Pillow) | `mixins/table_renderer.py` |
+
+Базовый URL зашит как `platform-api.max.ru`; рекомендованный документацией MAX домен `platform-api2.max.ru` в этой версии не используется (см. DOC-10 в BACKLOG).
 
 ## Режимы подключения
 
