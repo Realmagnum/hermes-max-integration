@@ -72,12 +72,17 @@ Next steps:
    hermes gateway restart
    ```
 
-6. **Verify:**
+6. **Check mode and environment:**
    ```bash
    hermes gateway status
-   curl http://localhost:8646/health
-   # Expected: {"status":"ok"}
+   printf 'HERMES_HOME=%s\n' "${HERMES_HOME:-$HOME/.hermes}"
+   printf 'MAX_WEBHOOK_PORT=%s\n' "${MAX_WEBHOOK_PORT:-8646}"
+   command -v python
+   python -c 'import sys; print(sys.executable)'
+   # Webhook only: /health checks the local endpoint, not full E2E
+   curl "http://127.0.0.1:${MAX_WEBHOOK_PORT:-8646}/health"
    ```
+   In long-polling mode `/health` does not test delivery: use `GET /me` as an API smoke test, then send a real MAX test message and verify inbound → Hermes core → outbound in logs and in MAX. `scripts/diagnose.sh --send` checks only outbound REST smoke delivery.
 
 ## Official Max docs
 

@@ -55,7 +55,7 @@ MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
 MAX_WEBHOOK_SECRET=your-secret
 ```
 
-Webhook required for production. Needs public HTTPS URL.
+Webhook is needed only when MAX can reach your public HTTPS URL. For local development and tests use long polling; `/health` alone does not prove message delivery.
 
 ## Webhook Setup
 
@@ -113,8 +113,8 @@ curl -H "Authorization: your_token" \
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
 MAX_WEBHOOK_SECRET=your-secret
 
-# 2. Restart
-sudo systemctl restart hermes-gateway
+# 2. Restart using the process manager that runs the gateway
+hermes gateway restart
 ```
 
 On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers subscription in MAX API.
@@ -126,8 +126,8 @@ On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers subscripti
 # MAX_WEBHOOK_URL=...
 # MAX_WEBHOOK_SECRET=...
 
-# 2. Restart
-sudo systemctl restart hermes-gateway
+# 2. Restart using the process manager that runs the gateway
+hermes gateway restart
 ```
 
 On startup: `_start_polling()` → checks `GET /subscriptions`, **automatically removes** old webhook subscriptions → starts `_poll_loop`.
@@ -172,7 +172,18 @@ MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
 ```
 
-## Deployment
+## Deployment and diagnostics
+
+First inspect the actual values:
+
+```bash
+printf 'HERMES_HOME=%s\n' "${HERMES_HOME:-$HOME/.hermes}"
+printf 'MAX_WEBHOOK_PORT=%s\n' "${MAX_WEBHOOK_PORT:-8646}"
+command -v python
+python -c 'import sys; print(sys.executable)'
+```
+
+`GET /me` is only an API smoke test. In webhook mode `/health` checks the local HTTP endpoint, not delivery into core. Full E2E means an inbound MAX test message → Hermes core → outbound reply, confirmed in logs and in MAX. `scripts/diagnose.sh --send` checks only outbound REST delivery and is not full E2E.
 
 ### Systemd
 
@@ -182,11 +193,23 @@ sudo systemctl start hermes-gateway
 sudo systemctl status hermes-gateway
 ```
 
+For a user systemd service use `systemctl --user` without `sudo`. The unit name may differ; check `systemctl list-unit-files | grep hermes`.
+
+### macOS: launchd or foreground
+
+`systemctl` is not available on macOS. For a direct check, run the gateway in the active venv:
+
+```bash
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}" python -m hermes gateway run
+```
+
+For persistent operation use launchd or another process manager with absolute paths to `HERMES_HOME`, Python, and logs.
+
 ### Check
 
 ```bash
 # Health check
-curl http://localhost:8646/health
+curl "http://127.0.0.1:${MAX_WEBHOOK_PORT:-8646}/health"
 
 # Plugin status
 hermes gateway status
@@ -194,4 +217,4 @@ hermes gateway status
 
 ### Docker
 
-See [docs/docker.md](docs/docker.md) (in development).
+See [docker.md](docker.md) (in development). Set `HERMES_HOME` explicitly in the container.
