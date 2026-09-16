@@ -2352,6 +2352,12 @@ def _env_enablement() -> dict | None:
     if allowed:
         extra["allowed_users"] = [part.strip() for part in allowed.split(",") if part.strip()]
 
+    download_hosts = os.getenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "").strip()
+    if download_hosts:
+        extra["download_allowed_hosts"] = [
+            part.strip() for part in download_hosts.split(",") if part.strip()
+        ]
+
     allow_all = os.getenv("MAX_ALLOW_ALL_USERS", "").strip()
     if allow_all:
         extra["allow_all_users"] = _coerce_bool(allow_all, True)
@@ -2385,6 +2391,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "port": "MAX_WEBHOOK_PORT",
         "path": "MAX_WEBHOOK_PATH",
         "allowed_users": "MAX_ALLOWED_USERS",
+        "download_allowed_hosts": "MAX_DOWNLOAD_ALLOWED_HOSTS",
         "allow_all_users": "MAX_ALLOW_ALL_USERS",
         "home_channel": "MAX_HOME_CHANNEL",
         "group_policy": "MAX_GROUP_POLICY",
@@ -2397,7 +2404,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         value = platform_cfg.get(key)
         if value is None:
             continue
-        if key == "allowed_users" and isinstance(value, list):
+        if key in ("allowed_users", "download_allowed_hosts") and isinstance(value, list):
             extra[key] = [str(v) for v in value]
             env_value = ",".join(str(v) for v in value)
         elif key == "home_channel" and isinstance(value, dict):

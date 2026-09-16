@@ -479,3 +479,37 @@ class TestDownloadHelpersGuard:
                 {"type": "image", "url": "https://cdn.max.ru/x.png"}
             ) is None
         assert cached == []
+
+
+# ── Config plumbing: the env var must reach the adapter in every path ────
+
+
+class TestDownloadAllowlistWiring:
+    """`MAX_DOWNLOAD_ALLOWED_HOSTS` must work in env-only and YAML setups."""
+
+    def test_env_enablement_seeds_extra(self, monkeypatch):
+        monkeypatch.setenv("MAX_BOT_TOKEN", "tok")
+        monkeypatch.setenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "media.example.net, *.cdn.example.org")
+        result = adapter._env_enablement()
+        assert result is not None
+        assert result["download_allowed_hosts"] == ["media.example.net", "*.cdn.example.org"]
+
+    def test_yaml_config_list(self):
+        result = adapter._apply_yaml_config({}, {"download_allowed_hosts": ["media.example.net"]})
+        assert result["download_allowed_hosts"] == ["media.example.net"]
+
+    def test_yaml_config_string(self):
+        result = adapter._apply_yaml_config({}, {"download_allowed_hosts": "media.example.net"})
+        assert result["download_allowed_hosts"] == "media.example.net"
+
+    def test_env_enablement_absent_key(self, monkeypatch):
+        monkeypatch.setenv("MAX_BOT_TOKEN", "tok")
+        monkeypatch.delenv("MAX_DOWNLOAD_ALLOWED_HOSTS", raising=False)
+        assert "download_allowed_hosts" not in adapter._env_enablement()
+
+    def test_adapter_honours_wired_env_value(self, monkeypatch):
+        monkeypatch.setenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "media.example.net")
+        a = _max_adapter()
+        assert a._download_url_allowed("https://media.example.net/f.ogg") is True
+        assert a._download_url_allowed("https://cdn.max.ru/f.ogg") is True
+        assert a._download_url_allowed("https://evil.example/f.ogg") is False
