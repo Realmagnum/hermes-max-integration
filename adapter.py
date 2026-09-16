@@ -90,7 +90,11 @@ AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 # plus whatever the operator lists in MAX_TRUSTED_DOWNLOAD_HOSTS /
 # config extra "trusted_download_hosts". Every other origin is fetched with a
 # credential-free client.
-_TRUSTED_DOWNLOAD_HOST_SUFFIXES = (".max.ru", ".oneme.ru", ".okcdn.ru")
+# Mirrors the upload-path allow-list in mixins/standalone.py (which trusts
+# .max.ru/.oneme.ru/.okcdn.ru/.cdn-max.ru): every host in
+# mixins/media_upload.py::_ALLOWED_UPLOAD_HOSTS is covered by one of these
+# suffixes, so there is no separate "known API/CDN names" list to maintain.
+_TRUSTED_DOWNLOAD_HOST_SUFFIXES = (".max.ru", ".oneme.ru", ".okcdn.ru", ".cdn-max.ru")
 _DOWNLOAD_USER_AGENT = "HermesAgent/1.0 MaxBot"
 
 
@@ -1034,11 +1038,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         """Return True only for HTTPS URLs on a host we explicitly trust.
 
         SEC-02: attachment URLs are attacker-influenced, so the bot token may
-        only travel to MAX-owned hosts (``.max.ru``/``.oneme.ru``/``.okcdn.ru``
-        and the known MAX API/CDN names) or to hosts the operator configured in
-        ``MAX_TRUSTED_DOWNLOAD_HOSTS`` / ``extra["trusted_download_hosts"]``.
-        Plain HTTP never receives credentials, and a ``*.example.com`` entry
-        matches subdomains only — ``example.com`` itself needs its own entry.
+        only travel to MAX-owned hosts (``.max.ru``/``.oneme.ru``/``.okcdn.ru``/
+        ``.cdn-max.ru`` — the same suffix list the upload path trusts) or to
+        hosts the operator configured in ``MAX_TRUSTED_DOWNLOAD_HOSTS`` /
+        ``extra["trusted_download_hosts"]``. Plain HTTP never receives
+        credentials, and a ``*.example.com`` entry matches subdomains only —
+        ``example.com`` itself needs its own entry.
         """
         parsed = urlparse(url)
         if parsed.scheme != "https":

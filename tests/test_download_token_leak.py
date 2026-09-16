@@ -27,6 +27,7 @@ import pytest
 from gateway.config import PlatformConfig
 
 import adapter
+from mixins.media_upload import _ALLOWED_UPLOAD_HOSTS
 
 TOKEN = "leak-canary-token-0123456789"
 UNTRUSTED_URL = "https://attacker.example.com/attachment.bin"
@@ -137,6 +138,9 @@ class TestTokenNotForwardedToUntrustedOrigins:
         for url in (
             "https://evil-max.ru/a.png",
             "https://cdn.max.ru.attacker.example.com/a.png",
+            "https://evil-cdn-max.ru/a.png",
+            "https://cdn-max.ru.attacker.example.com/a.png",
+            "https://notcdn-max.ru/a.png",
         ):
             a = make_adapter()
             requests = await run_download(a, url, "image", [])
@@ -205,6 +209,32 @@ class TestTrustedOriginsReceiveAuthorization:
     async def test_max_cdn_is_trusted_by_default(self):
         a = make_adapter()
         requests = await run_download(a, "https://cdn.max.ru/a.png", "image", [])
+        assert requests[0].headers["authorization"] == TOKEN
+
+    async def test_cdn_max_ru_subdomains_are_trusted_by_default(self):
+        """`.cdn-max.ru` is MAX infrastructure on the upload path too."""
+        for url in (
+            "https://files.cdn-max.ru/a.png",
+            "https://cdn-max.ru/a.png",  # apex is not covered, see below
+        ):
+            a = make_adapter()
+            requests = await run_download(a, url, "image", [])
+            if url.startswith("https://files."):
+                assert requests[0].headers["authorization"] == TOKEN
+            else:
+                # Dot-boundary parity with the upload path: the apex itself is
+                # never allow-listed, only hosts under the suffix.
+                assert_token_absent(requests)
+
+    @pytest.mark.parametrize("host", sorted(_ALLOWED_UPLOAD_HOSTS))
+    async def test_known_upload_hosts_are_download_trusted(self, host):
+        """Every host the plugin uploads to must also be safe to download from.
+
+        Keeps the SEC-02 download trust list from drifting behind the upload
+        allow-list (the `.cdn-max.ru` gap this test now pins).
+        """
+        a = make_adapter()
+        requests = await run_download(a, f"https://{host}/a.png", "image", [])
         assert requests[0].headers["authorization"] == TOKEN
 
     async def test_configured_host_is_trusted(self):
