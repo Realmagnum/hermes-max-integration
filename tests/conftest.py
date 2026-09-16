@@ -1,24 +1,53 @@
 """Shared test fixtures for Max platform plugin."""
 
-import importlib
+import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
-# The plugin is a package (dir `max/`) whose modules use RELATIVE imports
-# (`adapter.py` does `from .mixins.media_upload import ...`). A plain
-# top-level `import adapter` therefore fails with
-# "attempted relative import with no known parent package". Tests use
-# `import adapter`, so import the package member and alias it into
-# sys.modules under the top-level name the tests expect.
-_PLUGIN_ROOT = Path(__file__).resolve().parents[1]  # .../plugins/max
-_PLUGINS_DIR = _PLUGIN_ROOT.parent                  # .../plugins (package root)
-sys.path.insert(0, str(_PLUGINS_DIR))
+# The plugin is a *package* whose modules use relative imports
+# (`adapter.py` does `from .mixins.media_upload import ...`), while the tests
+# import it as a plain top-level module (`import adapter`). Bootstrap it here
+# by directory path so the suite works in every checkout layout.
+#
+# Two things a path-based bootstrap must not assume:
+#
+# * The checkout directory name. Hermes installs a directory plugin under the
+#   sanitized `plugin.yaml` name (`plugins/max-platform/`), a `git clone` of
+#   the repo lands as `hermes-max-integration/`, and CI checks out
+#   `hermes-max-integration/`. None of those is `max`, so importing
+#   `max.adapter` fails everywhere.
+# * The absolute location of the plugin root, so the parent directory must
+#   never be added to `sys.path` — that would shadow unrelated top-level
+#   modules.
+#
+# Load `__init__.py` under a fixed private namespace instead, then alias the
+# resulting `adapter` submodule to the top-level name the tests expect.
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+_NAMESPACE = "hermes_max_plugin_under_test"
 
-adapter = importlib.import_module("max.adapter")
-sys.modules["adapter"] = adapter
+if _NAMESPACE not in sys.modules:
+    _spec = importlib.util.spec_from_file_location(
+        _NAMESPACE,
+        _PLUGIN_ROOT / "__init__.py",
+        submodule_search_locations=[str(_PLUGIN_ROOT)],
+    )
+    if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+        raise ImportError(f"Cannot load plugin package from {_PLUGIN_ROOT}")
+    _plugin = importlib.util.module_from_spec(_spec)
+    _plugin.__package__ = _NAMESPACE
+    _plugin.__path__ = [str(_PLUGIN_ROOT)]
+    sys.modules[_NAMESPACE] = _plugin
+    _spec.loader.exec_module(_plugin)
+
+adapter = importlib.import_module(f"{_NAMESPACE}.adapter")
+# Register under the flat name the tests use, and expose the plugin package
+# under `max` so `from max.mixins...` imports keep resolving.
+sys.modules.setdefault("adapter", adapter)
+sys.modules.setdefault("max", sys.modules[_NAMESPACE])
+sys.modules.setdefault("max.adapter", adapter)
 
 
 @pytest.fixture

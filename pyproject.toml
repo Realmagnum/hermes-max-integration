@@ -25,3 +25,21 @@ dev = [
 [build-system]
 requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
+
+# The repo is a flat Hermes platform plugin: `adapter.py` plus the `mixins/`
+# sub-package, which Hermes core loads as a directory plugin
+# (`hermes_cli/plugins_loader.py` imports the plugin dir as
+# `hermes_plugins.<slug>` via `__init__.py` and relative imports). Setuptools
+# auto-discovery cannot be used here — the top-level `mixins/`, `skills/` and
+# `assets/` directories trigger "Multiple top-level packages discovered".
+# Declare the distribution contents explicitly instead.
+[tool.setuptools]
+py-modules = ["adapter"]
+
+[tool.setuptools.packages.find]
+include = ["mixins*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
