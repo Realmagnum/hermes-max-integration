@@ -15,14 +15,18 @@
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | Users allowed in groups |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Groups allowed for bot |
-| `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to venv for faster-whisper |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG (HTML→PNG via Playwright, Pillow fallback) |
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first render |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (for testing) |
 | `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform /sessions and /resume |
+
+> **STT is not configured here.** Voice transcription is performed by the Hermes core: the
+> plugin only downloads and caches the audio. There are no `MAX_STT_*` variables, no
+> dedicated stt-venv and no `scripts/transcribe_audio.py` — see the STT section of
+> [Features](features_EN.md) and the core `stt` section in `config.yaml`
+> (`hermes tools` → 🎙️ Speech-to-Text).
 
 ## Connection Modes
 

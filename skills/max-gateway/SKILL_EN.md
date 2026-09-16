@@ -70,15 +70,23 @@ If these docs changed, follow the current official docs instead of this skill.
 
 Transcription is performed by the **Hermes core** (>= 0.20.0) — the plugin only downloads and caches audio:
 
-1. The adapter auto-downloads voice messages to the cache; the core transcribes them per the `stt` config
+1. The adapter auto-downloads voice messages into the core audio cache (`$HERMES_HOME/cache/audio/`, default `~/.hermes/cache/audio/`); the core transcribes them per the `stt` config
 2. Core providers: `local` (faster-whisper, free), `groq`, `openai` (whisper-1, gpt-transcribe), `mistral`, `xai`, `elevenlabs`
 3. Setup: `hermes tools` → STT category, or `config.yaml` → `stt` (for Russian — `stt.language: ru`)
+4. The transcript is prepended to the agent's message; with `stt.echo_transcripts` the core also sends the raw transcript back as `🎙️ "<text>"`
 
 ### Pitfalls for STT
 
 - `stt` section in `config.yaml`: `enabled`, `provider`, `language`, `echo_transcripts`
 - The `local` model is downloaded automatically on first use (~150 MB)
-- If no transcript arrives, check `stt.enabled` and the language (`stt.language`); see README → "Voice not transcribing"
+- If no transcript arrives, check in this order:
+  ```bash
+  grep -A8 "^stt:" ~/.hermes/config.yaml    # enabled / language / provider
+  ls -la ~/.hermes/cache/audio/             # did the audio download at all?
+  grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
+  ```
+  In the core log look for `Voice transcription failed for <path>: <error>` (provider error) and the marker `[voice message could not be transcribed automatically; the audio is available at: …]`
+- More: README → "Voice not transcribing", `docs/troubleshooting_EN.md`
 
 ## Pitfalls (general)
 

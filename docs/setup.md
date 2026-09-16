@@ -15,14 +15,17 @@
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
 | `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume |
+
+> **STT настраивается не здесь.** Транскрипцию голосовых выполняет ядро Hermes: плагин
+> только скачивает и кэширует аудио. Переменных `MAX_STT_*`, отдельного stt-venv и
+> `scripts/transcribe_audio.py` нет — см. раздел STT в [Возможностях](features.md)
+> и секцию `stt` в `config.yaml` ядра (`hermes tools` → 🎙️ Speech-to-Text).
 
 ## Режимы подключения
 
