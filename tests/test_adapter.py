@@ -1,9 +1,5 @@
 """Core adapter tests."""
 
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-
 import adapter
 
 
@@ -66,7 +62,9 @@ class TestSplitOutbound:
         a = adapter.MaxAdapter(cfg)
         long = "a" * 6000
         result = a._split_outbound_text(long)
-        assert len(result) >= 2
+        # 6000 chars, 3900-char chunks → 3900 + 2100
+        assert [len(c) for c in result] == [3900, 2100]
+        assert "".join(result) == long
 
     def test_empty_returns_one_chunk(self):
         from gateway.config import PlatformConfig
@@ -154,73 +152,64 @@ class TestMediaHelpers:
 
 
 class TestPolicyProperties:
-    """Tests for policy properties."""
+    """Policy properties must return exact values, not "one of"."""
 
-    @pytest.mark.asyncio
-    async def test_dm_policy_with_allowlist(self, max_config):
-        a = adapter.MaxAdapter(max_config)
-        # Without allowed users set, defaults to "open" if allow_all_users is False
-        # But _allow_all_users defaults False, _allowed_users_set empty → should be "allowlist"
-        assert a.dm_policy in ("open", "allowlist")
-
-    @pytest.mark.asyncio
-    async def test_max_message_length(self, max_config):
-        a = adapter.MaxAdapter(max_config)
+    def test_dm_policy_is_allowlist_by_default(self, make_adapter):
+        a = make_adapter()
+        # allow_all_users is False → allowlist, even with an EMPTY allowlist.
+        # (That empty list is itself the SEC-05 hole: nothing is enforced.)
+        assert a.dm_policy == "allowlist"
+        assert a.allow_from == []
+        assert a.group_policy == "allowlist"
+        assert a.group_allow_from == []
         assert a.max_message_length == 4000
+
+    def test_dm_policy_open_only_when_allow_all(self, make_adapter):
+        a = make_adapter(extra={"allow_all_users": True})
+        assert a.dm_policy == "open"
+
+    def test_allow_from_normalises_ids_to_strings(self, make_adapter):
+        a = make_adapter(extra={"allowed_users": [42, "77"]})
+        assert sorted(a.allow_from) == ["42", "77"]
+
+    def test_group_allow_from_is_parsed(self, make_adapter):
+        a = make_adapter(extra={"group_allow_from": "1, 2"})
+        assert a.group_allow_from == ["1", "2"]
+
+    def test_group_policy_can_be_closed(self, make_adapter):
+        a = make_adapter(extra={"group_policy": "closed"})
+        assert a.group_policy == "closed"
 
 
 class TestSendMessageId:
-    """Tests that send() correctly extracts message_id from MAX API response."""
+    """send() reports the message_id MAX returned, parsed from the response."""
 
-    def _make_adapter(self):
-        from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={})
-        a = adapter.MaxAdapter(cfg)
-        a._http_client = AsyncMock()
-        # Prevent actual connect attempt
-        a._connected = True
-        return a
-
-    @pytest.mark.asyncio
-    async def test_send_message_id_from_body_mid(self):
-        """send() extracts message_id from data.message.body.mid (MAX API format)."""
-        a = self._make_adapter()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "message": {"body": {"mid": "mid-42"}}
-        }
-        a._http_client.post = AsyncMock(return_value=mock_resp)
+    async def test_message_id_from_body_mid(self, make_adapter, max_api):
+        """MAX API format: data.message.body.mid."""
+        max_api.route("POST", "/messages", 200, {"message": {"body": {"mid": "mid-42"}}})
+        a = make_adapter()
 
         result = await a.send("user:42", "hello")
 
         assert result.success is True
         assert result.message_id == "mid-42"
+        assert result.raw_response == {"message": {"body": {"mid": "mid-42"}}}
+        assert max_api.params(max_api.calls("POST", "/messages")[0]) == {"user_id": "42"}
 
-    @pytest.mark.asyncio
-    async def test_send_message_id_from_top_level(self):
-        """send() falls back to data.message.message_id when body.mid absent."""
-        a = self._make_adapter()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "message": {"message_id": "legacy-99"}
-        }
-        a._http_client.post = AsyncMock(return_value=mock_resp)
+    async def test_message_id_from_top_level(self, make_adapter, max_api):
+        """Fallback: data.message.message_id."""
+        max_api.route("POST", "/messages", 200, {"message": {"message_id": "legacy-99"}})
+        a = make_adapter()
 
         result = await a.send("user:42", "hello")
 
         assert result.success is True
         assert result.message_id == "legacy-99"
 
-    @pytest.mark.asyncio
-    async def test_send_message_id_empty_fallback(self):
-        """send() returns empty message_id when neither body.mid nor message_id present."""
-        a = self._make_adapter()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"message": {}}
-        a._http_client.post = AsyncMock(return_value=mock_resp)
+    async def test_message_id_empty_fallback(self, make_adapter, max_api):
+        """Neither body.mid nor message_id present → empty id, still success."""
+        max_api.route("POST", "/messages", 200, {"message": {}})
+        a = make_adapter()
 
         result = await a.send("user:42", "hello")
 

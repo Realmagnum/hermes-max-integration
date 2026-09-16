@@ -5,6 +5,22 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import adapter
+from tests.conftest import message_callback
+
+
+def _dialog_callback(payload: str, user_id: int = 42) -> dict:
+    """Dialog button press without `recipient.chat_id`.
+
+    The *captured* dialog shape carries recipient.chat_id, which the adapter
+    turns into a `chat:<id>` scope (see
+    `test_wire_regressions.TestInboundRouting::test_captured_dialog_routes_to_dm`);
+    picker state is stored under `user:<user_id>`, so the captured shape never
+    reaches it (pinned below by
+    `test_captured_dialog_callback_finds_picker_state`).
+    """
+    update = message_callback(payload, user_id=user_id)
+    update["message"]["recipient"].pop("chat_id")
+    return update
 
 
 class TestSendModelPicker:
@@ -80,8 +96,8 @@ class TestModelCallback:
         return a
 
     @pytest.mark.asyncio
-    async def test_provider_selection_callback(self):
-        a = self._make_adapter()
+    async def test_provider_selection_callback(self, make_adapter, max_api):
+        a = make_adapter()
 
         async def on_selected(chat_id, model_id, provider_slug):
             return f"OK {model_id}"
@@ -97,28 +113,29 @@ class TestModelCallback:
             "current_provider": "openrouter",
         }
 
-        # Simulate _post_interactive (sends new message with models)
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"message": {"body": {"mid": "mid-models"}}}
-        a._http_client.post = AsyncMock(return_value=mock_resp)
+        result = await a._on_callback(_dialog_callback("model:provider:deepseek"))
 
-        payload = {
-            "update_type": "message_callback",
-            "callback": {
-                "payload": "model:provider:deepseek",
-                "user": {"user_id": 42},
-            },
-        }
-        result = await a._on_callback(payload)
         # Provider selection just shows models, returns None (no text response)
         assert result is None
-        # _post_interactive should have been called (sends new message with models)
-        a._http_client.post.assert_called_once()
+        posts = max_api.calls("POST", "/messages")
+        assert len(posts) == 1
+        assert max_api.params(posts[0]) == {"user_id": "42"}
+        body = max_api.json_body(posts[0])
+        assert "DeepSeek" in body["text"]
+        assert "Select a model" in body["text"]
+        payloads = [
+            button["payload"]
+            for row in body["attachments"][0]["payload"]["buttons"]
+            for button in row
+        ]
+        assert "model:pick:deepseek-v3:deepseek" in payloads
+        assert payloads[-1] == "model:back"
+        # the freshly shown model message is remembered for later steps
+        assert a._model_picker_state["user:42"]["model_msg_id"] == "mid.bot.1"
 
     @pytest.mark.asyncio
-    async def test_model_pick_callback(self):
-        a = self._make_adapter()
+    async def test_model_pick_callback(self, make_adapter, max_api):
+        a = make_adapter()
 
         async def on_selected(chat_id, model_id, provider_slug):
             return f"✅ Switched to `{model_id}` via {provider_slug}"
@@ -133,28 +150,59 @@ class TestModelCallback:
             "current_provider": "openrouter",
         }
 
-        a.send = AsyncMock()
-        a.delete_message = AsyncMock(return_value=MagicMock(success=True))
+        result = await a._on_callback(
+            _dialog_callback("model:pick:deepseek-v3:deepseek")
+        )
 
-        payload = {
-            "update_type": "message_callback",
-            "callback": {
-                "payload": "model:pick:deepseek-v3:deepseek",
-                "user": {"user_id": 42},
-            },
-        }
-        result = await a._on_callback(payload)
         assert result is None  # Returns None after sending confirmation
-        # Should have sent confirmation message
-        a.send.assert_called_once()
-        assert "deepseek-v3" in a.send.call_args[0][1]
-
-        # Should have deleted both old messages
-        a.delete_message.assert_any_call("user:42", "mid-models")
-        a.delete_message.assert_any_call("user:42", "mid-provider")
+        # Both picker messages are removed from MAX…
+        deleted = {
+            max_api.params(req)["message_id"]
+            for req in max_api.calls("DELETE", "/messages")
+        }
+        assert deleted == {"mid-models", "mid-provider"}
+        # …and the confirmation is the only message left on the wire
+        posts = max_api.calls("POST", "/messages")
+        assert len(posts) == 1
+        assert max_api.params(posts[0]) == {"user_id": "42"}
+        ack = max_api.json_body(posts[0])["text"]
+        assert "deepseek-v3" in ack and "deepseek" in ack
 
         # State should be cleared
         assert "user:42" not in a._model_picker_state
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "BUILD-04 routing: a captured dialog callback carries "
+            "message.recipient.chat_id, so the picker looks its state up under "
+            "'chat:<id>' while `send_model_picker` stored it under 'user:<id>' — "
+            "in a real DM the model picker answers to nothing at all. Same root "
+            "cause as TestInboundRouting::test_captured_dialog_routes_to_dm; fix "
+            "there and drop this marker."
+        ),
+    )
+    async def test_captured_dialog_callback_finds_picker_state(self, make_adapter, max_api):
+        a = make_adapter()
+
+        async def on_selected(chat_id, model_id, provider_slug):
+            return "ok"
+
+        a._model_picker_state["user:42"] = {
+            "provider_msg_id": "mid-provider",
+            "models": ["deepseek-v3"],
+            "providers": [
+                {"slug": "deepseek", "name": "DeepSeek", "models": ["deepseek-v3"]},
+            ],
+            "session_key": "test",
+            "on_model_selected": on_selected,
+            "current_model": "gpt-4",
+            "current_provider": "openrouter",
+        }
+
+        await a._on_callback(message_callback("model:provider:deepseek", user_id=42))
+
+        assert max_api.calls("POST", "/messages"), "dialog callback must reach the picker"
 
     @pytest.mark.asyncio
     async def test_back_callback(self):
