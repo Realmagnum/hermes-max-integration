@@ -68,6 +68,12 @@ POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
 UPLOAD_DELAY = 2.0
 
+# Upper bound for waiting on our own cancelled poll/queue/handler tasks during
+# teardown. The HTTP client is closed only after they are gone, so a task that
+# never unwinds would otherwise stall every disconnect; past this bound the
+# stragglers are left to unwind on their own (already cancelled).
+TASK_SHUTDOWN_TIMEOUT = 5.0
+
 # SSRF allowlist is in .mixins.media_upload
 
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy reverse proxy; порт защищён host firewall
@@ -264,7 +270,23 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._poll_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
         self._stop: asyncio.Event = asyncio.Event()
-        self._running: bool = False
+
+        # `_running` and the `_mark_connected`/`_mark_disconnected` pair are
+        # owned by Hermes core (`gateway.platforms.base.BasePlatformAdapter`);
+        # `_mark_connected()` sets `_running = True`, `_mark_disconnected()`
+        # clears it, and `_set_fatal_error()` also clears it. The contract is
+        # verified against the pinned core in tests/test_lifecycle.py
+        # (TestCoreContract), so the flag is deliberately NOT re-declared here:
+        # shadowing it would hide a core change (e.g. `_running` becoming a
+        # property) instead of failing loudly.
+        for _inherited in ("_running", "_expected_cancelled_tasks", "_background_tasks"):
+            if not hasattr(self, _inherited):  # pragma: no cover - very old core
+                setattr(self, _inherited, False if _inherited == "_running" else set())
+
+        # connect() must be idempotent and safe under concurrent callers: the
+        # gateway may re-enter connect() (reconnect after a missed failure,
+        # adapter reuse in tests) while the previous session is still up.
+        self._connect_lock: asyncio.Lock = asyncio.Lock()
 
         # Dedup: mid → timestamp (max 5000 entries to prevent memory exhaustion)
         self._seen_msgs: dict[str, float] = {}
@@ -330,28 +352,122 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # Connection lifecycle
     # ═════════════════════════════════════════════════════════════════════
 
+    async def _close_client(self) -> None:
+        """Close and drop the HTTP client; safe to call repeatedly.
+
+        Never raises: teardown runs on failure paths and during cancellation,
+        where an exception would mask the original error.
+        """
+        client, self._http_client = self._http_client, None
+        if client is None:
+            return
+        try:
+            await client.aclose()
+        except Exception as exc:  # noqa: BLE001 — teardown must not raise
+            logger.debug("MAX: error closing HTTP client: %s", exc)
+
+    async def _shutdown_transport(self) -> None:
+        """Release everything that owns a socket: our tasks, then the client.
+
+        Ordering is the point. The poll loop, the queue-drain loop and every
+        in-flight ``handle_message`` task issue requests through
+        ``self._http_client``; closing the client while they are still
+        unwinding makes them fail against a closed client and leaves
+        "Task was destroyed but it is pending" noise behind. So: signal stop,
+        cancel, AWAIT them (bounded), and only then close the client.
+
+        Bounded and failure-tolerant — this is the teardown path the gateway
+        calls with its own timeout, and it must always end with a closed
+        client, including when the caller itself is being cancelled.
+        """
+        self._stop.set()
+
+        tasks = [self._poll_task]
+        self._poll_task = None
+        tasks.extend(self._background_tasks)
+        live = list(dict.fromkeys(t for t in tasks if t is not None and not t.done()))
+
+        for task in live:
+            # Register before cancelling: core's `_expected_cancelled_tasks`
+            # marks this cancellation as intentional (not a failure) for the
+            # processing hooks.
+            self._expected_cancelled_tasks.add(task)
+            task.cancel()
+
+        try:
+            if live:
+                await asyncio.wait_for(
+                    asyncio.gather(*live, return_exceptions=True),
+                    timeout=TASK_SHUTDOWN_TIMEOUT,
+                )
+        except TimeoutError:
+            logger.warning(
+                "MAX: teardown timed out after %.1fs — %d cancelled task(s) did not confirm "
+                "exit; closing the client anyway and letting them unwind",
+                TASK_SHUTDOWN_TIMEOUT, len(live),
+            )
+        finally:
+            self._background_tasks.clear()
+            for task in live:
+                self._expected_cancelled_tasks.discard(task)
+
+            if self._webhook_runner:
+                runner, self._webhook_runner = self._webhook_runner, None
+                self._webhook_app = None
+                self._webhook_site = None
+                try:
+                    await runner.cleanup()
+                except Exception as exc:  # noqa: BLE001 — teardown must not raise
+                    logger.debug("MAX: webhook cleanup error: %s", exc)
+
+            await self._close_client()
+
     async def connect(self, *, is_reconnect: bool = False) -> bool:
-        """Connect to Max: verify token, start polling or webhook."""
+        """Connect to Max: verify token, start polling or webhook.
+
+        Safe to call repeatedly and concurrently on the same instance: the
+        whole body is serialized by ``_connect_lock`` and any previous session
+        (client, tasks, webhook runner) is released first, so a second
+        connect() can never leave a second client or a second pair of loops
+        behind (CODE-07).
+        """
         if not self._token:
             self._set_fatal_error("no_token", "MAX_BOT_TOKEN not configured", retryable=False)
             return False
 
-        # SECURITY: Do NOT follow redirects blindly — Authorization header
-        # (token) would be forwarded to any redirect target (token leak).
-        # Redirects with Authorization are disabled; if the Max API ever
-        # needs redirects, add a limited-redirects transport for known domains.
-        self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0),
-            headers={"Authorization": self._token},
-            follow_redirects=False,
-        )
+        async with self._connect_lock:
+            # Repeated connect(): drop whatever the previous call left running.
+            # A no-op when this is the first connect.
+            await self._shutdown_transport()
 
+            # SECURITY: Do NOT follow redirects blindly — Authorization header
+            # (token) would be forwarded to any redirect target (token leak).
+            # Redirects with Authorization are disabled; if the Max API ever
+            # needs redirects, add a limited-redirects transport for known domains.
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0),
+                headers={"Authorization": self._token},
+                follow_redirects=False,
+            )
+            try:
+                ok = await self._verify_token_and_start(self._http_client)
+            except BaseException:
+                # Cancellation or any unexpected escape must not orphan the
+                # client (the gateway disconnects defensively after a failed
+                # connect, but a cancelled connect() leaves no handle to it).
+                await self._close_client()
+                raise
+            if not ok:
+                await self._close_client()
+            return ok
+
+    async def _verify_token_and_start(self, client: httpx.AsyncClient) -> bool:
+        """``/me`` check followed by the configured receive path. ``connect()``
+        owns ``client``; this method only reports success."""
         # Verify token with /me
         try:
-            resp = await self._http_client.get(f"{MAX_API_BASE}/me", timeout=httpx.Timeout(10.0))
+            resp = await client.get(f"{MAX_API_BASE}/me", timeout=httpx.Timeout(10.0))
             if resp.status_code == 401:
-                await self._http_client.aclose()
-                self._http_client = None
                 self._set_fatal_error("invalid_token", "MAX bot token is invalid", retryable=False)
                 return False
             if resp.status_code == 200:
@@ -365,8 +481,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             else:
                 logger.warning("MAX: /me returned %s", resp.status_code)
         except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            await self._http_client.aclose()
-            self._http_client = None
             self._set_fatal_error("conn_fail", str(e), retryable=True)
             return False
 
@@ -375,36 +489,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return await self._start_polling()
 
     async def disconnect(self) -> None:
-        """Shut down the adapter."""
+        """Shut down the adapter (idempotent, tolerates partial-init state)."""
         self._running = False
-        self._stop.set()
-
-        if self._poll_task:
-            self._poll_task.cancel()
-            try:
-                await self._poll_task
-            except asyncio.CancelledError:
-                pass
-            self._poll_task = None
-
-        # Cancel background tasks
-        for task in list(self._background_tasks):
-            task.cancel()
-        self._background_tasks.clear()
-
-        if self._webhook_runner:
-            try:
-                await self._webhook_runner.cleanup()
-            except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                logger.debug("MAX: webhook cleanup error: %s", exc)
-            self._webhook_runner = None
-            self._webhook_app = None
-
-        if self._http_client:
-            await self._http_client.aclose()
-            self._http_client = None
-
-        self._mark_disconnected()
+        try:
+            await self._shutdown_transport()
+        finally:
+            # Runtime status is core-owned state: report the disconnect even if
+            # teardown was interrupted.
+            self._mark_disconnected()
         logger.info("MAX: disconnected")
 
     # ═════════════════════════════════════════════════════════════════════
@@ -463,8 +555,16 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             )
 
         self._mark_connected()
-        self._background_tasks.add(asyncio.create_task(self._poll_loop()))
-        self._poll_task = asyncio.create_task(self._queue_poll_loop())
+        # Both loops are tracked; `_shutdown_transport()` cancels and awaits them
+        # before the client is closed (`_poll_task` also covers the webhook path,
+        # which starts only the queue-drain loop).
+        poll_task = asyncio.create_task(self._poll_loop())
+        poll_task.add_done_callback(self._background_tasks.discard)
+        self._background_tasks.add(poll_task)
+        drain_task = asyncio.create_task(self._queue_poll_loop())
+        drain_task.add_done_callback(self._background_tasks.discard)
+        self._background_tasks.add(drain_task)
+        self._poll_task = drain_task
         logger.info("MAX: long polling started")
         return True
 
