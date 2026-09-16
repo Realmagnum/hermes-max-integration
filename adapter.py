@@ -24,7 +24,10 @@ import asyncio
 import logging
 import mimetypes
 import os
+import random
 import time
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -66,6 +69,9 @@ MAX_API_BASE = "https://platform-api.max.ru"
 MAX_MESSAGE_LENGTH = 4000
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
+POLL_BACKOFF_MAX = 60.0  # upper bound for a single backoff sleep
+POLL_BACKOFF_JITTER = 0.25  # ±25% random spread around the bounded delay
+POLL_RETRY_AFTER_MAX = 300.0  # upper bound for a server-provided Retry-After
 UPLOAD_DELAY = 2.0
 
 # SSRF allowlist is in .mixins.media_upload
@@ -84,6 +90,89 @@ AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 import json as _json
+
+# Random source for poll backoff jitter. Tests seed it for determinism;
+# production keeps the module-level generator.
+_POLL_RNG = random.Random()  # nosec B311 — jitter only, not security-relevant
+
+
+def _parse_retry_after(raw: Any) -> float | None:
+    """Parse an HTTP ``Retry-After`` header value into a non-negative delay.
+
+    Accepts both forms defined by RFC 9110: a delta-seconds integer/float or
+    an HTTP-date. Returns ``None`` when the header is absent or unusable, and
+    clamps the result to ``POLL_RETRY_AFTER_MAX`` so a hostile/broken server
+    cannot park the poll loop for hours.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        seconds = float(raw)
+    else:
+        value = str(raw).strip()
+        if not value:
+            return None
+        try:
+            seconds = float(value)
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(value)
+            except (TypeError, ValueError):
+                return None
+            if parsed is None:  # pragma: no cover - defensive
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            seconds = (parsed - datetime.now(UTC)).total_seconds()
+    return max(0.0, min(seconds, POLL_RETRY_AFTER_MAX))
+
+
+def _poll_backoff_delay(
+    errs: int,
+    *,
+    base: float = POLL_ERROR_DELAY,
+    cap: float = POLL_BACKOFF_MAX,
+    jitter: float = POLL_BACKOFF_JITTER,
+    rng: random.Random | None = None,
+) -> float:
+    """Bounded exponential backoff with jitter for the ``errs``-th failure.
+
+    ``base * 2 ** (errs - 1)`` (exponent clamped at 4 so the doubling stops),
+    capped at ``cap`` and spread by ±``jitter`` of the capped value. The
+    result is always inside ``[0, cap]`` and never negative.
+    """
+    exponent = min(max(int(errs), 1) - 1, 4)
+    delay = min(base * (2 ** exponent), cap)
+    if jitter > 0:
+        spread = delay * jitter
+        delay = (rng or _POLL_RNG).uniform(delay - spread, delay + spread)
+    return max(0.0, min(delay, cap))
+
+
+def _poll_status_delay(headers: Any, errs: int) -> float:
+    """Delay before retrying a poll that answered with a non-200 status.
+
+    ``Retry-After`` wins when the server sends one (429/503 mainly); otherwise
+    the same bounded exponential backoff as transport errors is used.
+    """
+    raw = None
+    if headers is not None:
+        getter = getattr(headers, "get", None)
+        if callable(getter):
+            # httpx.Headers is case-insensitive; plain dicts are not, so try
+            # both spellings before giving up.
+            raw = getter("Retry-After")
+            if raw is None:
+                raw = getter("retry-after")
+    retry_after = _parse_retry_after(raw)
+    if retry_after is not None:
+        return retry_after
+    return _poll_backoff_delay(errs)
+
+
+async def _poll_sleep(delay: float) -> None:
+    """Sleep between poll attempts (indirection point for virtual-clock tests)."""
+    await asyncio.sleep(delay)
 
 
 def _safe_url_for_log(url: str) -> str:
@@ -469,7 +558,17 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return True
 
     async def _poll_loop(self) -> None:
-        """Long poll /updates with marker-based pagination."""
+        """Long poll /updates with marker-based pagination.
+
+        Every non-200 response and every transport error shares one retry
+        policy: bounded exponential backoff with jitter, honouring the
+        server's ``Retry-After`` when it sends one (429/503). HTTP 401 is the
+        one *fatal* status — MAX rejected the bot token, so retrying can only
+        hammer the API; the loop stops and publishes the fatal auth state
+        (same ``invalid_token`` code ``connect()`` uses for its /me check)
+        so the supervisor can surface it instead of seeing a live adapter
+        that can never receive anything.
+        """
         last_marker = 0
         errs = 0
         while not self._stop.is_set():
@@ -488,15 +587,36 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     if marker:
                         last_marker = marker
                     errs = 0
+                elif resp.status_code == 401:
+                    logger.error(
+                        "MAX: poll rejected with HTTP 401 — bot token is invalid, "
+                        "long polling stopped (check MAX_BOT_TOKEN)",
+                    )
+                    self._set_fatal_error(
+                        "invalid_token",
+                        "MAX bot token is invalid (HTTP 401 from GET /updates)",
+                        retryable=False,
+                    )
+                    self._stop.set()
+                    return
                 else:
                     errs += 1
-                    logger.warning("MAX: poll HTTP %s (attempt %d)", resp.status_code, errs)
+                    delay = _poll_status_delay(getattr(resp, "headers", None), errs)
+                    logger.warning(
+                        "MAX: poll HTTP %s (attempt %d), retrying in %.1fs",
+                        resp.status_code, errs, delay,
+                    )
+                    await _poll_sleep(delay)
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 errs += 1
-                logger.warning("MAX: poll error (attempt %d): %s: %s", errs, type(e).__name__, e)
-                await asyncio.sleep(min(POLL_ERROR_DELAY * (2 ** min(errs - 1, 4)), 60))
+                delay = _poll_backoff_delay(errs)
+                logger.warning(
+                    "MAX: poll error (attempt %d): %s: %s — retrying in %.1fs",
+                    errs, type(e).__name__, e, delay,
+                )
+                await _poll_sleep(delay)
 
     # ═════════════════════════════════════════════════════════════════════
     # Webhook server
