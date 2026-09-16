@@ -126,7 +126,9 @@ class TestModelCallback:
         a._model_picker_state["user:42"] = {
             "provider_msg_id": "mid-provider",
             "model_msg_id": "mid-models",
-            "providers": [],
+            "providers": [
+                {"slug": "deepseek", "name": "DeepSeek", "models": ["deepseek-v3"], "is_current": False},
+            ],
             "session_key": "test",
             "on_model_selected": on_selected,
             "current_model": "gpt-4",
@@ -330,7 +332,173 @@ class TestModelCallback:
         model_buttons = [b for row in buttons for b in row if "model:pick" in b.get("payload", "")]
         assert len(model_buttons) == 5  # Second page has 5 models
 
-        # Should have Prev button (no Next on last page)
+        # Should be Prev button (no Next on last page)
         nav_buttons = [b for row in buttons for b in row if "model:page" in b.get("payload", "")]
         assert len(nav_buttons) == 1  # Only Prev
         assert nav_buttons[0]["payload"] == "model:page:bigprovider:0"
+
+
+class TestModelIdRoundTrip:
+    """CODE-04: model IDs containing ':' must round-trip button payloads.
+
+    Ollama tags (`llama3:8b`) and OpenRouter suffixes (`...:free`) contain the
+    same ':' delimiter the callback payload uses, so an unambiguous encoding is
+    required or `llama3:8b` is decoded as model `llama3` / provider `8b`.
+    """
+
+    def _make_adapter(self):
+        from gateway.config import PlatformConfig
+        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
+        a = adapter.MaxAdapter(cfg)
+        a._http_client = AsyncMock()
+        a.send = AsyncMock()
+        a.delete_message = AsyncMock(return_value=MagicMock(success=True))
+        return a
+
+    @staticmethod
+    def _payloads(a):
+        body = a._http_client.post.call_args[1]["json"]
+        return [
+            b["payload"]
+            for row in body["attachments"][0]["payload"]["buttons"]
+            for b in row
+        ]
+
+    def _post_ok(self, mid):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"message": {"body": {"mid": mid}}}
+        return AsyncMock(return_value=resp)
+
+    @staticmethod
+    async def _press(a, payload):
+        return await a._on_callback({
+            "update_type": "message_callback",
+            "callback": {"payload": payload, "user": {"user_id": 42}},
+        })
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "model,provider",
+        [
+            ("llama3:8b", "ollama"),
+            ("qwen2.5:7b-instruct-q4_K_M", "ollama"),
+            ("meta-llama/llama-3.3-70b-instruct:free", "openrouter"),
+            ("plain-model", "deepseek"),
+        ],
+    )
+    async def test_colon_model_round_trip(self, model, provider):
+        a = self._make_adapter()
+        picked = {}
+
+        async def on_selected(chat_id, model_id, provider_slug):
+            picked["model"] = model_id
+            picked["provider"] = provider_slug
+            return f"Switched to {model_id}"
+
+        # Step 1: provider list
+        a._http_client.post = self._post_ok("mid-provider")
+        await a.send_model_picker(
+            chat_id="user:42",
+            providers=[{"slug": provider, "name": provider, "models": [model], "is_current": True}],
+            current_model="",
+            current_provider=provider,
+            session_key="s",
+            on_model_selected=on_selected,
+        )
+        provider_payload = self._payloads(a)[0]
+
+        # Step 2: tap provider -> model buttons
+        a._http_client.post = self._post_ok("mid-models")
+        await self._press(a, provider_payload)
+        pick_payloads = [p for p in self._payloads(a) if p.startswith("model:pick")]
+        assert len(pick_payloads) == 1
+
+        # Step 3: tap model -> callback must receive the exact model/provider
+        await self._press(a, pick_payloads[0])
+        assert picked == {"model": model, "provider": provider}
+
+    @pytest.mark.asyncio
+    async def test_provider_payload_encoding_round_trips_colon_slug(self):
+        """Provider slugs are encoded too, so a ':' in a slug cannot leak."""
+        a = self._make_adapter()
+        a._model_picker_state["user:42"] = {
+            "provider_msg_id": "mid-1",
+            "providers": [{"slug": "weird:provider", "name": "Weird", "models": ["m"], "is_current": False}],
+            "session_key": "s",
+            "on_model_selected": None,
+            "current_model": "",
+            "current_provider": "",
+        }
+        a._http_client.post = self._post_ok("mid-models")
+
+        await self._press(a, "model:provider:weird%3Aprovider")
+
+        posted = self._payloads(a)
+        assert "model:pick:m:weird%3Aprovider" in posted
+
+    @pytest.mark.asyncio
+    async def test_pick_payload_malformed_is_ignored(self):
+        """Garbage payloads must not switch the model or crash."""
+        a = self._make_adapter()
+        called = []
+
+        async def on_selected(chat_id, model_id, provider_slug):
+            called.append((model_id, provider_slug))
+            return "ok"
+
+        a._model_picker_state["user:42"] = {
+            "provider_msg_id": "mid-1",
+            "model_msg_id": "mid-2",
+            "providers": [{"slug": "ollama", "name": "Ollama", "models": ["llama3:8b"], "is_current": False}],
+            "session_key": "s",
+            "on_model_selected": on_selected,
+            "current_model": "",
+            "current_provider": "ollama",
+        }
+
+        # Model not offered by the provider named in the payload.
+        result = await self._press(a, "model:pick:not-a-real-model:ollama")
+        assert result is None
+        assert called == []
+        # State is preserved so a stale button cannot destroy the open picker.
+        assert "user:42" in a._model_picker_state
+
+    @pytest.mark.asyncio
+    async def test_pick_payload_without_state_is_ignored(self):
+        """Expired payload (state gone / server restarted) is a no-op."""
+        a = self._make_adapter()
+        result = await self._press(a, "model:pick:llama3%3A8b:ollama")
+        assert result is None
+        a.send.assert_not_called()
+        a.delete_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_legacy_unencoded_payload_is_rejected(self):
+        """A pre-encoding payload (`llama3:8b`) must not switch to `llama3`.
+
+        This is the exact malformed shape from the audit: the unencoded ID
+        splits into model `llama3` / provider `8b:ollama`. The provider is not
+        in the picker state, so the press must be ignored rather than applied.
+        """
+        a = self._make_adapter()
+        called = []
+
+        async def on_selected(chat_id, model_id, provider_slug):
+            called.append((model_id, provider_slug))
+            return "ok"
+
+        a._model_picker_state["user:42"] = {
+            "provider_msg_id": "mid-1",
+            "model_msg_id": "mid-2",
+            "providers": [{"slug": "ollama", "name": "Ollama", "models": ["llama3:8b"], "is_current": False}],
+            "session_key": "s",
+            "on_model_selected": on_selected,
+            "current_model": "",
+            "current_provider": "ollama",
+        }
+
+        result = await self._press(a, "model:pick:llama3:8b:ollama")
+        assert result is None
+        assert called == []
+        assert "user:42" in a._model_picker_state

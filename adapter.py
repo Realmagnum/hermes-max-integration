@@ -27,7 +27,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 from gateway.config import Platform, PlatformConfig
@@ -95,6 +95,27 @@ def _safe_url_for_log(url: str) -> str:
     if parsed.username and parsed.username != parsed.hostname:
         return url.replace(parsed.username, "***")
     return url
+
+
+# ── Model picker callback payload codec (CODE-04) ────────────────────────
+# Inline-keyboard callback payloads are ':' -delimited
+# (`model:pick:<model>:<provider>`). Model IDs legitimately contain ':' —
+# Ollama tags (`llama3:8b`) and OpenRouter suffixes (`...:free`) — so the
+# variable fields are percent-encoded to keep the delimiter unambiguous.
+# Percent-encoding is reversible, contains no ':', and stays readable in logs.
+
+def _picker_encode(value: Any) -> str:
+    """Encode one model-picker payload field so ':' cannot split it."""
+    return quote(str(value), safe="")
+
+
+def _picker_decode(token: str) -> str:
+    """Decode a model-picker payload field encoded by :func:`_picker_encode`.
+
+    Never raises: undecodable tokens come back as-is and are rejected by the
+    handlers, which validate them against the live picker state.
+    """
+    return unquote(token)
 
 
 def _find_audio_url_direct(obj: Any, depth: int = 0) -> str | None:
@@ -1711,7 +1732,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     ) -> MessageEvent | None:
         """Route model picker button callbacks.
 
-        Formats:
+        Formats (variable fields are percent-encoded by `_picker_encode`, so
+        model IDs containing ':' round-trip unchanged):
           model:provider:{slug}  — provider selected, show models
           model:pick:{model}:{provider} — model selected, switch
           model:page:{provider}:{page} — page navigation
@@ -1729,8 +1751,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         if len(parts) >= 3 and parts[1] == "provider":
             # Provider selected
-            provider_slug = parts[2]
+            provider_slug = _picker_decode(parts[2])
             state = self._model_picker_state.get(scoped_chat)
+            if not state or not self._provider_known(state, provider_slug):
+                logger.warning(
+                    "MAX: model callback for unknown/expired provider %r", provider_slug,
+                )
+                return None
 
             msg_id = state.get("provider_msg_id", "") if state else ""
             await self._on_model_provider_selected(scoped_chat, provider_slug, msg_id)
@@ -1738,24 +1765,52 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         if len(parts) >= 4 and parts[1] == "page":
             # Page navigation
-            provider_slug = parts[2]
+            provider_slug = _picker_decode(parts[2])
             try:
                 page = int(parts[3])
             except ValueError:
                 page = 0
             state = self._model_picker_state.get(scoped_chat)
-            if state:
+            if state and self._provider_known(state, provider_slug):
                 await self._on_model_page_selected(scoped_chat, provider_slug, page)
+            else:
+                logger.warning(
+                    "MAX: model page callback for unknown/expired provider %r", provider_slug,
+                )
             return None
 
         if len(parts) >= 3 and parts[1] == "pick":
             # Model selected
             # Format: model:pick:{model}:{provider}
             # parts[2] = model, parts[3] = provider (if present)
-            model_id = parts[2]
-            provider_slug = parts[3] if len(parts) >= 4 else ""
-            if provider_slug:
-                return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
+            model_id = _picker_decode(parts[2])
+            provider_slug = _picker_decode(parts[3]) if len(parts) >= 4 else ""
+            if not provider_slug:
+                logger.warning("MAX: model pick callback missing provider: %s", data)
+                return None
+            state = self._model_picker_state.get(scoped_chat)
+            if not state:
+                logger.warning("MAX: model pick callback with no picker state: %s", data)
+                return None
+            provider = next(
+                (p for p in state.get("providers", []) if p.get("slug") == provider_slug),
+                None,
+            )
+            # Reject anything the live picker state does not know: a stale
+            # button, an expired picker, or a malformed/legacy payload that
+            # decodes into an unknown provider or an unoffered model.
+            if provider is None:
+                logger.warning(
+                    "MAX: model pick callback for unknown/expired provider %r", provider_slug,
+                )
+                return None
+            if model_id not in provider.get("models", []):
+                logger.warning(
+                    "MAX: model pick callback for unknown model %r of provider %r",
+                    model_id, provider_slug,
+                )
+                return None
+            return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
 
         if data == "model:back":
             await self._on_model_back(scoped_chat, user_id)
@@ -1763,6 +1818,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         logger.warning("MAX: unhandled model callback: %s", data)
         return None
+
+    @staticmethod
+    def _provider_known(state: dict[str, Any], provider_slug: str) -> bool:
+        """True when the picker state still lists this provider slug."""
+        return any(p.get("slug") == provider_slug for p in state.get("providers", []))
 
     # ═════════════════════════════════════════════════════════════════════
     # Model picker
@@ -1812,7 +1872,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             row.append({
                 "type": "callback",
                 "text": btn_text,
-                "payload": f"model:provider:{slug}",
+                "payload": f"model:provider:{_picker_encode(slug)}",
             })
             if len(row) >= 2:
                 buttons.append(row)
@@ -1881,7 +1941,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             buttons.append([{
                 "type": "callback",
                 "text": label,
-                "payload": f"model:pick:{m}:{provider_slug}",
+                "payload": f"model:pick:{_picker_encode(m)}:{_picker_encode(provider_slug)}",
             }])
 
         # Pagination buttons
@@ -1891,13 +1951,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 nav_row.append({
                     "type": "callback",
                     "text": "⬅ Prev",
-                    "payload": f"model:page:{provider_slug}:{page - 1}",
+                    "payload": f"model:page:{_picker_encode(provider_slug)}:{page - 1}",
                 })
             if page < total_pages - 1:
                 nav_row.append({
                     "type": "callback",
                     "text": "Next ➡",
-                    "payload": f"model:page:{provider_slug}:{page + 1}",
+                    "payload": f"model:page:{_picker_encode(provider_slug)}:{page + 1}",
                 })
             if nav_row:
                 buttons.append(nav_row)
@@ -2016,7 +2076,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             row.append({
                 "type": "callback",
                 "text": f"{name}{tag}"[:40],
-                "payload": f"model:provider:{slug}",
+                "payload": f"model:provider:{_picker_encode(slug)}",
             })
             if len(row) >= 2:
                 buttons.append(row)

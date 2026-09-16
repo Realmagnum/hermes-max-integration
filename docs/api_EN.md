@@ -97,11 +97,17 @@ model:pick:{model}:{provider}
 ```
 Example: `model:pick:deepseek-v4-flash:custom`
 
+`{model}` and `{provider}` are percent-encoded (`urllib.parse.quote(..., safe="")`),
+so IDs containing a colon round-trip unambiguously:
+`llama3:8b` → `model:pick:llama3%3A8b:ollama`.
+
 **Pagination:**
 ```
 model:page:{provider}:{page}
 ```
 Example: `model:page:custom:2`
+
+`{provider}` is encoded the same way.
 
 **Confirm/Clarify:**
 ```

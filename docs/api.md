@@ -97,11 +97,17 @@ model:pick:{model}:{provider}
 ```
 Пример: `model:pick:deepseek-v4-flash:custom`
 
+`{model}` и `{provider}` percent-кодируются (`urllib.parse.quote(..., safe="")`),
+поэтому ID с двоеточием разбираются однозначно:
+`llama3:8b` → `model:pick:llama3%3A8b:ollama`.
+
 **Pagination:**
 ```
 model:page:{provider}:{page}
 ```
 Пример: `model:page:custom:2`
+
+`{provider}` кодируется так же.
 
 **Confirm/Clarify:**
 ```
