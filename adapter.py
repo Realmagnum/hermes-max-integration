@@ -141,6 +141,28 @@ def _parse_list(value: str) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
+def _coerce_str_list(value: Any) -> list[str]:
+    """Normalize a config value into a list of non-empty trimmed strings.
+
+    Accepts the comma-separated env style (``"1, 2"``) *and* native YAML
+    lists (``[1, 2]``); both are valid ways to spell an allowlist in
+    ``config.yaml``. ``str(["1", "2"])`` — the previous behaviour — produced
+    the literal ``"['1', '2']"``, which silently turned a two-entry allowlist
+    into a single junk entry that could never match a real user/chat id.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = [str(v).strip() for v in value]
+    else:
+        items = [v.strip() for v in str(value).split(",")]
+    return [v for v in items if v]
+
+
+# Group policy values accepted in config/env. Anything else fails closed.
+_GROUP_POLICIES: tuple[str, ...] = ("open", "closed", "allowlist")
+
+
 def _is_group(chat_id: str) -> bool:
     """MAX group chats have negative IDs, DMs have positive."""
     try:
@@ -245,15 +267,45 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         )
 
         # Group access control
-        self._group_policy: str = extra.get("group_policy", "allowlist")
-        self._group_allow_from: list[str] = _parse_list(
-            os.getenv("MAX_GROUP_ALLOWED_USERS", "")
-            or str(extra.get("group_allow_from", ""))
+        # SEC-06: policy is normalized (case/whitespace insensitive) and an
+        # unrecognized value fails closed instead of silently allowing everyone
+        # (the old code had no explicit "open" branch, so a typo like
+        # "Close" fell through the checks and admitted every group message).
+        raw_group_policy = (
+            os.getenv("MAX_GROUP_POLICY")
+            or extra.get("group_policy")
+            or "allowlist"
         )
-        self._group_allow_chats: list[str] = _parse_list(
-            os.getenv("MAX_GROUP_ALLOWED_CHATS", "")
-            or str(extra.get("group_allow_chats", ""))
+        self._group_policy: str = str(raw_group_policy).strip().lower()
+        if self._group_policy not in _GROUP_POLICIES:
+            logger.warning(
+                "MAX: unknown group_policy=%r — denying all group messages "
+                "(valid values: %s)",
+                raw_group_policy,
+                ", ".join(_GROUP_POLICIES),
+            )
+            self._group_policy = "closed"
+        self._group_allow_from: list[str] = _coerce_str_list(
+            os.getenv("MAX_GROUP_ALLOWED_USERS")
+            or extra.get("group_allow_from")
+            or ""
         )
+        self._group_allow_chats: list[str] = _coerce_str_list(
+            os.getenv("MAX_GROUP_ALLOWED_CHATS")
+            or extra.get("group_allow_chats")
+            or ""
+        )
+        if (
+            self._group_policy == "allowlist"
+            and not self._group_allow_from
+            and not self._group_allow_chats
+        ):
+            logger.warning(
+                "MAX: group_policy=allowlist but MAX_GROUP_ALLOWED_USERS and "
+                "MAX_GROUP_ALLOWED_CHATS are both empty — all group messages "
+                "will be rejected. Set at least one allowlist, or set "
+                "MAX_GROUP_POLICY=open to allow every group explicitly."
+            )
 
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
@@ -643,15 +695,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return None
 
         # Group access control
-        if chat_type == "group":
-            if self._group_policy == "closed":
-                return None
-            if self._group_policy == "allowlist":
-                user_allowed = (not self._group_allow_from) or user_id in self._group_allow_from
-                chat_allowed = (not self._group_allow_chats) or chat_id_str in self._group_allow_chats
-                if not user_allowed and not chat_allowed:
-                    logger.info("MAX: group message blocked: user=%s chat=%s", user_id, chat_id_str)
-                    return None
+        if chat_type == "group" and not self._group_message_allowed(user_id, chat_id_str):
+            logger.info(
+                "MAX: group message blocked: policy=%s user=%s chat=%s",
+                self._group_policy, user_id, chat_id_str,
+            )
+            return None
 
         # Extract media
         media_urls, media_types = await self._extract_inbound_media(update, message, body)
@@ -2061,6 +2110,51 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return self._group_allow_from
 
     @property
+    def group_allow_chats(self) -> list[str]:
+        return self._group_allow_chats
+
+    def _group_message_allowed(self, user_id: str, chat_id: str) -> bool:
+        """Decide whether a group-chat message may reach the Hermes core.
+
+        SEC-06 — group policy semantics. The previous implementation combined
+        the two allowlists with OR and treated an empty list as "allow all",
+        so (a) an empty ``MAX_GROUP_ALLOWED_USERS`` disabled that check
+        entirely, and (b) a user present in the user-allowlist was admitted
+        into *any* group, neutralizing the chat allowlist.
+
+        Effective policy (``_group_policy``, normalized to lowercase):
+
+        * ``open``   — every group message is accepted (explicit opt-in,
+          required for groups that should be reachable without an allowlist).
+        * ``closed`` — no group message is accepted.
+        * ``allowlist`` (default) — a message is accepted only when it matches
+          **every configured** dimension (AND, not OR):
+
+              user dimension — ``MAX_GROUP_ALLOWED_USERS`` (empty ⇒ unconstrained)
+              chat dimension — ``MAX_GROUP_ALLOWED_CHATS`` (empty ⇒ unconstrained)
+
+          An empty allowlist never opens access: with both lists empty nothing
+          can match, so group traffic is rejected (fail closed). Configure at
+          least one list, or opt in to ``open``.
+
+        Unknown policy values are normalized to ``closed`` at construction, so
+        a typo cannot fall through to "allow everyone".
+        """
+        policy = self._group_policy
+        if policy == "open":
+            return True
+        if policy != "allowlist":  # "closed" and any unexpected value
+            return False
+        if not self._group_allow_from and not self._group_allow_chats:
+            # Fail closed: an empty allowlist grants nothing.
+            return False
+        # Every *configured* dimension must match; an empty one is
+        # unconstrained (but never a grant on its own — see above).
+        user_ok = not self._group_allow_from or user_id in self._group_allow_from
+        chat_ok = not self._group_allow_chats or chat_id in self._group_allow_chats
+        return bool(user_ok and chat_ok)
+
+    @property
     def max_message_length(self) -> int:
         return MAX_MESSAGE_LENGTH
 
@@ -2158,6 +2252,8 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "allow_all_users": "MAX_ALLOW_ALL_USERS",
         "home_channel": "MAX_HOME_CHANNEL",
         "group_policy": "MAX_GROUP_POLICY",
+        "group_allow_from": "MAX_GROUP_ALLOWED_USERS",
+        "group_allow_chats": "MAX_GROUP_ALLOWED_CHATS",
         "cross_session": "MAX_CROSS_SESSION",
     }
 
