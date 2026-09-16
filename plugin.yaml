@@ -55,3 +55,6 @@ optional_env:
   - name: MAX_CROSS_SESSION
     description: "Enable cross-platform session listing — /sessions shows sessions from ALL platforms (CLI, Telegram, Discord, WebUI). /resume <id> switches to any session. Set to false to restore default per-platform scoping. (true/false, default: true)"
     prompt: "Cross-platform session commands"
+  - name: MAX_TRUSTED_DOWNLOAD_HOSTS
+    description: "Extra hosts allowed to receive the bot token when an incoming attachment is downloaded (comma-separated; e.g. cdn.example.com or *.example.com for subdomains only). MAX-owned hosts are trusted automatically. Default: empty — the token is never sent to any other origin."
+    prompt: "Trusted attachment download hosts (comma-separated)"

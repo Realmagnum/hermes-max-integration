@@ -2,6 +2,12 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [Unreleased]
+
+### Security
+
+- **SEC-02: the bot token is no longer forwarded to arbitrary attachment URLs.** Incoming audio/image/document downloads now use a separate HTTP client with no default credentials; the `Authorization` header is added only for explicitly trusted HTTPS origins — MAX infrastructure (`.max.ru`, `.oneme.ru`, `.okcdn.ru` and the known API/CDN names) and hosts from `MAX_TRUSTED_DOWNLOAD_HOSTS` / `extra["trusted_download_hosts"]` (a `*.example.com` entry covers subdomains only, not the apex). Every other origin is still fetched — without the token — redirects are not followed, and the token is stripped from transport error messages before logging (`_redact_secrets`). Regressions: `tests/test_download_token_leak.py`.
+
 ## [2.9.0] — 2026-08-17
 
 ### Refactor

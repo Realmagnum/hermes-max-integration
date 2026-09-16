@@ -82,6 +82,54 @@ AUDIO_CACHE_DIR = Path(
 # Ensure cache dir exists with restricted permissions (voice messages are private)
 AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 
+# ── Inbound attachment downloads (SEC-02) ────────────────────────────────
+# Download URLs are taken from inbound events, so the sender of a message can
+# influence them (long polling through MAX, or an unprotected webhook). The
+# bot token is therefore attached ONLY to explicitly trusted HTTPS origins:
+# MAX-owned infrastructure (the same domains the upload path already trusts)
+# plus whatever the operator lists in MAX_TRUSTED_DOWNLOAD_HOSTS /
+# config extra "trusted_download_hosts". Every other origin is fetched with a
+# credential-free client.
+_TRUSTED_DOWNLOAD_HOST_SUFFIXES = (".max.ru", ".oneme.ru", ".okcdn.ru")
+_DOWNLOAD_USER_AGENT = "HermesAgent/1.0 MaxBot"
+
+
+def _parse_trusted_download_hosts(raw: Any) -> set[str]:
+    """Parse ``MAX_TRUSTED_DOWNLOAD_HOSTS`` / ``extra["trusted_download_hosts"]``.
+
+    Accepts a comma-separated string or a sequence of entries. An entry may be
+    a bare host (``cdn.example.com``), a subdomain wildcard (``*.example.com``,
+    which does NOT match the apex) or a full URL. Scheme, port, userinfo,
+    path and a trailing dot are stripped; malformed entries are ignored.
+    """
+    if isinstance(raw, str):
+        parts: list[Any] = raw.split(",")
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        parts = list(raw)
+    else:
+        return set()
+
+    hosts: set[str] = set()
+    for part in parts:
+        entry = str(part).strip().lower()
+        if not entry:
+            continue
+        if "://" in entry:
+            entry = urlparse(entry).hostname or ""
+        else:
+            entry = entry.split("/", 1)[0]
+        if "@" in entry:
+            entry = entry.rsplit("@", 1)[1]
+        if entry.startswith("[") and "]" in entry:
+            entry = entry[1:entry.index("]")]
+        elif ":" in entry:
+            entry = entry.split(":", 1)[0]
+        entry = entry.rstrip(".")
+        if entry:
+            hosts.add(entry)
+    return hosts
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────
 import json as _json
 
@@ -255,8 +303,17 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or str(extra.get("group_allow_chats", ""))
         )
 
+        # Attachment downloads (SEC-02): extra origins allowed to receive the
+        # bot token. MAX-owned hosts are trusted implicitly; nothing else gets
+        # credentials unless the operator opted in here.
+        self._trusted_download_hosts: set[str] = _parse_trusted_download_hosts(
+            os.getenv("MAX_TRUSTED_DOWNLOAD_HOSTS")
+            or extra.get("trusted_download_hosts", "")
+        )
+
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
+        self._download_client: httpx.AsyncClient | None = None
         self._webhook_runner: Any = None  # aiohttp.web.AppRunner
         self._webhook_site: Any = None
         self._webhook_app: Any = None
@@ -336,6 +393,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             self._set_fatal_error("no_token", "MAX_BOT_TOKEN not configured", retryable=False)
             return False
 
+        # SEC-02: drop the attachment client from a previous connect so a
+        # repeated connect cannot leak it (the API client is the core
+        # lifecycle's concern — see CODE-07).
+        if self._download_client:
+            await self._download_client.aclose()
+            self._download_client = None
+
         # SECURITY: Do NOT follow redirects blindly — Authorization header
         # (token) would be forwarded to any redirect target (token leak).
         # Redirects with Authorization are disabled; if the Max API ever
@@ -346,12 +410,25 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             follow_redirects=False,
         )
 
+        # SEC-02: separate client for inbound attachments. It carries NO default
+        # credentials — the token is added per request only for trusted HTTPS
+        # origins (see _attachment_download_headers), and redirects stay off so
+        # a trusted URL cannot bounce the token to another host.
+        self._download_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            headers={"User-Agent": _DOWNLOAD_USER_AGENT},
+            follow_redirects=False,
+        )
+
         # Verify token with /me
         try:
             resp = await self._http_client.get(f"{MAX_API_BASE}/me", timeout=httpx.Timeout(10.0))
             if resp.status_code == 401:
                 await self._http_client.aclose()
                 self._http_client = None
+                if self._download_client:
+                    await self._download_client.aclose()
+                    self._download_client = None
                 self._set_fatal_error("invalid_token", "MAX bot token is invalid", retryable=False)
                 return False
             if resp.status_code == 200:
@@ -367,6 +444,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             await self._http_client.aclose()
             self._http_client = None
+            if self._download_client:
+                await self._download_client.aclose()
+                self._download_client = None
             self._set_fatal_error("conn_fail", str(e), retryable=True)
             return False
 
@@ -403,6 +483,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
+
+        if self._download_client:
+            await self._download_client.aclose()
+            self._download_client = None
 
         self._mark_disconnected()
         logger.info("MAX: disconnected")
@@ -945,6 +1029,53 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return True
         return not (ip.is_private or ip.is_loopback or ip.is_link_local
                     or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+    def _is_trusted_download_origin(self, url: str) -> bool:
+        """Return True only for HTTPS URLs on a host we explicitly trust.
+
+        SEC-02: attachment URLs are attacker-influenced, so the bot token may
+        only travel to MAX-owned hosts (``.max.ru``/``.oneme.ru``/``.okcdn.ru``
+        and the known MAX API/CDN names) or to hosts the operator configured in
+        ``MAX_TRUSTED_DOWNLOAD_HOSTS`` / ``extra["trusted_download_hosts"]``.
+        Plain HTTP never receives credentials, and a ``*.example.com`` entry
+        matches subdomains only — ``example.com`` itself needs its own entry.
+        """
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            return False
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if not host:
+            return False
+        if host.endswith(_TRUSTED_DOWNLOAD_HOST_SUFFIXES):
+            return True
+        for entry in self._trusted_download_hosts:
+            if entry.startswith("*."):
+                if host.endswith(entry[1:]):
+                    return True
+            elif host == entry:
+                return True
+        return False
+
+    def _attachment_download_headers(self, url: str, accept: str) -> dict[str, str]:
+        """Request headers for an attachment download.
+
+        The ``Authorization`` header is present only when the origin is trusted
+        — an untrusted origin still gets the file (if it is public) but never
+        the bot token.
+        """
+        headers = {"User-Agent": _DOWNLOAD_USER_AGENT, "Accept": accept}
+        if self._token and self._is_trusted_download_origin(url):
+            headers["Authorization"] = self._token
+        return headers
+
+    def _redact_secrets(self, text: str) -> str:
+        """Remove the bot token from a string before it reaches the logs."""
+        if not text:
+            return text
+        if self._token and len(self._token) >= 8:
+            text = text.replace(self._token, "[redacted]")
+        return text
+
     @staticmethod
     def _detect_image_mime(data: bytes) -> str:
         """Detect image MIME type from magic bytes.
@@ -977,21 +1108,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     ) -> tuple[str, str] | None:
         """Download audio attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._http_client:
+        if not url or not self._download_client:
             return None
         if not self._validate_download_url(url):
             logger.warning("MAX: refusing to download %s from blocked host: %s", kind, self._safe_url_for_log(url))
             return None
-        headers = {
-            "Authorization": self._token,
-            "User-Agent": "HermesAgent/1.0 MaxBot",
-            "Accept": "audio/*,*/*;q=0.8",
-        }
+        headers = self._attachment_download_headers(url, "audio/*,*/*;q=0.8")
         try:
-            resp = await self._http_client.get(url, headers=headers)
+            resp = await self._download_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
+            logger.warning(
+                "MAX: failed to download %s from %s: %s",
+                kind, self._safe_url_for_log(url), self._redact_secrets(str(exc)),
+            )
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -1014,21 +1144,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     ) -> tuple[str, str] | None:
         """Download image attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._http_client:
+        if not url or not self._download_client:
             return None
         if not self._validate_download_url(url):
             logger.warning("MAX: refusing to download image from blocked host: %s", self._safe_url_for_log(url))
             return None
-        headers = {
-            "Authorization": self._token,
-            "User-Agent": "HermesAgent/1.0 MaxBot",
-            "Accept": "image/*,*/*;q=0.8",
-        }
+        headers = self._attachment_download_headers(url, "image/*,*/*;q=0.8")
         try:
-            resp = await self._http_client.get(url, headers=headers)
+            resp = await self._download_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
+            logger.warning(
+                "MAX: failed to download image from %s: %s",
+                self._safe_url_for_log(url), self._redact_secrets(str(exc)),
+            )
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -1055,21 +1184,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     ) -> tuple[str, str] | None:
         """Download document attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._http_client:
+        if not url or not self._download_client:
             return None
         if not self._validate_download_url(url):
             logger.warning("MAX: refusing to download document from blocked host: %s", self._safe_url_for_log(url))
             return None
-        headers = {
-            "Authorization": self._token,
-            "User-Agent": "HermesAgent/1.0 MaxBot",
-            "Accept": "application/*,text/*,*/*;q=0.8",
-        }
+        headers = self._attachment_download_headers(url, "application/*,text/*,*/*;q=0.8")
         try:
-            resp = await self._http_client.get(url, headers=headers)
+            resp = await self._download_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
+            logger.warning(
+                "MAX: failed to download document from %s: %s",
+                self._safe_url_for_log(url), self._redact_secrets(str(exc)),
+            )
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         filename = self._find_first_filename(attachment) or Path(urlparse(url).path).name or "document"
