@@ -24,10 +24,8 @@ import asyncio
 import logging
 import mimetypes
 import os
-import random
 import time
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -67,11 +65,12 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 MAX_MESSAGE_LENGTH = 4000
+# Text budget per chunk: MAX_MESSAGE_LENGTH minus headroom for the "(i/n)\n"
+# numbering prefix that the sender prepends to every chunk of a split message.
+OUTBOUND_CHUNK_MARGIN = 100
+OUTBOUND_CHUNK_LIMIT = max(500, MAX_MESSAGE_LENGTH - OUTBOUND_CHUNK_MARGIN)
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
-POLL_BACKOFF_MAX = 60.0  # upper bound for a single backoff sleep
-POLL_BACKOFF_JITTER = 0.25  # ±25% random spread around the bounded delay
-POLL_RETRY_AFTER_MAX = 300.0  # upper bound for a server-provided Retry-After
 UPLOAD_DELAY = 2.0
 
 # SSRF allowlist is in .mixins.media_upload
@@ -90,89 +89,6 @@ AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 import json as _json
-
-# Random source for poll backoff jitter. Tests seed it for determinism;
-# production keeps the module-level generator.
-_POLL_RNG = random.Random()  # nosec B311 — jitter only, not security-relevant
-
-
-def _parse_retry_after(raw: Any) -> float | None:
-    """Parse an HTTP ``Retry-After`` header value into a non-negative delay.
-
-    Accepts both forms defined by RFC 9110: a delta-seconds integer/float or
-    an HTTP-date. Returns ``None`` when the header is absent or unusable, and
-    clamps the result to ``POLL_RETRY_AFTER_MAX`` so a hostile/broken server
-    cannot park the poll loop for hours.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-        seconds = float(raw)
-    else:
-        value = str(raw).strip()
-        if not value:
-            return None
-        try:
-            seconds = float(value)
-        except ValueError:
-            try:
-                parsed = parsedate_to_datetime(value)
-            except (TypeError, ValueError):
-                return None
-            if parsed is None:  # pragma: no cover - defensive
-                return None
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            seconds = (parsed - datetime.now(UTC)).total_seconds()
-    return max(0.0, min(seconds, POLL_RETRY_AFTER_MAX))
-
-
-def _poll_backoff_delay(
-    errs: int,
-    *,
-    base: float = POLL_ERROR_DELAY,
-    cap: float = POLL_BACKOFF_MAX,
-    jitter: float = POLL_BACKOFF_JITTER,
-    rng: random.Random | None = None,
-) -> float:
-    """Bounded exponential backoff with jitter for the ``errs``-th failure.
-
-    ``base * 2 ** (errs - 1)`` (exponent clamped at 4 so the doubling stops),
-    capped at ``cap`` and spread by ±``jitter`` of the capped value. The
-    result is always inside ``[0, cap]`` and never negative.
-    """
-    exponent = min(max(int(errs), 1) - 1, 4)
-    delay = min(base * (2 ** exponent), cap)
-    if jitter > 0:
-        spread = delay * jitter
-        delay = (rng or _POLL_RNG).uniform(delay - spread, delay + spread)
-    return max(0.0, min(delay, cap))
-
-
-def _poll_status_delay(headers: Any, errs: int) -> float:
-    """Delay before retrying a poll that answered with a non-200 status.
-
-    ``Retry-After`` wins when the server sends one (429/503 mainly); otherwise
-    the same bounded exponential backoff as transport errors is used.
-    """
-    raw = None
-    if headers is not None:
-        getter = getattr(headers, "get", None)
-        if callable(getter):
-            # httpx.Headers is case-insensitive; plain dicts are not, so try
-            # both spellings before giving up.
-            raw = getter("Retry-After")
-            if raw is None:
-                raw = getter("retry-after")
-    retry_after = _parse_retry_after(raw)
-    if retry_after is not None:
-        return retry_after
-    return _poll_backoff_delay(errs)
-
-
-async def _poll_sleep(delay: float) -> None:
-    """Sleep between poll attempts (indirection point for virtual-clock tests)."""
-    await asyncio.sleep(delay)
 
 
 def _safe_url_for_log(url: str) -> str:
@@ -238,55 +154,6 @@ def _is_group(chat_id: str) -> bool:
         return False
 
 
-# `recipient.chat_type` values that mean "one-to-one dialog".
-_DIALOG_CHAT_TYPES = frozenset({"dialog", "dm", "private"})
-
-
-def _resolve_chat_scope(
-    recipient: dict[str, Any],
-    chat: dict[str, Any],
-    message: dict[str, Any],
-    user_id: str,
-) -> tuple[str, str, str]:
-    """Classify an update into ``(chat_type, scoped_chat_id, raw_chat_id)``.
-
-    MAX puts the peer of a one-to-one dialog in ``recipient.chat_id`` **and**
-    marks the recipient with ``chat_type == "dialog"``; the same payload also
-    carries ``recipient.user_id`` (the bot) while the human is ``sender.user_id``.
-    A dialog therefore must be scoped to ``user:<sender.user_id>`` — the
-    ``chat_id`` it carries is a service id and must not be treated as a group
-    (the reference normalisation table maps *dialog* to ``recipient.user_id``;
-    see ``schemes/MAX_API_Real_Payloads_2026.md`` §2.1/§2.3).
-
-    Groups/channels have no ``"dialog"`` chat_type hint and carry a real
-    ``chat_id``; payloads with neither hint nor id keep the historical DM
-    fallback.
-    """
-    raw_chat_id = str(
-        recipient.get("chat_id")
-        or chat.get("chat_id")
-        or message.get("chat_id")
-        or ""
-    )
-    hint = str(
-        recipient.get("chat_type")
-        or chat.get("chat_type")
-        or message.get("chat_type")
-        or ""
-    ).strip().lower()
-
-    if hint in _DIALOG_CHAT_TYPES:
-        return "dm", f"user:{user_id}", raw_chat_id
-    if raw_chat_id:
-        return "group", f"chat:{raw_chat_id}", raw_chat_id
-    return "dm", f"user:{user_id}", raw_chat_id
-
-
-def _scoped_chat_type(scoped_chat_id: str) -> str:
-    """Inverse of `_resolve_chat_scope` for an already scoped id."""
-    return "group" if scoped_chat_id.startswith("chat:") else "dm"
-
-
 def _coerce_bool(value: Any, default: bool = False) -> bool:
     """Coerce env/config strings to bool."""
     if value is None:
@@ -294,6 +161,80 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+# ── Outbound chunking (CODE-02) ──────────────────────────────────────────
+#
+# The chunker is lossless by construction: it never trims, drops or re-joins
+# characters, so ``"".join(chunks) == content`` for any input. Boundary
+# whitespace therefore survives a split, which is what makes the concatenated
+# payload equal to the source text.
+
+
+def _split_keep_separators(text: str, sep: str) -> list[str]:
+    """Split ``text`` on ``sep``, keeping each separator on the piece before it.
+
+    ``"".join(result) == text`` holds for every input, including empty pieces
+    (``"a\\n\\nb".split("\\n")`` -> ``["a", "", "b"]`` -> ``["a\\n", "\\n", "b"]``).
+    """
+    pieces = text.split(sep)
+    result = [piece + sep for piece in pieces[:-1]]
+    if pieces[-1]:
+        result.append(pieces[-1])
+    return result
+
+
+def _iter_text_segments(text: str, limit: int) -> Iterator[str]:
+    """Yield ordered segments of ``text``, each no longer than ``limit``.
+
+    Concatenating the segments reproduces ``text`` exactly. Splitting prefers
+    boundaries in this order: line, word, character — a word longer than the
+    limit is the only case that gets cut mid-word.
+    """
+    for line in _split_keep_separators(text, "\n"):
+        if len(line) <= limit:
+            yield line
+            continue
+        for word in _split_keep_separators(line, " "):
+            if len(word) <= limit:
+                yield word
+            else:
+                for start in range(0, len(word), limit):
+                    yield word[start:start + limit]
+
+
+def _pack_segments(segments: Iterable[str], limit: int) -> list[str]:
+    """Greedily pack segments into chunks of at most ``limit`` characters."""
+    chunks: list[str] = []
+    current = ""
+    for segment in segments:
+        if current and len(current) + len(segment) > limit:
+            chunks.append(current)
+            current = segment
+        else:
+            current += segment
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _move_leading_whitespace(chunks: list[str], cap: int) -> None:
+    """Move a chunk's leading whitespace onto the previous chunk while it fits.
+
+    In-place, and never moves a chunk's last character, so the concatenation of
+    ``chunks`` is unchanged (losslessness is preserved). ``cap`` is the maximum
+    allowed length of a chunk's text — the caller sets it so that the numbered
+    payload still fits the API limit. Keeps a message from starting with a blank
+    line when a chunk boundary lands inside a paragraph break.
+    """
+    for idx in range(1, len(chunks)):
+        while (
+            len(chunks[idx]) > 1
+            and chunks[idx][0] in " \t\n"
+            and len(chunks[idx - 1]) < cap
+        ):
+            chunks[idx - 1] += chunks[idx][0]
+            chunks[idx] = chunks[idx][1:]
 
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
@@ -607,17 +548,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return True
 
     async def _poll_loop(self) -> None:
-        """Long poll /updates with marker-based pagination.
-
-        Every non-200 response and every transport error shares one retry
-        policy: bounded exponential backoff with jitter, honouring the
-        server's ``Retry-After`` when it sends one (429/503). HTTP 401 is the
-        one *fatal* status — MAX rejected the bot token, so retrying can only
-        hammer the API; the loop stops and publishes the fatal auth state
-        (same ``invalid_token`` code ``connect()`` uses for its /me check)
-        so the supervisor can surface it instead of seeing a live adapter
-        that can never receive anything.
-        """
+        """Long poll /updates with marker-based pagination."""
         last_marker = 0
         errs = 0
         while not self._stop.is_set():
@@ -636,36 +567,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     if marker:
                         last_marker = marker
                     errs = 0
-                elif resp.status_code == 401:
-                    logger.error(
-                        "MAX: poll rejected with HTTP 401 — bot token is invalid, "
-                        "long polling stopped (check MAX_BOT_TOKEN)",
-                    )
-                    self._set_fatal_error(
-                        "invalid_token",
-                        "MAX bot token is invalid (HTTP 401 from GET /updates)",
-                        retryable=False,
-                    )
-                    self._stop.set()
-                    return
                 else:
                     errs += 1
-                    delay = _poll_status_delay(getattr(resp, "headers", None), errs)
-                    logger.warning(
-                        "MAX: poll HTTP %s (attempt %d), retrying in %.1fs",
-                        resp.status_code, errs, delay,
-                    )
-                    await _poll_sleep(delay)
+                    logger.warning("MAX: poll HTTP %s (attempt %d)", resp.status_code, errs)
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 errs += 1
-                delay = _poll_backoff_delay(errs)
-                logger.warning(
-                    "MAX: poll error (attempt %d): %s: %s — retrying in %.1fs",
-                    errs, type(e).__name__, e, delay,
-                )
-                await _poll_sleep(delay)
+                logger.warning("MAX: poll error (attempt %d): %s: %s", errs, type(e).__name__, e)
+                await asyncio.sleep(min(POLL_ERROR_DELAY * (2 ** min(errs - 1, 4)), 60))
 
     # ═════════════════════════════════════════════════════════════════════
     # Webhook server
@@ -777,12 +687,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         text = (body.get("text") or message.get("text") or "").strip()
 
         chat = update.get("chat", {}) or {}
-        # A captured dialog update carries recipient.chat_id (a service chat id)
-        # AND recipient.chat_type == "dialog"; classify via chat_type so the
-        # dialog is scoped to the human peer instead of being treated as a group.
-        chat_type, scoped_chat_id, chat_id_str = _resolve_chat_scope(
-            recipient, chat, message, user_id
+        chat_id_str = str(
+            recipient.get("chat_id")
+            or chat.get("chat_id")
+            or message.get("chat_id")
+            or ""
         )
+
+        if chat_id_str:
+            chat_type = "group"
+            scoped_chat_id = f"chat:{chat_id_str}"
+        else:
+            chat_type = "dm"
+            scoped_chat_id = f"user:{user_id}"
 
         # Store DM mapping
         self._dm_user_ids[str(chat_id_str or user_id)] = user_id
@@ -1267,62 +1184,53 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # Outbound: send messages
     # ═════════════════════════════════════════════════════════════════════
 
-    def _split_outbound_text(self, content: str) -> list[str]:
-        """Split long outbound text into Max-sized chunks (≤4000 chars).
+    def _split_outbound_text(
+        self, content: str, limit: int | None = None
+    ) -> list[str]:
+        """Split long outbound text into Max-sized chunks (≤ ``limit`` chars).
 
-        Preserves paragraph boundaries where possible; hard-splits long
-        paragraphs by word, then by character as a last resort.
+        Lossless: ``"".join(result) == content`` for every input — the splitter
+        never trims or re-joins characters, so nothing is dropped at a chunk
+        boundary. Splits prefer paragraph, then line, then word boundaries and
+        only cut mid-word for a word longer than the limit.
         """
-        limit = max(500, min(MAX_MESSAGE_LENGTH, 4000) - 100)
-        if len(content) <= limit:
+        budget = OUTBOUND_CHUNK_LIMIT if limit is None else max(1, limit)
+        if len(content) <= budget:
             return [content]
+        segments = _iter_text_segments(content, budget)
+        return _pack_segments(segments, budget)
 
-        chunks: list[str] = []
-        current = ""
+    def _numbered_outbound_chunks(self, content: str) -> list[str]:
+        """Chunk ``content`` and prepend the ``(i/n)\\n`` numbering prefix.
 
-        def flush() -> None:
-            nonlocal current
-            if current:
-                chunks.append(current.strip())
-                current = ""
-
-        for block in content.split("\n\n"):
-            block = block.strip()
-            if not block:
-                continue
-            candidate = f"{current}\n\n{block}" if current else block
-            if len(candidate) <= limit:
-                current = candidate
-                continue
-            flush()
-            if len(block) <= limit:
-                current = block
-                continue
-            # Very long paragraph: split by lines then words
-            line_current = ""
-            for line in block.splitlines() or [block]:
-                for word in line.split(" "):
-                    if not word:
-                        continue
-                    if len(word) > limit:
-                        if line_current:
-                            chunks.append(line_current.strip())
-                            line_current = ""
-                        for i in range(0, len(word), limit):
-                            chunks.append(word[i:i + limit])
-                        continue
-                    candidate_word = f"{line_current} {word}" if line_current else word
-                    if len(candidate_word) <= limit:
-                        line_current = candidate_word
-                    else:
-                        chunks.append(line_current.strip())
-                        line_current = word
-                if line_current and len(line_current) + 1 <= limit:
-                    line_current += "\n"
-            if line_current:
-                chunks.append(line_current.strip())
-        flush()
-        return chunks or [content[:limit]]
+        The prefix is accounted for *before* splitting (CODE-02): the split is
+        re-run with a reduced text budget until the number of chunks — and
+        therefore the prefix width — is stable, so the sender never has to
+        truncate a chunk after the fact. ``"".join`` of the returned texts with
+        the prefixes removed reproduces ``content`` exactly, and no payload
+        exceeds ``MAX_MESSAGE_LENGTH``.
+        """
+        budget = OUTBOUND_CHUNK_LIMIT
+        chunks = self._split_outbound_text(content, budget)
+        for _ in range(8):  # prefix width changes at most once per digit count
+            if len(chunks) <= 1:
+                break
+            prefix_len = len(f"({len(chunks)}/{len(chunks)})\n")
+            if prefix_len >= budget:
+                break  # pragma: no cover - defensive: 3900-char budget never yields this
+            renumbered = self._split_outbound_text(content, budget - prefix_len)
+            stable = len(renumbered) == len(chunks)
+            chunks = renumbered
+            if stable:
+                break
+        if len(chunks) <= 1:
+            return chunks
+        total = len(chunks)
+        prefix_len = len(f"({total}/{total})\n")
+        # Leading whitespace may move onto the previous chunk, but only within
+        # the API limit (MAX_MESSAGE_LENGTH) that the prefix is not using.
+        _move_leading_whitespace(chunks, MAX_MESSAGE_LENGTH - prefix_len)
+        return [f"({idx}/{total})\n{text}" for idx, text in enumerate(chunks, start=1)]
 
     async def send(
         self,
@@ -1389,14 +1297,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             content = self._convert_markdown_tables(content)
 
         # ── Send ───────────────────────────────────────────────────────
-        chunks = self._split_outbound_text(content)
+        # Numbering prefixes are budgeted before the split, so no chunk is
+        # truncated after the fact (CODE-02).
+        chunks = self._numbered_outbound_chunks(content)
         last_result: SendResult | None = None
 
         for idx, text in enumerate(chunks, start=1):
-            if len(chunks) > 1:
-                prefix = f"({idx}/{len(chunks)})\n"
-                text = prefix + text[:max(0, 3900 - len(prefix))]
-
             body: dict[str, Any] = {
                 "text": text,
                 "format": "markdown",
@@ -1703,19 +1609,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return None
 
         # Extract chat info for routing.
-        # Max API callback payload puts chat info in message.recipient — and for
-        # a dialog that recipient also carries chat_id (a service id) next to
-        # chat_type == "dialog". Classify it exactly like an inbound message so
-        # a DM callback is scoped to the pressing user, not to chat:<id>.
-        msg = payload.get("message", {}) or {}
-        recipient = msg.get("recipient", {}) or {}
-        chat_obj = payload.get("chat", {}) or {}
-        chat_type, scoped_chat, chat_id = _resolve_chat_scope(
-            recipient, chat_obj, msg, user_id
+        # Max API callback payload puts chat info in message.recipient.
+        msg = payload.get("message", {})
+        recipient = msg.get("recipient", {}) if msg else {}
+        raw_chat_id = (
+            recipient.get("chat_id")
+            or (payload.get("chat", {}) or {}).get("chat_id", "")
+            or payload.get("chat_id", "")
+            or ""
         )
+        chat_id = str(raw_chat_id)
 
-        logger.info("MAX: callback received: data=%s from user=%s chat_type=%s chat_id=%s",
-                     data, user_id, chat_type, chat_id)
+        logger.info("MAX: callback received: data=%s from user=%s chat_id=%s",
+                     data, user_id, chat_id)
 
         # Dispatch based on prefix
         parts = data.split(":", 2)
@@ -1723,28 +1629,22 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         if prefix == "exec":
             # Dangerous command approval buttons
-            return await self._handle_exec_callback(data, user_id, payload, scoped_chat)
+            return await self._handle_exec_callback(data, user_id, payload)
         elif prefix == "sc":
             # Slash-command confirmation buttons
-            return await self._handle_slash_confirm_callback(
-                data, user_id, payload, scoped_chat
-            )
+            return await self._handle_slash_confirm_callback(data, user_id, payload)
         elif prefix == "clarify":
             # Clarify choice buttons
-            return await self._handle_clarify_callback(
-                data, user_id, payload, scoped_chat
-            )
+            return await self._handle_clarify_callback(data, user_id, payload)
         elif prefix == "model":
             # Model picker buttons
-            return await self._handle_model_callback(
-                data, user_id, payload, scoped_chat
-            )
+            return await self._handle_model_callback(data, user_id, payload, chat_id)
         else:
             logger.warning("MAX: unknown callback prefix: %s", prefix)
             return None
 
     async def _handle_exec_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
     ) -> MessageEvent | None:
         """Route exec approval button to resolve_gateway_approval."""
         # Format: exec:{choice}:{approval_id}
@@ -1757,13 +1657,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         session_key = self._exec_approval_state.pop(approval_id, None)
         if not session_key:
             logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
-            await self.send(scoped_chat, "❌ This approval has already been resolved.")
+            await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
             return None
 
         from tools.approval import has_blocking_approval, resolve_gateway_approval
 
         if not has_blocking_approval(session_key):
-            await self.send(scoped_chat, "❌ No pending approval to resolve.")
+            await self.send(f"user:{user_id}", "❌ No pending approval to resolve.")
             return None
 
         count = resolve_gateway_approval(session_key, choice)
@@ -1784,11 +1684,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             "deny": "❌ Denied",
         }
         label = labels.get(choice, f"Resolved: {choice}")
-        await self.send(scoped_chat, label)
+        await self.send(f"user:{user_id}", label)
         return None
 
     async def _handle_slash_confirm_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
     ) -> MessageEvent | None:
         """Route slash-confirm button to tools.slash_confirm.resolve."""
         # Format: sc:{choice}:{confirm_id}
@@ -1810,11 +1710,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             # Send result directly via MAX API — same reasoning as
             # _handle_exec_callback: avoid injecting the result into the
             # AI's context as a new user message in the next turn.
-            await self.send(scoped_chat, result_text)
+            await self.send(f"user:{user_id}", result_text)
         return None
 
     async def _handle_clarify_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
     ) -> MessageEvent | None:
         """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
         # Format: clarify:{clarify_id}:{choice_index}
@@ -1856,11 +1756,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 # Send choice text to MAX so the user sees what they picked,
                 # then return a MessageEvent (NOT internal) so the AI sees it
                 # as the user's input in the next turn.
-                await self.send(scoped_chat, result_text)
+                await self.send(f"user:{user_id}", result_text)
                 source = self.build_source(
-                    chat_id=scoped_chat,
+                    chat_id=f"user:{user_id}",
                     chat_name=user_id,
-                    chat_type=_scoped_chat_type(scoped_chat),
+                    chat_type="dm",
                     user_id=user_id,
                     user_name=user_id,
                 )
@@ -1875,7 +1775,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_model_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str,
+        self, data: str, user_id: str, raw_payload: dict[str, Any], chat_id: str,
     ) -> MessageEvent | None:
         """Route model picker button callbacks.
 
@@ -1884,11 +1784,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
           model:pick:{model}:{provider} — model selected, switch
           model:page:{provider}:{page} — page navigation
           model:back — back to provider list
-
-        ``scoped_chat`` is resolved by `_resolve_chat_scope` in `_on_callback`,
-        i.e. ``user:<id>`` for a dialog and ``chat:<id>`` for a group — the same
-        keying `send_model_picker` stores its state under.
         """
+        # Build the correct scoped_chat matching how send_model_picker stores state.
+        # If chat_id (raw numeric) is present, the message was in a group → "chat:{id}".
+        # Otherwise it's a DM → "user:{user_id}".
+        if chat_id:
+            scoped_chat = f"chat:{chat_id}"
+        else:
+            scoped_chat = f"user:{user_id}"
+
         parts = data.split(":", 3)
 
         if len(parts) >= 3 and parts[1] == "provider":
