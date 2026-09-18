@@ -1,7 +1,5 @@
 """Tests for magic bytes MIME detection, typing renewal, and streaming throttle."""
 
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 import adapter
@@ -52,32 +50,25 @@ class TestDetectImageMime:
 
 
 class TestStreamingThrottle:
-    """Tests for edit_message streaming throttle."""
-
-    def _make_adapter(self):
-        from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
-        a = adapter.MaxAdapter(cfg)
-        a._http_client = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {}
-        a._http_client.put = AsyncMock(return_value=mock_resp)
-        a.send_typing = AsyncMock()
-        return a
+    """Tests for edit_message streaming throttle (asserted on the wire)."""
 
     @pytest.mark.asyncio
-    async def test_first_edit_goes_through(self):
-        a = self._make_adapter()
+    async def test_first_edit_goes_through(self, make_adapter, max_api):
+        a = make_adapter()
         result = await a.edit_message("user:42", "mid-1", "hello world")
         assert result.success is True
-        a._http_client.put.assert_called_once()
-        # Typing should be renewed
-        a.send_typing.assert_called_once_with("user:42")
+        puts = max_api.calls("PUT", "/messages")
+        assert len(puts) == 1
+        assert max_api.params(puts[0]) == {"message_id": "mid-1"}
+        assert max_api.json_body(puts[0]) == {"text": "hello world", "format": "markdown"}
+        # Typing must be renewed with a real chat action request
+        actions = [r for r in max_api.requests if r.url.path == "/chats/42/actions"]
+        assert len(actions) == 1
+        assert max_api.json_body(actions[0]) == {"action": "typing_on"}
 
     @pytest.mark.asyncio
-    async def test_rapid_edits_throttled(self):
-        a = self._make_adapter()
+    async def test_rapid_edits_throttled(self, make_adapter, max_api):
+        a = make_adapter()
 
         # First edit — goes through
         result1 = await a.edit_message("user:42", "mid-1", "first")
@@ -86,13 +77,13 @@ class TestStreamingThrottle:
         # Second edit immediately — throttled
         result2 = await a.edit_message("user:42", "mid-1", "second")
         assert result2.success is True
-        # Should only have one actual HTTP call (second was throttled)
-        assert a._http_client.put.call_count == 1
+        # Only one PUT reaches MAX; the second is queued, not sent
+        assert len(max_api.calls("PUT", "/messages")) == 1
 
     @pytest.mark.asyncio
-    async def test_rapid_edit_stores_pending_content(self):
+    async def test_rapid_edit_stores_pending_content(self, make_adapter, max_api):
         """Throttled edit stores content in _pending_edit (Fix 2)."""
-        a = self._make_adapter()
+        a = make_adapter()
 
         # First edit goes through
         await a.edit_message("user:42", "mid-1", "first")
@@ -101,11 +92,15 @@ class TestStreamingThrottle:
         # Second edit — throttled, content stored
         await a.edit_message("user:42", "mid-1", "second content")
         assert getattr(a, "_pending_edit", None) == "second content"
+        # …and nothing beyond the first payload left the process
+        assert [
+            max_api.json_body(r)["text"] for r in max_api.calls("PUT", "/messages")
+        ] == ["first"]
 
     @pytest.mark.asyncio
-    async def test_pending_content_cleared_on_next_edit(self):
+    async def test_pending_content_cleared_on_next_edit(self, make_adapter, max_api):
         """After throttle expires, _pending_edit is cleared."""
-        a = self._make_adapter()
+        a = make_adapter()
 
         # First edit goes through
         await a.edit_message("user:42", "mid-1", "first")
@@ -119,23 +114,22 @@ class TestStreamingThrottle:
         await a.edit_message("user:42", "mid-1", "second")
         # Pending should be cleared
         assert getattr(a, "_pending_edit", None) is None
-        # HTTP call should have happened
-        assert a._http_client.put.call_count >= 2
+        assert [
+            max_api.json_body(r)["text"] for r in max_api.calls("PUT", "/messages")
+        ] == ["first", "second"]
 
     @pytest.mark.asyncio
-    async def test_edit_message_converts_tables(self):
+    async def test_edit_message_converts_tables(self, make_adapter, max_api):
         """edit_message converts pipe tables to backtick-wrapped format (Fix 1)."""
-        a = self._make_adapter()
+        a = make_adapter()
 
         await a.edit_message(
             "user:42", "mid-1",
             "table:\n| A | B |\n|---|---|\n| 1 | 2 |"
         )
 
-        # The HTTP request should contain backtick-wrapped table, not raw pipes
-        _, kwargs = a._http_client.put.call_args
-        body = kwargs["json"]
-        text = body["text"]
+        # The on-wire payload must contain the converted table, not raw pipes
+        text = max_api.json_body(max_api.calls("PUT", "/messages")[0])["text"]
         assert "`| A " in text  # backtick-wrapped, with padding
         assert "B   |`" in text
         assert "`| 1 " in text
@@ -145,46 +139,47 @@ class TestStreamingThrottle:
         assert "```" not in text  # no code fences
 
     @pytest.mark.asyncio
-    async def test_finalize_resets_throttle(self):
-        a = self._make_adapter()
+    async def test_finalize_resets_throttle(self, make_adapter, max_api):
+        a = make_adapter()
 
         # First edit
         await a.edit_message("user:42", "mid-1", "first")
-        assert a._http_client.put.call_count == 1
+        assert len(max_api.calls("PUT", "/messages")) == 1
 
         # Finalize edit — always goes through, resets throttle
         result = await a.edit_message("user:42", "mid-1", "final", finalize=True)
         assert result.success is True
-        assert a._http_client.put.call_count == 2
+        assert [
+            max_api.json_body(r)["text"] for r in max_api.calls("PUT", "/messages")
+        ] == ["first", "final"]
         assert getattr(a, "_last_edit_at", 0.0) == 0.0
+
+    @pytest.mark.asyncio
+    async def test_long_edit_is_truncated_to_message_limit(self, make_adapter, max_api):
+        a = make_adapter()
+
+        await a.edit_message("user:42", "mid-1", "y" * 5000)
+
+        text = max_api.json_body(max_api.calls("PUT", "/messages")[0])["text"]
+        assert len(text) == 4000
+        assert text.endswith("...")
 
 
 class TestTypingRenewal:
     """Tests for typing indicator renewal after edit."""
 
-    def _make_adapter(self):
-        from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
-        a = adapter.MaxAdapter(cfg)
-        a._http_client = AsyncMock()
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {}
-        a._http_client.put = AsyncMock(return_value=mock_resp)
-        a.send_typing = AsyncMock()
-        return a
-
     @pytest.mark.asyncio
-    async def test_typing_renewed_after_edit(self):
-        a = self._make_adapter()
+    async def test_typing_renewed_after_edit(self, make_adapter, max_api):
+        a = make_adapter()
         await a.edit_message("user:42", "mid-1", "streaming...")
-        # send_typing must be called after successful edit
-        a.send_typing.assert_called_once_with("user:42")
+        # send_typing must produce a real chat-action request after the edit
+        assert ("POST", "/chats/42/actions") in max_api.methods()
 
     @pytest.mark.asyncio
-    async def test_typing_not_renewed_on_error(self):
-        a = self._make_adapter()
-        a._http_client.put.side_effect = Exception("API error")
-        await a.edit_message("user:42", "mid-1", "fail")
+    async def test_typing_not_renewed_on_error(self, make_adapter, max_api):
+        max_api.route("PUT", "/messages", 500, {"message": "API error"})
+        a = make_adapter()
+        result = await a.edit_message("user:42", "mid-1", "fail")
+        assert result.success is False
         # send_typing should NOT be called on error
-        a.send_typing.assert_not_called()
+        assert ("POST", "/chats/42/actions") not in max_api.methods()
