@@ -1,5 +1,6 @@
 """Tests for model picker interactive buttons."""
 
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,6 +22,18 @@ def _dialog_callback(payload: str, user_id: int = 42) -> dict:
     update = message_callback(payload, user_id=user_id)
     update["message"]["recipient"].pop("chat_id")
     return update
+
+
+def _owned(state: dict) -> dict:
+    """Add the SEC-01 binding fields an injected picker state must carry.
+
+    Real states are produced by ``send_model_picker`` (owner + TTL); a
+    hand-written state without them is refused by the authorization gate on
+    purpose, so the fixtures have to look like production state.
+    """
+    state.setdefault("owner_user_id", "42")
+    state.setdefault("expires_at", time.monotonic() + 300)
+    return state
 
 
 class TestSendModelPicker:
@@ -102,7 +115,7 @@ class TestModelCallback:
         async def on_selected(chat_id, model_id, provider_slug):
             return f"OK {model_id}"
 
-        a._model_picker_state["user:42"] = {
+        a._model_picker_state["user:42"] = _owned({
             "provider_msg_id": "mid-001",
             "providers": [
                 {"slug": "deepseek", "name": "DeepSeek", "models": ["deepseek-v3"], "is_current": False},
@@ -111,7 +124,7 @@ class TestModelCallback:
             "on_model_selected": on_selected,
             "current_model": "gpt-4",
             "current_provider": "openrouter",
-        }
+        })
 
         result = await a._on_callback(_dialog_callback("model:provider:deepseek"))
 
@@ -140,7 +153,7 @@ class TestModelCallback:
         async def on_selected(chat_id, model_id, provider_slug):
             return f"✅ Switched to `{model_id}` via {provider_slug}"
 
-        a._model_picker_state["user:42"] = {
+        a._model_picker_state["user:42"] = _owned({
             "provider_msg_id": "mid-provider",
             "model_msg_id": "mid-models",
             "providers": [
@@ -150,7 +163,7 @@ class TestModelCallback:
             "on_model_selected": on_selected,
             "current_model": "gpt-4",
             "current_provider": "openrouter",
-        }
+        })
 
         result = await a._on_callback(
             _dialog_callback("model:pick:deepseek-v3:deepseek")
@@ -199,7 +212,7 @@ class TestModelCallback:
     async def test_back_callback(self):
         a = self._make_adapter()
 
-        a._model_picker_state["user:42"] = {
+        a._model_picker_state["user:42"] = _owned({
             "provider_msg_id": "mid-provider",
             "model_msg_id": "mid-models",
             "providers": [
@@ -209,7 +222,7 @@ class TestModelCallback:
             "on_model_selected": None,
             "current_model": "gpt-4",
             "current_provider": "openrouter",
-        }
+        })
 
         a.delete_message = AsyncMock(return_value=MagicMock(success=True))
         mock_resp = MagicMock()
@@ -267,14 +280,14 @@ class TestModelCallback:
         async def on_selected(chat_id, model_id, provider_slug):
             return f"Switched to {model_id}"
 
-        a._model_picker_state["user:42"] = {
+        a._model_picker_state["user:42"] = _owned({
             "provider_msg_id": "mid-001",
             "providers": providers,
             "session_key": "test",
             "on_model_selected": on_selected,
             "current_model": "model-00",
             "current_provider": "bigprovider",
-        }
+        })
 
         a.edit_message = AsyncMock()
         mock_resp = MagicMock()
@@ -328,7 +341,7 @@ class TestModelCallback:
         async def on_selected(chat_id, model_id, provider_slug):
             return f"Switched to {model_id}"
 
-        a._model_picker_state["user:42"] = {
+        a._model_picker_state["user:42"] = _owned({
             "provider_msg_id": "mid-provider",
             "model_msg_id": "mid-models",
             "providers": providers,
@@ -336,7 +349,7 @@ class TestModelCallback:
             "on_model_selected": on_selected,
             "current_model": "model-00",
             "current_provider": "bigprovider",
-        }
+        })
 
         a.delete_message = AsyncMock(return_value=MagicMock(success=True))
         mock_resp = MagicMock()
