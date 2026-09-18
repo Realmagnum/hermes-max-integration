@@ -1,8 +1,18 @@
 name: CI
 
+# Quality gates must cover every branch: the audit found that `push` was
+# limited to `main`, so feature branches (and the PRs built from them) were
+# never gated. `push:` without a branch filter runs on all branches; PRs stay
+# gated against `main`.
+#
+# Workflow discovery on the Gitea instance used by this repo (1.26.4):
+# `[actions] WORKFLOW_DIRS` defaults to `.gitea/workflows,.github/workflows`
+# and "the first one to exist in a repo is used". This repo has no
+# `.gitea/workflows`, so `.github/workflows` is the directory that is read —
+# the path does not need to change. A CI run still requires a registered
+# act_runner (instance/org/repo level); see BACKLOG BUILD-03 notes.
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -10,6 +20,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
 
@@ -26,9 +37,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Lint with ruff
+      - name: Lint with ruff (all production modules)
         run: |
-          ruff check adapter.py tests/ scripts/
+          ruff check adapter.py mixins/ scripts/ tests/
 
       - name: Run tests
         run: |
@@ -49,12 +60,43 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: SAST scan with bandit
+      - name: SAST scan with bandit (all production modules)
         run: |
           pip install bandit
-          bandit -r adapter.py tests/ scripts/ -x tests/ -f txt
+          bandit -r adapter.py mixins/ scripts/ -f txt
 
-      - name: Dependency audit with pip-audit
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies and audit tooling
         run: |
+          python -m pip install --upgrade pip
           pip install pip-audit
-          pip-audit
+          pip install -e ".[dev]"
+
+      - name: Audit runtime + dev dependencies
+        run: |
+          pip freeze
+          pip-audit --desc
+
+      # Optional extras pull heavy native packages (ctranslate2/onnxruntime for
+      # STT, playwright for tables) that the base environment never installs.
+      # `always()` keeps the extras audit running even when the base audit
+      # already failed, so one run reports both environments.
+      - name: Install optional extras (stt, tables)
+        if: always()
+        run: |
+          pip install -e ".[stt,tables]"
+
+      - name: Audit optional extras (stt, tables)
+        if: always()
+        run: |
+          pip freeze
+          pip-audit --desc
