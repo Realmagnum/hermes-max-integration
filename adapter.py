@@ -16,14 +16,21 @@ Configuration in ~/.hermes/.env:
   MAX_BOT_TOKEN (required)
   MAX_WEBHOOK_HOST, MAX_WEBHOOK_PORT, MAX_WEBHOOK_PATH
   MAX_WEBHOOK_SECRET, MAX_ALLOWED_USERS, MAX_ALLOW_ALL_USERS
+  MAX_INBOUND_MEDIA_MAX_BYTES (per-attachment cap, default 50 MB)
+  MAX_INBOUND_MEDIA_TOTAL_BYTES (aggregate cap per message, default 100 MB)
+  MAX_INBOUND_MEDIA_MAX_ATTACHMENTS (attachments per message, default 10)
+  MAX_INBOUND_MEDIA_TIMEOUT (seconds per download, default 60)
+  MAX_INBOUND_MEDIA_CONCURRENCY (parallel downloads, default 4)
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import mimetypes
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -41,6 +48,15 @@ from gateway.platforms.base import (
     cache_document_from_bytes,
     cache_image_from_bytes,
 )
+
+# Cache-dir accessors and the global inbound media cap live in newer Hermes
+# cores only; import the module optionally so the plugin also loads on older
+# cores (where partial-file cleanup is simply skipped).
+try:
+    from gateway.platforms import base as _core_base
+except ImportError:  # pragma: no cover — older Hermes core
+    _core_base = None  # type: ignore[assignment]
+
 
 from .mixins.buttons import ButtonsMixin
 from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
@@ -81,6 +97,127 @@ AUDIO_CACHE_DIR = Path(
 
 # Ensure cache dir exists with restricted permissions (voice messages are private)
 AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+# ── Inbound media limits (SEC-07) ────────────────────────────────────────
+# MAX hands media to the bot as URLs the bot fetches itself, so the adapter is
+# what has to bound the cost of one update: bytes per body, bytes and count per
+# message, wall-clock per download and downloads in flight. Without caps a
+# hostile or broken sender makes the gateway buffer an arbitrarily large body
+# (the pre-fix code read ``resp.content`` and never looked at the size).
+# Every knob is env/config overridable; non-positive or unparseable values fall
+# back to the default — there is no opt-out of the byte caps.
+DEFAULT_INBOUND_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024  # 50 MB — MAX's own file ceiling
+DEFAULT_INBOUND_TOTAL_MAX_BYTES = 100 * 1024 * 1024      # 100 MB aggregate per message
+DEFAULT_INBOUND_MAX_ATTACHMENTS = 10                     # attachments processed per message
+DEFAULT_INBOUND_DOWNLOAD_TIMEOUT = 60.0                  # seconds, whole-download deadline
+DEFAULT_INBOUND_DOWNLOAD_CONCURRENCY = 4                 # parallel downloads
+INBOUND_MEDIA_CHUNK_SIZE = 64 * 1024                     # streaming read granularity
+MAX_INBOUND_MEDIA_CEILING = 512 * 1024 * 1024            # hard ceiling for the byte knobs
+CACHE_FREE_SPACE_HEADROOM = 1024 * 1024                  # keep 1 MB free in the cache volume
+
+_INBOUND_MEDIA_ACCEPT = {
+    "audio": "audio/*,*/*;q=0.8",
+    "voice": "audio/*,*/*;q=0.8",
+    "image": "image/*,*/*;q=0.8",
+    "document": "application/*,text/*,*/*;q=0.8",
+}
+
+
+class InboundMediaLimitError(Exception):
+    """An inbound media download was refused because a configured limit was hit."""
+
+
+class _InboundMediaBudget:
+    """Byte/attachment budget shared by the downloads of one update.
+
+    ``admit`` reserves one of the allowed attachment slots; ``charge`` and
+    ``refund`` move bytes against the aggregate cap while a body streams in, so
+    an update carrying many large attachments cannot exhaust memory before the
+    total is noticed. Both mutators are lock-protected: downloads run in
+    parallel and the counters are shared.
+    """
+
+    def __init__(self, *, max_attachments: int, max_bytes: int) -> None:
+        self.max_attachments = max_attachments
+        self.max_bytes = max_bytes
+        self._remaining = max_bytes
+        self._admitted = 0
+        self._lock = asyncio.Lock()
+
+    async def admit(self) -> bool:
+        """Reserve a slot for one attachment; ``False`` once the count cap is hit."""
+        async with self._lock:
+            if self.max_attachments and self._admitted >= self.max_attachments:
+                return False
+            self._admitted += 1
+            return True
+
+    async def charge(self, size: int) -> bool:
+        """Consume *size* aggregate bytes; ``False`` when that would exceed the cap."""
+        if self.max_bytes <= 0 or size <= 0:
+            return True
+        async with self._lock:
+            if size > self._remaining:
+                return False
+            self._remaining -= size
+            return True
+
+    async def refund(self, size: int) -> None:
+        """Give back bytes charged by a download that then failed."""
+        if self.max_bytes <= 0 or size <= 0:
+            return
+        async with self._lock:
+            self._remaining = min(self.max_bytes, self._remaining + size)
+
+
+def _inbound_cache_dir(media_type: str) -> Path | None:
+    """Resolve the core cache directory for a media kind (``None`` when unknown)."""
+    getter_name = {
+        "audio": "get_audio_cache_dir",
+        "voice": "get_audio_cache_dir",
+        "image": "get_image_cache_dir",
+        "document": "get_document_cache_dir",
+    }.get(media_type)
+    getter = getattr(_core_base, getter_name, None) if getter_name and _core_base else None
+    if getter is None:
+        return None
+    try:
+        return Path(getter())
+    except Exception:  # noqa: BLE001 — a missing cache dir only disables cleanup
+        return None
+
+
+def _dir_snapshot(cache_dir: Path | None, *, exclude: set[Path] | None = None) -> set[Path]:
+    """Return the file set of *cache_dir* (empty for ``None``/unreadable dirs)."""
+    if cache_dir is None:
+        return set()
+    try:
+        entries = {p for p in cache_dir.iterdir() if p.is_file()}
+    except OSError:
+        return set()
+    return entries - exclude if exclude else entries
+
+
+def _coerce_int(value: Any, default: int, *, minimum: int = 1, maximum: int | None = None) -> int:
+    """Coerce an env/config value to a positive int; unusable input yields *default*."""
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return default
+    return min(parsed, maximum) if maximum is not None else parsed
+
+
+def _coerce_float(value: Any, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:
+    """Coerce an env/config value to a float; unusable input yields *default*."""
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    if parsed < minimum:
+        return default
+    return min(parsed, maximum) if maximum is not None else parsed
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 import json as _json
@@ -326,6 +463,50 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 "configured (MAX_CROSS_SESSION_USERS or a non-empty "
                 "MAX_ALLOWED_USERS) — cross-platform session access stays denied"
             )
+
+        # Inbound media limits (SEC-07): per-body / per-message caps, deadline
+        # and download concurrency. See the download section further down.
+        self._inbound_attachment_max_bytes: int = _coerce_int(
+            os.getenv("MAX_INBOUND_MEDIA_MAX_BYTES") or extra.get("inbound_media_max_bytes"),
+            DEFAULT_INBOUND_ATTACHMENT_MAX_BYTES,
+            minimum=1,
+            maximum=MAX_INBOUND_MEDIA_CEILING,
+        )
+        self._inbound_media_total_max_bytes: int = _coerce_int(
+            os.getenv("MAX_INBOUND_MEDIA_TOTAL_BYTES") or extra.get("inbound_media_total_bytes"),
+            DEFAULT_INBOUND_TOTAL_MAX_BYTES,
+            minimum=1,
+            maximum=MAX_INBOUND_MEDIA_CEILING,
+        )
+        self._inbound_media_max_attachments: int = _coerce_int(
+            os.getenv("MAX_INBOUND_MEDIA_MAX_ATTACHMENTS") or extra.get("inbound_media_max_attachments"),
+            DEFAULT_INBOUND_MAX_ATTACHMENTS,
+            minimum=1,
+            maximum=100,
+        )
+        self._inbound_media_timeout: float = _coerce_float(
+            os.getenv("MAX_INBOUND_MEDIA_TIMEOUT") or extra.get("inbound_media_timeout"),
+            DEFAULT_INBOUND_DOWNLOAD_TIMEOUT,
+            minimum=0.1,
+            maximum=600.0,
+        )
+        self._inbound_media_concurrency: int = _coerce_int(
+            os.getenv("MAX_INBOUND_MEDIA_CONCURRENCY") or extra.get("inbound_media_concurrency"),
+            DEFAULT_INBOUND_DOWNLOAD_CONCURRENCY,
+            minimum=1,
+            maximum=32,
+        )
+        # The core cap (gateway.max_inbound_media_bytes) is a hard ceiling too:
+        # never admit more per body than the core is willing to keep in memory.
+        core_cap_getter = getattr(_core_base, "get_inbound_media_max_bytes", None) if _core_base else None
+        try:
+            core_cap = int(core_cap_getter() or 0) if core_cap_getter else 0
+        except Exception:  # noqa: BLE001 — an unreadable core config keeps the plugin cap
+            core_cap = 0
+        if core_cap > 0:
+            self._inbound_attachment_max_bytes = min(self._inbound_attachment_max_bytes, core_cap)
+        self._inbound_semaphore: asyncio.Semaphore | None = None
+        self._cache_write_lock: asyncio.Lock | None = None
 
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
@@ -892,32 +1073,51 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         media_paths: list[str] = []
         media_types: list[str] = []
         seen_media_refs: set[str] = set()
+        candidates: list[tuple[dict[str, Any], str]] = []
 
         for attachment in attachments:
             kind = self._attachment_kind(attachment)
+            if kind not in {"audio", "voice", "image", "document"}:
+                continue
             media_ref = self._find_first_url(attachment) or f"object:{id(attachment)}"
             if media_ref in seen_media_refs:
                 continue
             seen_media_refs.add(media_ref)
+            candidates.append((attachment, kind))
 
+        # Bound the fan-out before scheduling: the count cap applies to what we
+        # are willing to download, and an oversized update must not spawn tasks.
+        if len(candidates) > self._inbound_media_max_attachments:
+            logger.warning(
+                "MAX: update carries %d media attachments; considering only the first %d",
+                len(candidates), self._inbound_media_max_attachments,
+            )
+            candidates = candidates[: self._inbound_media_max_attachments]
+
+        budget = _InboundMediaBudget(
+            max_attachments=self._inbound_media_max_attachments,
+            max_bytes=self._inbound_media_total_max_bytes,
+        )
+
+        async def fetch(attachment: dict[str, Any], kind: str) -> tuple[str, str] | None:
+            if not await budget.admit():
+                logger.warning(
+                    "MAX: inbound media attachment cap (%d) reached; dropping %s",
+                    self._inbound_media_max_attachments, kind,
+                )
+                return None
             if kind in {"audio", "voice"}:
-                cached = await self._cache_audio_attachment(attachment, kind)
-                if cached:
-                    path, mtype = cached
-                    media_paths.append(path)
-                    media_types.append(mtype)
-            elif kind == "image":
-                cached = await self._cache_image_attachment(attachment)
-                if cached:
-                    path, mtype = cached
-                    media_paths.append(path)
-                    media_types.append(mtype)
-            elif kind == "document":
-                cached = await self._cache_document_attachment(attachment)
-                if cached:
-                    path, mtype = cached
-                    media_paths.append(path)
-                    media_types.append(mtype)
+                return await self._cache_audio_attachment(attachment, kind, budget=budget)
+            if kind == "image":
+                return await self._cache_image_attachment(attachment, budget=budget)
+            return await self._cache_document_attachment(attachment, budget=budget)
+
+        # Downloads run concurrently (bounded by the download semaphore) while
+        # the results keep their original order.
+        for cached in await asyncio.gather(*(fetch(att, kind) for att, kind in candidates)):
+            if cached:
+                media_paths.append(cached[0])
+                media_types.append(cached[1])
 
         return media_paths, media_types
 
@@ -1062,28 +1262,172 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return "image/bmp"
         return "image/jpeg"
 
-    async def _cache_audio_attachment(
-        self, attachment: dict[str, Any], kind: str
-    ) -> tuple[str, str] | None:
-        """Download audio attachment and cache it."""
-        url = self._find_first_url(attachment)
-        if not url or not self._http_client:
+    # ── Inbound media downloads (bounded: bytes, deadline, concurrency) ──
+
+    def _inbound_download_slot(self) -> asyncio.Semaphore:
+        """Semaphore bounding how many inbound media downloads run concurrently."""
+        if self._inbound_semaphore is None:
+            self._inbound_semaphore = asyncio.Semaphore(self._inbound_media_concurrency)
+        return self._inbound_semaphore
+
+    def _cache_write_slot(self) -> asyncio.Lock:
+        """Lock serialising cache writes so partial-file cleanup is race-free."""
+        if self._cache_write_lock is None:
+            self._cache_write_lock = asyncio.Lock()
+        return self._cache_write_lock
+
+    async def _read_limited_inbound_body(
+        self,
+        response: Any,
+        *,
+        media_type: str,
+        budget: _InboundMediaBudget | None,
+        deadline: float,
+    ) -> bytes:
+        """Read a streaming body under the per-body cap, message budget and deadline.
+
+        The declared ``Content-Length`` is only an early hint: the running total
+        is re-checked on every chunk, so a missing or lying header cannot push
+        more than the cap into memory. Bytes charged to *budget* are refunded
+        when the read fails, so an aborted download does not consume the
+        message's aggregate allowance.
+        """
+        max_bytes = self._inbound_attachment_max_bytes
+        declared = response.headers.get("content-length")
+        if declared:
+            try:
+                declared_size = int(declared)
+            except (TypeError, ValueError):
+                logger.debug("MAX: ignoring invalid Content-Length for inbound %s: %r", media_type, declared)
+            else:
+                if max_bytes and declared_size > max_bytes:
+                    raise InboundMediaLimitError(
+                        f"declared size {declared_size} bytes exceeds the {max_bytes}-byte per-attachment cap"
+                    )
+
+        chunks: list[bytes] = []
+        total = 0
+        charged = 0
+        try:
+            async for chunk in response.aiter_bytes(INBOUND_MEDIA_CHUNK_SIZE):
+                if not chunk:
+                    continue
+                if time.monotonic() > deadline:
+                    raise InboundMediaLimitError(
+                        f"download exceeded the {self._inbound_media_timeout:g}s deadline ({total} bytes read)"
+                    )
+                total += len(chunk)
+                if max_bytes and total > max_bytes:
+                    raise InboundMediaLimitError(
+                        f"body exceeds the {max_bytes}-byte per-attachment cap ({total} bytes read)"
+                    )
+                if budget is not None:
+                    if not await budget.charge(len(chunk)):
+                        raise InboundMediaLimitError(
+                            f"per-message aggregate cap of {budget.max_bytes} bytes reached"
+                        )
+                    charged += len(chunk)
+                chunks.append(chunk)
+        except BaseException:
+            if budget is not None and charged:
+                await budget.refund(charged)
+            raise
+        return b"".join(chunks)
+
+    async def _download_inbound_media(
+        self,
+        url: str,
+        *,
+        media_type: str,
+        budget: _InboundMediaBudget | None = None,
+    ) -> tuple[bytes, str] | None:
+        """Stream one inbound attachment; return ``(body, content-type)`` or ``None``.
+
+        Refuses blocked hosts (SSRF guard), transport errors and anything that
+        breaks a configured limit. The body stays in memory (bounded by the cap)
+        and is never written to disk here, so a refused download cannot leave a
+        partial file behind.
+        """
+        if not self._http_client:
             return None
         if not self._validate_download_url(url):
-            logger.warning("MAX: refusing to download %s from blocked host: %s", kind, self._safe_url_for_log(url))
+            logger.warning(
+                "MAX: refusing to download %s from blocked host: %s",
+                media_type, self._safe_url_for_log(url),
+            )
             return None
         headers = {
             "Authorization": self._token,
             "User-Agent": "HermesAgent/1.0 MaxBot",
-            "Accept": "audio/*,*/*;q=0.8",
+            "Accept": _INBOUND_MEDIA_ACCEPT.get(media_type, "*/*"),
         }
+        timeout = self._inbound_media_timeout
+        deadline = time.monotonic() + timeout
         try:
-            resp = await self._http_client.get(url, headers=headers)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
+            async with self._inbound_download_slot(), self._http_client.stream(
+                "GET", url, headers=headers, timeout=httpx.Timeout(timeout)
+            ) as resp:
+                resp.raise_for_status()
+                content_type = str(resp.headers.get("content-type") or "")
+                body = await self._read_limited_inbound_body(
+                    resp, media_type=media_type, budget=budget, deadline=deadline
+                )
+            return body, content_type
+        except InboundMediaLimitError as exc:
+            logger.warning("MAX: dropped inbound %s from %s: %s", media_type, self._safe_url_for_log(url), exc)
             return None
-        content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            logger.warning("MAX: failed to download %s from %s: %s", media_type, self._safe_url_for_log(url), exc)
+            return None
+
+    async def _persist_inbound_media(
+        self, cache_fn: Any, data: bytes, arg: str, *, media_type: str
+    ) -> str | None:
+        """Cache validated media through a core writer, cleaning up partial files.
+
+        A writer can fail half-way (disk full, permissions, path rejected) and
+        leave a truncated file; writes are serialised so the before/after
+        directory diff can only hold files created by this call, which are
+        removed when the write raised.
+        """
+        cache_dir = _inbound_cache_dir(media_type)
+        if cache_dir is not None and cache_dir.exists():
+            try:
+                free = shutil.disk_usage(cache_dir).free
+            except OSError:
+                free = None
+            if free is not None and free < len(data) + CACHE_FREE_SPACE_HEADROOM:
+                logger.warning(
+                    "MAX: refusing to cache inbound %s (%d bytes): only %d bytes free in %s",
+                    media_type, len(data), free, cache_dir,
+                )
+                return None
+        async with self._cache_write_slot():
+            before = _dir_snapshot(cache_dir)
+            try:
+                return cache_fn(data, arg)
+            except Exception as exc:  # noqa: BLE001 — a failed cache write must not crash the adapter
+                for stale in _dir_snapshot(cache_dir, exclude=before):
+                    with contextlib.suppress(OSError):
+                        stale.unlink()
+                logger.warning("MAX: failed to cache inbound %s (%d bytes): %s", media_type, len(data), exc)
+                return None
+
+    async def _cache_audio_attachment(
+        self,
+        attachment: dict[str, Any],
+        kind: str,
+        budget: _InboundMediaBudget | None = None,
+    ) -> tuple[str, str] | None:
+        """Download audio attachment and cache it for the core STT pipeline."""
+        url = self._find_first_url(attachment)
+        if not url:
+            return None
+        downloaded = await self._download_inbound_media(url, media_type=kind, budget=budget)
+        if not downloaded:
+            return None
+        body, header_type = downloaded
+        content_type = header_type.split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
             guessed, _ = mimetypes.guess_type(urlparse(url).path)
             content_type = guessed or "audio/ogg"
@@ -1097,33 +1441,28 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             ext = Path(urlparse(url).path).suffix.lower() or ".ogg"
         if ext == ".oga":
             ext = ".ogg"
-        return cache_audio_from_bytes(resp.content, ext), content_type or "audio/ogg"
+        path = await self._persist_inbound_media(cache_audio_from_bytes, body, ext, media_type=kind)
+        if path is None:
+            return None
+        return path, content_type or "audio/ogg"
 
     async def _cache_image_attachment(
-        self, attachment: dict[str, Any]
+        self,
+        attachment: dict[str, Any],
+        budget: _InboundMediaBudget | None = None,
     ) -> tuple[str, str] | None:
         """Download image attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._http_client:
+        if not url:
             return None
-        if not self._validate_download_url(url):
-            logger.warning("MAX: refusing to download image from blocked host: %s", self._safe_url_for_log(url))
+        downloaded = await self._download_inbound_media(url, media_type="image", budget=budget)
+        if not downloaded:
             return None
-        headers = {
-            "Authorization": self._token,
-            "User-Agent": "HermesAgent/1.0 MaxBot",
-            "Accept": "image/*,*/*;q=0.8",
-        }
-        try:
-            resp = await self._http_client.get(url, headers=headers)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
-            return None
-        content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        body, header_type = downloaded
+        content_type = header_type.split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
             # Try magic bytes first — more reliable than Content-Type header
-            magic_mime = self._detect_image_mime(resp.content)
+            magic_mime = self._detect_image_mime(body)
             if magic_mime.startswith("image/"):
                 content_type = magic_mime
             else:
@@ -1134,34 +1473,25 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             ext = Path(urlparse(url).path).suffix.lower() or ".jpg"
         if ext in {".jpe", ".jpeg"}:
             ext = ".jpg"
-        try:
-            return cache_image_from_bytes(resp.content, ext), content_type or "image/jpeg"
-        except ValueError as exc:
-            logger.warning("MAX: rejected non-image bytes: %s", exc)
+        path = await self._persist_inbound_media(cache_image_from_bytes, body, ext, media_type="image")
+        if path is None:
             return None
+        return path, content_type or "image/jpeg"
 
     async def _cache_document_attachment(
-        self, attachment: dict[str, Any]
+        self,
+        attachment: dict[str, Any],
+        budget: _InboundMediaBudget | None = None,
     ) -> tuple[str, str] | None:
         """Download document attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._http_client:
+        if not url:
             return None
-        if not self._validate_download_url(url):
-            logger.warning("MAX: refusing to download document from blocked host: %s", self._safe_url_for_log(url))
+        downloaded = await self._download_inbound_media(url, media_type="document", budget=budget)
+        if not downloaded:
             return None
-        headers = {
-            "Authorization": self._token,
-            "User-Agent": "HermesAgent/1.0 MaxBot",
-            "Accept": "application/*,text/*,*/*;q=0.8",
-        }
-        try:
-            resp = await self._http_client.get(url, headers=headers)
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
-            return None
-        content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        body, header_type = downloaded
+        content_type = header_type.split(";", 1)[0].strip().lower()
         filename = self._find_first_filename(attachment) or Path(urlparse(url).path).name or "document"
         ext = Path(filename).suffix.lower()
         if not content_type or content_type == "application/octet-stream":
@@ -1173,11 +1503,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             filename = f"{filename}{ext}"
         if ext in SUPPORTED_DOCUMENT_TYPES:
             content_type = SUPPORTED_DOCUMENT_TYPES[ext]
-        try:
-            return cache_document_from_bytes(resp.content, filename), content_type
-        except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to cache document: %s", exc)
+        path = await self._persist_inbound_media(cache_document_from_bytes, body, filename, media_type="document")
+        if path is None:
             return None
+        return path, content_type
 
     @staticmethod
     def _derive_message_type(text: str, media_types: list[str]) -> MessageType:
