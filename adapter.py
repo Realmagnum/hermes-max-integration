@@ -149,6 +149,55 @@ def _is_group(chat_id: str) -> bool:
         return False
 
 
+# `recipient.chat_type` values that mean "one-to-one dialog".
+_DIALOG_CHAT_TYPES = frozenset({"dialog", "dm", "private"})
+
+
+def _resolve_chat_scope(
+    recipient: dict[str, Any],
+    chat: dict[str, Any],
+    message: dict[str, Any],
+    user_id: str,
+) -> tuple[str, str, str]:
+    """Classify an update into ``(chat_type, scoped_chat_id, raw_chat_id)``.
+
+    MAX puts the peer of a one-to-one dialog in ``recipient.chat_id`` **and**
+    marks the recipient with ``chat_type == "dialog"``; the same payload also
+    carries ``recipient.user_id`` (the bot) while the human is ``sender.user_id``.
+    A dialog therefore must be scoped to ``user:<sender.user_id>`` — the
+    ``chat_id`` it carries is a service id and must not be treated as a group
+    (the reference normalisation table maps *dialog* to ``recipient.user_id``;
+    see ``schemes/MAX_API_Real_Payloads_2026.md`` §2.1/§2.3).
+
+    Groups/channels have no ``"dialog"`` chat_type hint and carry a real
+    ``chat_id``; payloads with neither hint nor id keep the historical DM
+    fallback.
+    """
+    raw_chat_id = str(
+        recipient.get("chat_id")
+        or chat.get("chat_id")
+        or message.get("chat_id")
+        or ""
+    )
+    hint = str(
+        recipient.get("chat_type")
+        or chat.get("chat_type")
+        or message.get("chat_type")
+        or ""
+    ).strip().lower()
+
+    if hint in _DIALOG_CHAT_TYPES:
+        return "dm", f"user:{user_id}", raw_chat_id
+    if raw_chat_id:
+        return "group", f"chat:{raw_chat_id}", raw_chat_id
+    return "dm", f"user:{user_id}", raw_chat_id
+
+
+def _scoped_chat_type(scoped_chat_id: str) -> str:
+    """Inverse of `_resolve_chat_scope` for an already scoped id."""
+    return "group" if scoped_chat_id.startswith("chat:") else "dm"
+
+
 def _coerce_bool(value: Any, default: bool = False) -> bool:
     """Coerce env/config strings to bool."""
     if value is None:
@@ -608,19 +657,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         text = (body.get("text") or message.get("text") or "").strip()
 
         chat = update.get("chat", {}) or {}
-        chat_id_str = str(
-            recipient.get("chat_id")
-            or chat.get("chat_id")
-            or message.get("chat_id")
-            or ""
+        # A captured dialog update carries recipient.chat_id (a service chat id)
+        # AND recipient.chat_type == "dialog"; classify via chat_type so the
+        # dialog is scoped to the human peer instead of being treated as a group.
+        chat_type, scoped_chat_id, chat_id_str = _resolve_chat_scope(
+            recipient, chat, message, user_id
         )
-
-        if chat_id_str:
-            chat_type = "group"
-            scoped_chat_id = f"chat:{chat_id_str}"
-        else:
-            chat_type = "dm"
-            scoped_chat_id = f"user:{user_id}"
 
         # Store DM mapping
         self._dm_user_ids[str(chat_id_str or user_id)] = user_id
@@ -1541,19 +1583,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             return None
 
         # Extract chat info for routing.
-        # Max API callback payload puts chat info in message.recipient.
-        msg = payload.get("message", {})
-        recipient = msg.get("recipient", {}) if msg else {}
-        raw_chat_id = (
-            recipient.get("chat_id")
-            or (payload.get("chat", {}) or {}).get("chat_id", "")
-            or payload.get("chat_id", "")
-            or ""
+        # Max API callback payload puts chat info in message.recipient — and for
+        # a dialog that recipient also carries chat_id (a service id) next to
+        # chat_type == "dialog". Classify it exactly like an inbound message so
+        # a DM callback is scoped to the pressing user, not to chat:<id>.
+        msg = payload.get("message", {}) or {}
+        recipient = msg.get("recipient", {}) or {}
+        chat_obj = payload.get("chat", {}) or {}
+        chat_type, scoped_chat, chat_id = _resolve_chat_scope(
+            recipient, chat_obj, msg, user_id
         )
-        chat_id = str(raw_chat_id)
 
-        logger.info("MAX: callback received: data=%s from user=%s chat_id=%s",
-                     data, user_id, chat_id)
+        logger.info("MAX: callback received: data=%s from user=%s chat_type=%s chat_id=%s",
+                     data, user_id, chat_type, chat_id)
 
         # Dispatch based on prefix
         parts = data.split(":", 2)
@@ -1561,22 +1603,28 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         if prefix == "exec":
             # Dangerous command approval buttons
-            return await self._handle_exec_callback(data, user_id, payload)
+            return await self._handle_exec_callback(data, user_id, payload, scoped_chat)
         elif prefix == "sc":
             # Slash-command confirmation buttons
-            return await self._handle_slash_confirm_callback(data, user_id, payload)
+            return await self._handle_slash_confirm_callback(
+                data, user_id, payload, scoped_chat
+            )
         elif prefix == "clarify":
             # Clarify choice buttons
-            return await self._handle_clarify_callback(data, user_id, payload)
+            return await self._handle_clarify_callback(
+                data, user_id, payload, scoped_chat
+            )
         elif prefix == "model":
             # Model picker buttons
-            return await self._handle_model_callback(data, user_id, payload, chat_id)
+            return await self._handle_model_callback(
+                data, user_id, payload, scoped_chat
+            )
         else:
             logger.warning("MAX: unknown callback prefix: %s", prefix)
             return None
 
     async def _handle_exec_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str
     ) -> MessageEvent | None:
         """Route exec approval button to resolve_gateway_approval."""
         # Format: exec:{choice}:{approval_id}
@@ -1589,13 +1637,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         session_key = self._exec_approval_state.pop(approval_id, None)
         if not session_key:
             logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
-            await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
+            await self.send(scoped_chat, "❌ This approval has already been resolved.")
             return None
 
         from tools.approval import has_blocking_approval, resolve_gateway_approval
 
         if not has_blocking_approval(session_key):
-            await self.send(f"user:{user_id}", "❌ No pending approval to resolve.")
+            await self.send(scoped_chat, "❌ No pending approval to resolve.")
             return None
 
         count = resolve_gateway_approval(session_key, choice)
@@ -1616,11 +1664,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             "deny": "❌ Denied",
         }
         label = labels.get(choice, f"Resolved: {choice}")
-        await self.send(f"user:{user_id}", label)
+        await self.send(scoped_chat, label)
         return None
 
     async def _handle_slash_confirm_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str
     ) -> MessageEvent | None:
         """Route slash-confirm button to tools.slash_confirm.resolve."""
         # Format: sc:{choice}:{confirm_id}
@@ -1642,11 +1690,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             # Send result directly via MAX API — same reasoning as
             # _handle_exec_callback: avoid injecting the result into the
             # AI's context as a new user message in the next turn.
-            await self.send(f"user:{user_id}", result_text)
+            await self.send(scoped_chat, result_text)
         return None
 
     async def _handle_clarify_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str
     ) -> MessageEvent | None:
         """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
         # Format: clarify:{clarify_id}:{choice_index}
@@ -1688,11 +1736,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 # Send choice text to MAX so the user sees what they picked,
                 # then return a MessageEvent (NOT internal) so the AI sees it
                 # as the user's input in the next turn.
-                await self.send(f"user:{user_id}", result_text)
+                await self.send(scoped_chat, result_text)
                 source = self.build_source(
-                    chat_id=f"user:{user_id}",
+                    chat_id=scoped_chat,
                     chat_name=user_id,
-                    chat_type="dm",
+                    chat_type=_scoped_chat_type(scoped_chat),
                     user_id=user_id,
                     user_name=user_id,
                 )
@@ -1707,7 +1755,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_model_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any], chat_id: str,
+        self, data: str, user_id: str, raw_payload: dict[str, Any], scoped_chat: str,
     ) -> MessageEvent | None:
         """Route model picker button callbacks.
 
@@ -1716,15 +1764,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
           model:pick:{model}:{provider} — model selected, switch
           model:page:{provider}:{page} — page navigation
           model:back — back to provider list
-        """
-        # Build the correct scoped_chat matching how send_model_picker stores state.
-        # If chat_id (raw numeric) is present, the message was in a group → "chat:{id}".
-        # Otherwise it's a DM → "user:{user_id}".
-        if chat_id:
-            scoped_chat = f"chat:{chat_id}"
-        else:
-            scoped_chat = f"user:{user_id}"
 
+        ``scoped_chat`` is resolved by `_resolve_chat_scope` in `_on_callback`,
+        i.e. ``user:<id>`` for a dialog and ``chat:<id>`` for a group — the same
+        keying `send_model_picker` stores its state under.
+        """
         parts = data.split(":", 3)
 
         if len(parts) >= 3 and parts[1] == "provider":
