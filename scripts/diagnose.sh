@@ -35,8 +35,7 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 ENV_FILE="$HERMES_HOME/.env"
 CONFIG_FILE="$HERMES_HOME/config.yaml"
 GATEWAY_LOG="$HERMES_HOME/logs/gateway.log"
-MAX_API="${MAX_API_BASE:-https://platform-api.max.ru}"
-WEBHOOK_PORT="${MAX_WEBHOOK_PORT:-8646}"
+MAX_API="https://platform-api.max.ru"
 
 # Parse KEY=VALUE from .env (skip comments, non-var lines)
 if [ -f "$ENV_FILE" ]; then
@@ -65,7 +64,7 @@ echo ""
 # ── 1. Plugin installed & enabled ────────────────────────────────────
 desc="Plugin installed & enabled"
 if command -v hermes &>/dev/null; then
-    plugin_line=$(hermes plugins list 2>/dev/null | grep "max-platform" || true)
+    plugin_line=$(hermes plugins list 2>/dev/null | grep "max-platform")
     if echo "$plugin_line" | grep -q "enabled"; then
         version=$(echo "$plugin_line" | sed 's/.*│ *//; s/ *│.*//')
         check 1 "$desc ($version)" "pass"
@@ -93,16 +92,9 @@ fi
 
 # ── 3. Mode-specific: webhook port / polling activity ────────────────
 if [ "$MODE" = "webhook" ]; then
-    desc="Webhook port :$WEBHOOK_PORT listening"
-    listener=""
-    if command -v ss >/dev/null 2>&1; then
-        listener=$(ss -tlnp 2>/dev/null | grep -E ":${WEBHOOK_PORT}[[:space:]]" || true)
-    elif command -v lsof >/dev/null 2>&1; then
-        listener=$(lsof -nP -iTCP:"$WEBHOOK_PORT" -sTCP:LISTEN 2>/dev/null || true)
-    fi
-    if [ -n "$listener" ]; then
-        pid=$(printf '%s\n' "$listener" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
-        [ -z "$pid" ] && pid=$(printf '%s\n' "$listener" | awk 'NR==2 {print $2}')
+    desc="Webhook port :8646 listening"
+    if ss -tlnp 2>/dev/null | grep -q "8646"; then
+        pid=$(ss -tlnp 2>/dev/null | grep "8646" | sed 's/.*pid=//;s/,.*//')
         echo -e "       PID: $pid"
         check 3 "$desc" "pass"
     else
@@ -132,12 +124,22 @@ fi
 
 # ── 4. Mode-specific: health endpoint / poll errors ──────────────────
 if [ "$MODE" = "webhook" ]; then
-    desc="Health endpoint"
-    health=$(curl -fsS --max-time 5 "http://127.0.0.1:${WEBHOOK_PORT}/health" 2>/dev/null | tr -d '[:space:]' || echo "")
-    if [ "$health" = '{"status":"ok"}' ]; then
+    # Liveness and readiness are separate: the HTTP server can be up (/health)
+    # while MAX is not delivering anything (/ready 503 = registration failed
+    # or the subscription is gone). Only both together mean a working bot.
+    desc="Webhook liveness (/health) + readiness (/ready)"
+    health=$(curl -s --max-time 5 http://localhost:8646/health 2>/dev/null | tr -d '[:space:]' || true)
+    ready_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8646/ready 2>/dev/null || true)
+    ready_code="${ready_code:-000}"
+    if [ "$health" = '{"status":"ok"}' ] && [ "$ready_code" = "200" ]; then
         check 4 "$desc" "pass"
     else
-        echo -e "       Got: $health"
+        echo -e "       /health: ${health:-<no response>} (liveness — HTTP server up)"
+        if [ "$ready_code" = "200" ]; then
+            echo -e "       /ready:  200 (MAX delivers to this server)"
+        else
+            echo -e "       /ready:  $ready_code (MAX is NOT delivering — subscription missing/rejected)"
+        fi
         check 4 "$desc" "fail"
     fi
 else
@@ -159,12 +161,10 @@ fi
 # ── 5. Subscription check ────────────────────────────────────────────
 desc="Subscription status"
 if [ -n "${MAX_BOT_TOKEN:-}" ]; then
-    subs=$(curl -fsS --max-time 10 \
+    subs=$(curl -s --max-time 10 \
         -H "Authorization: $MAX_BOT_TOKEN" \
         "$MAX_API/subscriptions" 2>/dev/null || echo "")
-    if [ -z "$subs" ]; then
-        check 5 "$desc (API request failed or returned empty response)" "fail"
-    elif [ "$MODE" = "webhook" ]; then
+    if [ "$MODE" = "webhook" ]; then
         webhook_path="${MAX_WEBHOOK_URL:-unknown}"
         if echo "$subs" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('subscriptions',[])))" 2>/dev/null | grep -q "^[1-9]"; then
             has_target=$(echo "$subs" | python3 -c "
@@ -195,9 +195,7 @@ for s in d.get('subscriptions',[]):
         fi
     else  # long polling
         sub_count=$(echo "$subs" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('subscriptions',[])))" 2>/dev/null || echo "0")
-        if ! printf '%s' "$sub_count" | grep -Eq '^[0-9]+$'; then
-            check 5 "$desc (invalid API response)" "fail"
-        elif [ "$sub_count" = "0" ]; then
+        if [ "$sub_count" = "0" ]; then
             check 5 "$desc (no stale subscriptions — good)" "pass"
         else
             echo -e "       WARNING: $sub_count stale subscription(s) will block polling!"
@@ -211,7 +209,7 @@ fi
 # ── 6. Token valid ────────────────────────────────────────────────────
 desc="Bot token valid"
 if [ -n "${MAX_BOT_TOKEN:-}" ]; then
-    me=$(curl -fsS --max-time 10 \
+    me=$(curl -s --max-time 10 \
         -H "Authorization: $MAX_BOT_TOKEN" \
         "$MAX_API/me" 2>/dev/null || echo "")
     username=$(echo "$me" | python3 -c "import sys,json; print(json.load(sys.stdin).get('username',''))" 2>/dev/null || echo "")

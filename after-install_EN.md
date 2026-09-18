@@ -80,7 +80,10 @@ Next steps:
    ```bash
    hermes gateway status
    curl http://localhost:8646/health
-   # Expected: {"status":"ok"}
+   # Expected: {"status":"ok"} — the webhook server is alive
+   curl -i http://localhost:8646/ready
+   # Expected: 200 {"status":"ready"} — MAX actually delivers updates here
+   # 503 not_ready = server alive, subscription not registered
    ```
 
 ## Official Max docs

@@ -537,7 +537,8 @@ hermes send --to max:USER_ID "текст MEDIA:/file.pdf"     # ✅ и так р
 ```bash
 hermes gateway status
 curl -H "Authorization: ***" https://platform-api.max.ru/me
-curl http://localhost:8646/health
+curl http://localhost:8646/health          # liveness
+curl -i http://localhost:8646/ready        # readiness: 200 = MAX delivers here, 503 = not registered
 ```
 
 ### Таблицы не стали картинками

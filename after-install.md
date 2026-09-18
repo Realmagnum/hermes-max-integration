@@ -79,7 +79,10 @@
    ```bash
    hermes gateway status
    curl http://localhost:8646/health
-   # Ожидается: {"status":"ok"}
+   # Ожидается: {"status":"ok"} — сервер вебхука жив
+   curl -i http://localhost:8646/ready
+   # Ожидается: 200 {"status":"ready"} — MAX реально шлёт апдейты сюда
+   # 503 not_ready = сервер жив, но подписка не зарегистрирована
    ```
 
 ## Официальная документация MAX

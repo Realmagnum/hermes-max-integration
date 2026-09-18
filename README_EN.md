@@ -461,7 +461,8 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 ```bash
 hermes gateway status
 curl -H "Authorization: ***" https://platform-api.max.ru/me
-curl http://localhost:8646/health
+curl http://localhost:8646/health          # liveness
+curl -i http://localhost:8646/ready        # readiness: 200 = MAX delivers here, 503 = not registered
 ```
 
 ### Tables not rendering as images

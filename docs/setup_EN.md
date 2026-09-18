@@ -201,8 +201,12 @@ sudo systemctl status hermes-gateway
 ### Check
 
 ```bash
-# Health check
+# Health check (liveness)
 curl http://localhost:8646/health
+
+# Readiness check — MAX actually delivers updates to this webhook
+# 200 {"status":"ready"} = registered; 503 not_ready = subscription missing
+curl -i http://localhost:8646/ready
 
 # Plugin status
 hermes gateway status
