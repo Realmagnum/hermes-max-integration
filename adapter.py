@@ -21,11 +21,9 @@ Configuration in ~/.hermes/.env:
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import mimetypes
 import os
-import socket
 import time
 from pathlib import Path
 from typing import Any
@@ -72,17 +70,6 @@ UPLOAD_DELAY = 2.0
 
 # SSRF allowlist is in .mixins.media_upload
 
-# ── Media-download SSRF policy ───────────────────────────────────────────
-# MAX serves every attachment from its own CDN, so download origins are a
-# closed allowlist (suffix match, subdomains included) and the transport is
-# https-only — the request carries the bot token (Authorization header).
-# Deployments that relay media through their own proxy can extend the list
-# with the ``download_allowed_hosts`` config key / MAX_DOWNLOAD_ALLOWED_HOSTS
-# env var (comma-separated hostnames; a leading "*." is accepted).
-DOWNLOAD_ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (".max.ru", ".oneme.ru")
-DOWNLOAD_ALLOWED_SCHEMES: frozenset[str] = frozenset({"https"})
-DOWNLOAD_REDIRECT_STATUS_CODES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
-
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy reverse proxy; порт защищён host firewall
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
@@ -108,86 +95,6 @@ def _safe_url_for_log(url: str) -> str:
     if parsed.username and parsed.username != parsed.hostname:
         return url.replace(parsed.username, "***")
     return url
-
-
-def _parse_host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    """Return the IP literal *host* denotes, or ``None`` when it is a DNS name.
-
-    ``ipaddress.ip_address`` only accepts canonical spellings, so the legacy
-    IPv4 forms every libc resolver understands — ``2130706433``,
-    ``0x7f000001``, ``017700000001``, ``0177.0.0.1``, ``127.1`` — were
-    classified as "unparseable, therefore a hostname" and slipped through the
-    first version of the download guard. Canonicalise them exactly like
-    ``inet_aton`` does, so the guard reasons about the address the OS will
-    actually dial.
-    """
-    candidate = str(host).strip()
-    if candidate.startswith("[") and candidate.endswith("]"):
-        candidate = candidate[1:-1]
-    # An IPv6 zone/scope id ("fe80::1%en0") is meaningless for a remote host.
-    candidate = candidate.split("%", 1)[0]
-    if not candidate:
-        return None
-    try:
-        return ipaddress.ip_address(candidate)
-    except ValueError:
-        pass
-    try:
-        packed = socket.inet_aton(candidate)
-    except OSError:
-        return None
-    return ipaddress.IPv4Address(packed)
-
-
-def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """True only for addresses that are routable on the public internet."""
-    # IPv4-mapped/-compatible IPv6 must be judged by the IPv4 address it is.
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        return _is_public_ip(mapped)
-    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
-        return False
-    if ip.is_reserved or ip.is_unspecified:
-        # ``is_reserved`` also covers NAT64-mapped dead ends such as
-        # 64:ff9b::7f00:1, which Python reports as *global*.
-        return False
-    # ``is_global`` rejects everything else that is not publicly routable,
-    # including the shared/CGNAT 100.64.0.0/10 block and documentation nets.
-    return bool(ip.is_global)
-
-
-def _normalize_host_suffixes(value: Any) -> tuple[str, ...]:
-    """Normalise an allowlist config value to ``(".example.com", ...)`` form.
-
-    Accepts a comma/semicolon separated string or a list of hostnames; a
-    leading ``*.`` wildcard (the way CDN hosts are usually written) is
-    accepted and equivalent to the bare suffix.
-    """
-    if isinstance(value, str):
-        parts: list[Any] = value.replace(";", ",").split(",")
-    elif isinstance(value, (list, tuple, set, frozenset)):
-        parts = list(value)
-    else:
-        return ()
-    suffixes: list[str] = []
-    for part in parts:
-        host = str(part).strip().lower().rstrip(".")
-        if not host:
-            continue
-        host = host.removeprefix("*")
-        if not host.startswith("."):
-            host = f".{host}"
-        if len(host) > 1:
-            suffixes.append(host)
-    return tuple(suffixes)
-
-
-def _host_allowed_by_suffixes(host: str, suffixes: tuple[str, ...]) -> bool:
-    """True when *host* is one of *suffixes* or a subdomain of one."""
-    for suffix in suffixes:
-        if host == suffix[1:] or host.endswith(suffix):
-            return True
-    return False
 
 
 def _find_audio_url_direct(obj: Any, depth: int = 0) -> str | None:
@@ -291,13 +198,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         if self._table_as_image:
             self._table_image_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-        # Cross-platform session commands (/sessions, /resume across all platforms)
-        self._cross_session: bool = _coerce_bool(
-            os.getenv("MAX_CROSS_SESSION")
-            or extra.get("cross_session", True),  # enabled by default
-            True,
-        )
-
         # Webhook settings
         self._webhook_host: str = (
             os.getenv("MAX_WEBHOOK_HOST")
@@ -314,13 +214,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._webhook_secret: str = (
             os.getenv("MAX_WEBHOOK_SECRET")
             or str(extra.get("webhook_secret", ""))
-        )
-        # Explicit, loopback-only escape hatch for local development. Never
-        # enabled by default: a secretless webhook accepts forged events.
-        self._webhook_insecure_dev: bool = _coerce_bool(
-            os.getenv("MAX_WEBHOOK_INSECURE_DEV")
-            or extra.get("webhook_insecure_dev", False),
-            False,
         )
         self._webhook_url: str = (
             os.getenv("MAX_WEBHOOK_URL")
@@ -355,16 +248,32 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or str(extra.get("group_allow_chats", ""))
         )
 
-        # Media-download SSRF policy. The MAX CDN suffixes are always allowed;
-        # `download_allowed_hosts` (config) / MAX_DOWNLOAD_ALLOWED_HOSTS (env)
-        # adds deployment-specific origins, e.g. a self-hosted media proxy.
-        self._download_allowed_suffixes: tuple[str, ...] = (
-            DOWNLOAD_ALLOWED_HOST_SUFFIXES
-            + _normalize_host_suffixes(
-                os.getenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "")
-                or extra.get("download_allowed_hosts", "")
-            )
+        # Cross-platform session commands (/sessions, /resume across ALL platforms).
+        # SEC-05: deny by default — this path bypasses the core's per-platform
+        # session scoping and exposes titles/previews/IDs of every platform, so it
+        # requires an explicit opt-in *and* an explicitly authorised owner caller.
+        self._cross_session: bool = _coerce_bool(
+            os.getenv("MAX_CROSS_SESSION")
+            or extra.get("cross_session", False),
+            False,
         )
+        _cross_users_raw = (
+            os.getenv("MAX_CROSS_SESSION_USERS")
+            or extra.get("cross_session_users", "")
+        )
+        if isinstance(_cross_users_raw, (list, tuple, set)):
+            _cross_users_raw = ",".join(str(v) for v in _cross_users_raw)
+        self._cross_session_users: set[str] = set(_parse_list(str(_cross_users_raw or "")))
+        if not self._cross_session_users and not self._allow_all_users:
+            # A non-empty explicit user allowlist doubles as the owner set. An
+            # empty allowlist or allow_all_users stays fail-closed (deny all).
+            self._cross_session_users = set(self._allowed_users_set)
+        if self._cross_session and not self._cross_session_users:
+            logger.warning(
+                "MAX: MAX_CROSS_SESSION is enabled but no cross-session owner is "
+                "configured (MAX_CROSS_SESSION_USERS or a non-empty "
+                "MAX_ALLOWED_USERS) — cross-platform session access stays denied"
+            )
 
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
@@ -388,6 +297,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
         self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
         self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
+
+    def _cross_session_allowed(self, user_id: str) -> bool:
+        """SEC-05: deny-by-default authorization for cross-platform session commands.
+
+        Grants access only when the feature is explicitly opted in
+        (``cross_session`` / ``MAX_CROSS_SESSION``) *and* the caller is an
+        explicitly configured owner (``cross_session_users`` /
+        ``MAX_CROSS_SESSION_USERS``, or a non-empty ``MAX_ALLOWED_USERS``
+        allowlist). ``allow_all_users`` alone never grants cross-platform
+        visibility into other platforms' sessions.
+        """
+        if not self._cross_session or not user_id:
+            return False
+        return str(user_id) in self._cross_session_users
 
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
@@ -821,22 +744,29 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else "[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
-        if text and self._cross_session:
+        # SEC-05: authorise BEFORE any side effect (SessionDB queries, outbound
+        # messages, core command rewriting). Callers that are not opted-in owners
+        # fall through unchanged to the core, which applies its own per-platform
+        # scoping — and its own explicit-admin check for `--all`.
+        if text and self._cross_session and self._cross_session_allowed(user_id):
             if text.startswith('/sessions'):
                 args = text[len('/sessions'):].strip()
-                if args and not args.lower().startswith('search '):
+                args_lower = args.lower()
+                # `/sessions search [query]` is our listing/search form; anything
+                # else non-empty is a session title/ID for the core.
+                if args and args_lower != 'search' and not args_lower.startswith('search '):
                     # Has a target ID → let core handle with --all override
                     text = f"/resume --all {args}"
                 else:
                     # Plain /sessions or /sessions search → our handler (all platforms)
-                    await self._handle_cross_sessions(text, scoped_chat_id)
+                    await self._handle_cross_sessions(text, scoped_chat_id, user_id)
                     return None
             elif text.startswith('/resume'):
                 if '--all' not in text and '--cross-room' not in text:
                     parts = text.split(maxsplit=1)
                     if len(parts) == 1:
                         # /resume with no args → our handler (all platforms)
-                        await self._handle_cross_sessions('/sessions', scoped_chat_id)
+                        await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
                         return None
                     else:
                         # /resume <target> → rewrite with --all for core
@@ -1029,127 +959,33 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     @staticmethod
-    def _validate_download_url(
-        url: str,
-        allowed_suffixes: tuple[str, ...] = DOWNLOAD_ALLOWED_HOST_SUFFIXES,
-    ) -> bool:
-        """SSRF guard for media downloads: allow only public https CDN origins.
+    def _validate_download_url(url: str) -> bool:
+        """SSRF guard for media downloads: allow only public http(s) hosts.
 
-        Layered, cheapest check first:
-
-        * scheme must be https — the request carries the bot token, so
-          plaintext transport is not acceptable;
-        * credentials in the URL (``user:pass@host``) are rejected;
-        * bare ``localhost`` / ``*.local`` names are rejected;
-        * a host that is an IP literal — including the legacy inet_aton
-          spellings ``2130706433`` / ``0x7f000001`` / ``0177.0.0.1`` / ``127.1``
-          that ``ipaddress`` alone cannot parse — must be a public address;
-        * every other host must match the CDN suffix allowlist.
-
-        This is the synchronous half of the guard and needs no DNS. DNS
-        answers are validated and the connection is pinned to the validated
-        address in :meth:`_prepare_download`.
+        Rejects non-http schemes, loopback/private/link-local IPs (e.g.
+        169.254.169.254 metadata endpoint, 127.0.0.1, 10.x internal nets)
+        and bare ``localhost``/``*.local`` hostnames.
         """
+        import ipaddress
+
         parsed = urlparse(url)
-        if parsed.scheme.lower() not in DOWNLOAD_ALLOWED_SCHEMES:
-            return False
-        if parsed.username or parsed.password:
+        if parsed.scheme not in ("http", "https"):
             return False
         host = parsed.hostname
         if not host:
             return False
         host_l = host.lower().rstrip(".")
-        if not host_l:
-            return False
         if host_l == "localhost" or host_l.endswith(".local"):
             return False
-        if not _host_allowed_by_suffixes(host_l, allowed_suffixes):
-            return False
-        ip = _parse_host_ip(host_l)
-        if ip is not None:
-            return _is_public_ip(ip)
-        return True
-
-    def _download_url_allowed(self, url: str) -> bool:
-        """Instance-level guard: class default suffixes plus configured ones."""
-        return self._validate_download_url(url, self._download_allowed_suffixes)
-
-    @staticmethod
-    def _resolve_public_addresses(host: str, port: int) -> list[str] | None:
-        """Resolve *host* and return its addresses only if all of them are public.
-
-        A name answering with a mix of public and internal records must not be
-        usable: the resolver may hand back either one, so the whole answer is
-        rejected. Returns ``None`` when resolution fails or any A/AAAA record
-        points outside the public internet.
-        """
+        # If the host is a literal IP, reject non-public ranges.
         try:
-            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-        except OSError:
-            return None
-        addresses: set[str] = set()
-        for _family, _socktype, _proto, _canonname, sockaddr in infos:
-            ip = _parse_host_ip(str(sockaddr[0]))
-            if ip is None or not _is_public_ip(ip):
-                return None
-            addresses.add(str(ip))
-        if not addresses:
-            return None
-        return sorted(addresses)
-
-    @staticmethod
-    def _pin_download_request(
-        url: str, ip: str
-    ) -> tuple[str, dict[str, str], dict[str, Any]]:
-        """Rewrite *url* to dial *ip* directly, keeping the original Host/SNI.
-
-        The socket target is the address that was validated above, so a second
-        DNS answer (rebinding) cannot point the connection at an internal
-        service; ``sni_hostname`` keeps TLS verification against the real
-        hostname instead of the literal address.
-        """
-        parsed = urlparse(url)
-        host = parsed.hostname or ""
-        try:
-            port = parsed.port
+            ip = ipaddress.ip_address(host_l)
         except ValueError:
-            port = None
-        address = f"[{ip}]" if ":" in ip else ip
-        netloc = f"{address}:{port}" if port is not None else address
-        pinned_url = parsed._replace(netloc=netloc).geturl()
-        host_header = f"[{host}]" if ":" in host else host
-        if port is not None and port != 443:
-            host_header = f"{host_header}:{port}"
-        return pinned_url, {"Host": host_header}, {"sni_hostname": host}
-
-    async def _prepare_download(
-        self, url: str
-    ) -> tuple[str, dict[str, str], dict[str, Any]] | None:
-        """Validate, resolve and pin a media-download URL.
-
-        Returns ``(request_url, extra_headers, httpcore_extensions)`` ready to
-        pass to ``self._http_client.get``, or ``None`` when *url* must not be
-        fetched (blocked origin, DNS answer touching a non-public range, or a
-        resolution failure).
-        """
-        if not self._download_url_allowed(url):
-            return None
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        ip = _parse_host_ip(host)
+            ip = None
         if ip is None:
-            try:
-                port = parsed.port or 443
-            except ValueError:
-                return None
-            addresses = await asyncio.to_thread(
-                self._resolve_public_addresses, host, port
-            )
-            if not addresses:
-                return None
-            ip = ipaddress.ip_address(addresses[0])
-        return self._pin_download_request(url, str(ip))
-
+            return True
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
     @staticmethod
     def _detect_image_mime(data: bytes) -> str:
         """Detect image MIME type from magic bytes.
@@ -1184,31 +1020,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
-        prepared = await self._prepare_download(url)
-        if prepared is None:
-            logger.warning(
-                "MAX: refusing to download %s from %s "
-                "(not an allowed public CDN origin — see download_allowed_hosts)",
-                kind, self._safe_url_for_log(url),
-            )
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download %s from blocked host: %s", kind, self._safe_url_for_log(url))
             return None
-        request_url, pin_headers, extensions = prepared
         headers = {
             "Authorization": self._token,
             "User-Agent": "HermesAgent/1.0 MaxBot",
             "Accept": "audio/*,*/*;q=0.8",
-            **pin_headers,
         }
         try:
-            resp = await self._http_client.get(request_url, headers=headers, extensions=extensions)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
-            return None
-        if resp.status_code in DOWNLOAD_REDIRECT_STATUS_CODES:
-            # Redirects are not followed: the Location may point anywhere and
-            # the request carries the bot token (see SEC-02).
-            logger.warning("MAX: refusing redirect for %s: %s", kind, self._safe_url_for_log(url))
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -1233,29 +1057,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
-        prepared = await self._prepare_download(url)
-        if prepared is None:
-            logger.warning(
-                "MAX: refusing to download image from %s "
-                "(not an allowed public CDN origin — see download_allowed_hosts)",
-                self._safe_url_for_log(url),
-            )
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download image from blocked host: %s", self._safe_url_for_log(url))
             return None
-        request_url, pin_headers, extensions = prepared
         headers = {
             "Authorization": self._token,
             "User-Agent": "HermesAgent/1.0 MaxBot",
             "Accept": "image/*,*/*;q=0.8",
-            **pin_headers,
         }
         try:
-            resp = await self._http_client.get(request_url, headers=headers, extensions=extensions)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
-            return None
-        if resp.status_code in DOWNLOAD_REDIRECT_STATUS_CODES:
-            logger.warning("MAX: refusing redirect for image: %s", self._safe_url_for_log(url))
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -1284,29 +1098,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         url = self._find_first_url(attachment)
         if not url or not self._http_client:
             return None
-        prepared = await self._prepare_download(url)
-        if prepared is None:
-            logger.warning(
-                "MAX: refusing to download document from %s "
-                "(not an allowed public CDN origin — see download_allowed_hosts)",
-                self._safe_url_for_log(url),
-            )
+        if not self._validate_download_url(url):
+            logger.warning("MAX: refusing to download document from blocked host: %s", self._safe_url_for_log(url))
             return None
-        request_url, pin_headers, extensions = prepared
         headers = {
             "Authorization": self._token,
             "User-Agent": "HermesAgent/1.0 MaxBot",
             "Accept": "application/*,text/*,*/*;q=0.8",
-            **pin_headers,
         }
         try:
-            resp = await self._http_client.get(request_url, headers=headers, extensions=extensions)
+            resp = await self._http_client.get(url, headers=headers)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
             logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
-            return None
-        if resp.status_code in DOWNLOAD_REDIRECT_STATUS_CODES:
-            logger.warning("MAX: refusing redirect for document: %s", self._safe_url_for_log(url))
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         filename = self._find_first_filename(attachment) or Path(urlparse(url).path).name or "document"
@@ -2341,7 +2145,6 @@ def _env_enablement() -> dict | None:
         "MAX_WEBHOOK_PATH": "path",
         "MAX_WEBHOOK_SECRET": "webhook_secret",
         "MAX_WEBHOOK_URL": "webhook_url",
-        "MAX_WEBHOOK_INSECURE_DEV": "webhook_insecure_dev",
         "MAX_GROUP_POLICY": "group_policy",
     }
     for env_name, key in str_vars.items():
@@ -2359,12 +2162,6 @@ def _env_enablement() -> dict | None:
     allowed = os.getenv("MAX_ALLOWED_USERS", "").strip()
     if allowed:
         extra["allowed_users"] = [part.strip() for part in allowed.split(",") if part.strip()]
-
-    download_hosts = os.getenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "").strip()
-    if download_hosts:
-        extra["download_allowed_hosts"] = [
-            part.strip() for part in download_hosts.split(",") if part.strip()
-        ]
 
     allow_all = os.getenv("MAX_ALLOW_ALL_USERS", "").strip()
     if allow_all:
@@ -2395,12 +2192,10 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "token": "MAX_BOT_TOKEN",
         "webhook_secret": "MAX_WEBHOOK_SECRET",
         "webhook_url": "MAX_WEBHOOK_URL",
-        "webhook_insecure_dev": "MAX_WEBHOOK_INSECURE_DEV",
         "host": "MAX_WEBHOOK_HOST",
         "port": "MAX_WEBHOOK_PORT",
         "path": "MAX_WEBHOOK_PATH",
         "allowed_users": "MAX_ALLOWED_USERS",
-        "download_allowed_hosts": "MAX_DOWNLOAD_ALLOWED_HOSTS",
         "allow_all_users": "MAX_ALLOW_ALL_USERS",
         "home_channel": "MAX_HOME_CHANNEL",
         "group_policy": "MAX_GROUP_POLICY",
@@ -2413,7 +2208,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         value = platform_cfg.get(key)
         if value is None:
             continue
-        if key in ("allowed_users", "download_allowed_hosts") and isinstance(value, list):
+        if key == "allowed_users" and isinstance(value, list):
             extra[key] = [str(v) for v in value]
             env_value = ",".join(str(v) for v in value)
         elif key == "home_channel" and isinstance(value, dict):
@@ -2471,21 +2266,10 @@ def interactive_setup() -> None:
 
     print()
     print_info("🔒 Webhook security")
-    print_info("Webhook mode requires a secret: without MAX_WEBHOOK_SECRET the gateway "
-               "refuses to start the endpoint (fail-closed).")
     use_secret = prompt_yes_no("Set a webhook secret?", True)
     if use_secret:
         secret = prompt("Webhook secret (5-256 chars)", password=True)
-        secret = secret.strip() if secret else ""
-        if secret and len(secret) < 5:
-            print_warning("Secret is shorter than 5 chars — keeping it as entered.")
-        save_env_value("MAX_WEBHOOK_SECRET", secret)
-    else:
-        save_env_value("MAX_WEBHOOK_SECRET", "")
-        print_warning(
-            "No secret set: webhook mode will refuse to start. Leave MAX_WEBHOOK_URL "
-            "unset to use long-polling (no HTTPS required), or set a secret later."
-        )
+        save_env_value("MAX_WEBHOOK_SECRET", secret.strip() if secret else "")
 
     print()
     host = prompt("HTTP server host", default=get_env_value("MAX_WEBHOOK_HOST") or "0.0.0.0")

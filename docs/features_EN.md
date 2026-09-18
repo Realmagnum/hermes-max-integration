@@ -276,7 +276,9 @@ method name: `send_voice()` sends `type=audio`, `send_document()` sends
 
 ### How it works
 
-Adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` without platform filter.
+When explicitly enabled, the adapter intercepts `/sessions` and `/resume` before core and queries
+`SessionDB` without a platform filter. It is off by default and owner-only: it exposes titles,
+previews and IDs of sessions from **all** platforms, so `allow_all_users` alone never grants it.
 
 ### Commands
 
@@ -293,11 +295,17 @@ Adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` wi
 platforms:
   max:
     extra:
-      allow_admin_from:
-        - "95825064"  # your MAX user_id
+      cross_session: true
+      cross_session_users:            # owner-only; defaults to MAX_ALLOWED_USERS
+        - "95825064"                  # your MAX user_id
+      allow_admin_from:               # required by core for /resume --all
+        - "95825064"
 ```
 
-Disable: `MAX_CROSS_SESSION=false` in `.env`.
+Or in `.env`: `MAX_CROSS_SESSION=true` and `MAX_CROSS_SESSION_USERS=95825064`.
+
+Disable (the default): `MAX_CROSS_SESSION=false` in `.env` or `cross_session: false` in `extra`
+— restores the core's per-platform scoping (MAX sessions only).
 
 ## Standalone Sender
 

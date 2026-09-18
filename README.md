@@ -29,8 +29,8 @@
 | 🎞️ **Голосовые/Видео/Документы** | Отдельные методы `send_voice`, `send_video`, `send_document` |
 | ⚡ **Индикатор ввода** | Отображение набора текста для всех типов чатов |
 | 🔧 **Standalone-отправитель** | Отправка сообщений из cron/send_message через `_standalone_send` с нативной доставкой файлов. `hermes send "текст MEDIA:/file"` — работает без модификации ядра |
-| 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. Включено по умолчанию (`MAX_CROSS_SESSION=true`) |
-| 🧪 **Тесты** | pytest + pytest-asyncio, **167 тестов** (`pytest --collect-only`) |
+| 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. **Выключено по умолчанию**; включается явно (`MAX_CROSS_SESSION=true`) и работает только для указанных владельцев (owner-only) |
+| 🧪 **Тесты** | pytest + pytest-asyncio, **126 тестов** |
 | 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
 | 📋 **Слеш-команды** | 20 команд (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) через MAX API `PATCH /me/commands` |
 
@@ -111,9 +111,9 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 
 ### Почему картинка, а не нативная таблица?
 
-**Telegram:** классические режимы разметки (`parse_mode=Markdown`, `MarkdownV2`, `HTML`) таблиц **не** поддерживают — `| A | B |` с `format=markdown` таблицу не создаёт. Таблицы появились только в Bot API 10.1 (11 июня 2026) вместе с Rich Messages и требуют отдельного метода `sendRichMessage` (`RichBlockTable`).
+**Telegram** поддерживает markdown-таблицы «из коробки» — достаточно отправить `| A | B |` с `format=markdown`, и клиент сам отрисует колонки, границы, выравнивание.
 
-**MAX** не поддерживает таблицы ни в Markdown, ни в HTML. Официальный список разметки (dev.max.ru/docs-api, раздел «Форматирование текста в сообщениях», сверено 2026-09-16) включает курсив, жирный, зачёркнутый, подчёркнутый, моноширинный, ссылки, упоминания, выделение, заголовки и цитаты; таблиц и fenced-блоков в нём нет.
+**MAX** не поддерживает таблицы в markdown. Из доступных вариантов форматирования есть только `*курсив*`, `**жирный**`, `` `код` ``, `[ссылки](url)`, `# заголовки`, `> цитаты`. Pipe-синтаксис (`| A | B |`) и fenced code blocks (`` ``` ``) не входят в список поддерживаемых.
 
 Мы перепробовали несколько подходов, прежде чем остановились на PNG:
 
@@ -125,7 +125,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 | Простой текст с `\|` и `---` | Читаемо, но без моноширинного шрифта выглядит неаккуратно |
 | **Pillow PNG** ✅ | **Полный контроль: цвета, границы, иконки, шрифты** |
 
-**Итог:** PNG-картинка даёт то, чего у MAX нет нативно — аккуратные таблицы с цветными статусами (в Telegram для этого нужен Bot API 10.1+ и `sendRichMessage`, в MAX нативного формата нет вовсе). Плюс: картинку можно переслать, она не зависит от форматирования клиента. Минус: нельзя скопировать текст из ячейки.
+**Итог:** PNG-картинка даёт то, что в Telegram доступно нативными средствами — аккуратные таблицы с цветными статусами. Плюс: картинку можно переслать, она не зависит от форматирования клиента. Минус: нельзя скопировать текст из ячейки.
 
 ## Сравнение с оригиналом
 
@@ -141,7 +141,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 | Разбивка сообщений | ✅ | ✅ Улучшена |
 | Извлечение медиа | ✅ | ✅ Расширено |
 | Дедупликация сообщений | ❌ | ✅ 300 сек |
-| Тесты | ✅ Базовые | ✅ 167 тестов |
+| Тесты | ✅ Базовые | ✅ 94 теста |
 | Настройка | ✅ | ✅ + табл. |
 
 ## Как это работает (архитектура)
@@ -244,25 +244,13 @@ hermes gateway restart
 ```bash
 # 1. Добавить в ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=my-secret      # ОБЯЗАТЕЛЕН в webhook-режиме
+MAX_WEBHOOK_SECRET=my-secret
 
 # 2. Перезапустить
 sudo systemctl restart hermes-gateway
 ```
 
 При старте: `_start_webhook()` → открывает `0.0.0.0:8646` → регистрирует подписку в MAX API → сообщения приходят на webhook URL.
-
-### 🔒 Обязательный секрет вебхука (fail-closed)
-
-Webhook-режим **не запустится без `MAX_WEBHOOK_SECRET`**. Gateway логирует ошибку
-`webhook_secret_required` и остаётся отключённым — публичный endpoint, принимающий
-события без проверки, позволил бы подделать разрешённый `user_id`. Заголовок
-`X-Max-Bot-Api-Secret` проверяется **до** чтения и разбора тела запроса.
-
-Для локальной отладки без секрета есть явный opt-in: `MAX_WEBHOOK_INSECURE_DEV=true`
-работает **только** при `MAX_WEBHOOK_HOST=127.0.0.1` (или `::1`/`localhost`). Любой
-другой хост (включая `0.0.0.0`) отвергается. Проще всего для разработки использовать
-long polling — секрет и HTTPS не нужны.
 
 ### Переключение Webhook → Long polling
 
@@ -292,14 +280,16 @@ curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
 
 При использовании reasoning-моделей (DeepSeek R1, Claude Opus, Gemini Thinking и др.) блок с рассуждениями модели (`💭 **Reasoning:**`) добавляется к финальному ответу автоматически.
 
-Чтобы reasoning появлялся как **отдельное свежее сообщение** (а не edit последнего стриминг-сообщения), в ядре есть настройка `streaming.fresh_final_after_seconds`:
+Чтобы reasoning появлялся как **отдельное свежее сообщение** (а не edit последнего стриминг-сообщения), добавьте в `~/.hermes/config.yaml`:
 
 ```yaml
-streaming:
-  fresh_final_after_seconds: 10
+display:
+  platforms:
+    max:
+      fresh_final_after_seconds: 10
 ```
 
-**Важно (проверено на ядре Hermes 0.21.3, 2026-09-16):** ключ читается только из верхнеуровневой секции `streaming:` (не `display.platforms.max.*`) и применяется **только к Telegram** (`gateway/run_turn.py` принудительно выставляет `0.0` для всех остальных платформ). Для MAX этот переключатель не действует — reasoning остаётся префиксом к финальному edit'у. Если reasoning не виден в MAX, проверьте поведение streaming/reasoning в вашей версии ядра, а не задавайте этот ключ как «решение для MAX».
+Это заставит gateway отправить финальный ответ новым сообщением, если стриминг длился дольше 10 секунд — reasoning попадёт в него целиком. Без этого параметра reasoning добавляется как префикс к последнему edit и может быть незаметен.
 
 ### 🔍 Диагностика
 
@@ -326,11 +316,9 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт вебхука |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь вебхука |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret`; **обязателен в webhook-режиме** |
-| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета — только при `MAX_WEBHOOK_HOST` = loopback (dev) |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
 | `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS (включает webhook-режим) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей |
-| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Дополнительные origins для скачивания медиа (через запятую); по умолчанию только `*.max.ru` / `*.oneme.ru` |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
@@ -339,7 +327,8 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume (см. ниже) |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume (owner-only, см. ниже) |
+| `MAX_CROSS_SESSION_USERS` | ❌ | — | MAX user ID (через запятую), которым разрешены кросс-платформенные команды; по умолчанию — `MAX_ALLOWED_USERS` |
 
 ---
 
@@ -347,7 +336,9 @@ cd ~/.hermes/plugins/max-platform
 
 **Зачем:** ядро Hermes по умолчанию показывает сессии только в пределах одной платформы — из MAX видны только MAX-сессии. Это корректно для multi-tenant, но неудобно, когда один пользователь работает с нескольких платформ.
 
-**Как работает:** адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы и форматирует ответ.
+**Как работает:** при явном включении адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы и форматирует ответ.
+
+**Безопасность:** команда **выключена по умолчанию** и доступна только явно указанным владельцам — она выдаёт заголовки, превью и ID сессий **всех** платформ. `allow_all_users` сам по себе такого доступа не даёт; неавторизованный вызывающий получает обычное поведение ядра (только MAX-сессии).
 
 | Команда | Действие | Пример вывода |
 |---------|----------|--------------|
@@ -355,16 +346,21 @@ cd ~/.hermes/plugins/max-platform
 | `/sessions search <q>` | Поиск по всем сессиям | `🔍 Sessions matching "traefik"` |
 | `/resume <id>` | Переключиться на любую сессию | (переключает без ошибки) |
 
-**Требование:** для `/resume --all` добавьте `max` в `platforms:` config.yaml:
+**Включение (owner-only):**
 ```yaml
+# ~/.hermes/config.yaml
 platforms:
   max:
     extra:
-      allow_admin_from:
-        - "95825064"  # ваш MAX user_id
+      cross_session: true
+      cross_session_users:      # по умолчанию — MAX_ALLOWED_USERS
+        - "95825064"            # ваш MAX user_id
+      allow_admin_from:         # требуется ядру для /resume --all
+        - "95825064"
 ```
+или в `.env`: `MAX_CROSS_SESSION=true` и `MAX_CROSS_SESSION_USERS=95825064`.
 
-**Отключение:** `MAX_CROSS_SESSION=false` в `.env` — вернёт стандартное поведение ядра (только MAX-сессии).
+**Отключение (значение по умолчанию):** `MAX_CROSS_SESSION=false` в `.env` или `cross_session: false` в `extra` — вернёт стандартное поведение ядра (только MAX-сессии).
 
 ---
 
@@ -463,9 +459,9 @@ hermes send --to max:USER_ID "📦 Файлы: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xls
     - Multipart POST на CDN → токен файла
     - `POST /messages` с `attachments: [{"type": "file", "payload": {"token": токен}}]`
 
-Файлы шлются как `type=file`. MAX официально поддерживает для `file` только «распространённые форматы» (например, TXT, DOC, PDF), размер — до 4 ГБ, и один `file` в сообщении допускается только в комбинации с вложением-клавиатурой (dev.max.ru/docs-api/methods/POST/uploads и POST /messages, сверено 2026-09-16).
+Все файлы шлются как `type=file` — CDN MAX не валидирует содержимое, что гарантирует доставку любых безопасных расширений (.txt, .md, .png, .jpg, .mp3, .pdf, .doc, .xlsx и т.д.).
 
-⚠️ **Ограничение MAX CDN:** Расширения `.exe`, `.apk`, `.bat`, `.msi` и другие потенциально опасные блокируются MAX на стороне CDN (HTTP 415 — "File extension is forbidden"); при неподдерживаемом расширении сервер возвращает ту же ошибку. Это ограничение платформы, не обходится из плагина, и «доставка любого разумного расширения» не гарантируется — ориентируйтесь на список поддерживаемых форматов MAX.
+⚠️ **Ограничение MAX CDN:** Расширения `.exe`, `.apk`, `.bat`, `.msi` и другие потенциально опасные блокируются MAX на стороне CDN (HTTP 415 — "File extension is forbidden"). Это ограничение платформы, не обходится из плагина.
 
 Для отправки файлов **внутри сессии** (через gateway) используйте `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — они используют адаптер с ретраем при `attachment.not.ready`.
 
@@ -484,8 +480,6 @@ python3 scripts/apply-core-fix.py       # применить
 python3 scripts/apply-core-fix.py --revert  # откатить
 ```
 
-⚠️ **Совместимость с версией ядра (проверено на Hermes 0.21.3, 2026-09-16).** Скрипт ищет в `tools/send_message_tool.py` маркеры `# --- Non-media platforms ---` и `if media_files and not message.strip()`. В ядре 0.21.3 этот участок переработан (появился реестр `_PLUGIN_STANDALONE_MEDIA`), маркеров нет, и скрипт завершается с `❌ Could not find insertion marker in core file.` — ни `apply`, ни `--revert` не срабатывают. Прогон на копии core подтвердил: рабочая установка не меняется, но и медиа-доставка не включается. Перед применением сверьте разметку с вашей версией ядра; при несовпадении скрипт нужно адаптировать (или дождаться нативной поддержки MAX в ядре).
-
 После применения:
 ```bash
 hermes send --to max:USER_ID "MEDIA:/tmp/image.png"     # ✅ работает
@@ -498,7 +492,6 @@ hermes send --to max:USER_ID "текст MEDIA:/file.pdf"     # ✅ и так р
 - [Возможности](docs/features.md) — STT, таблицы, стриминг, кнопки, файлы
 - [API](docs/api.md) — форматы MAX API, callbacks, загрузка файлов
 - [Диагностика](docs/troubleshooting.md) — ошибки, diagnose.sh, логи
-- [Проверка внешних утверждений](docs/external-claims.md) — сверка с docs MAX/Telegram, источники и дата
 
 ## Решение проблем
 
@@ -568,7 +561,7 @@ hermes-max-integration/
 ├── skills/
 │   └── max-gateway/
 │       └── SKILL.md         # Навык для AI-агента
-├── tests/                   # pytest: 167 тестов
+├── tests/                   # pytest: 126 тестов
 ├── AGENTS.md                # Инструкции для AI-агентов
 ├── after-install.md         # Пост-установка
 ├── cliff.toml               # git-cliff config (EN)
@@ -587,7 +580,7 @@ hermes-max-integration/
 
 | Мера | Детали |
 |------|--------|
-| 🛡️ **SSRF Защита** | Загрузка — белый список `*.max.ru` / `*.oneme.ru`; скачивание — тот же белый список, только HTTPS, проверка всех A/AAAA и подключение к проверенному IP (анти-rebinding), редиректы не выполняются. Дополнительные origins — `download_allowed_hosts` / `MAX_DOWNLOAD_ALLOWED_HOSTS` |
+| 🛡️ **SSRF Защита** | URL загрузок проверяются по белому списку `*.max.ru` / `*.oneme.ru` |
 | 🔐 **Токен** | `Authorization` не передаётся при HTTP-редиректах |
 | 🔑 **Секрет вебхука** | Сравнение через `secrets.compare_digest` (защита от timing) |
 | 🔊 **Приватность голоса** | Аудио-кэш с правами `0700` |

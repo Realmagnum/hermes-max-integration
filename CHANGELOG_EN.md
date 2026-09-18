@@ -6,20 +6,8 @@ All notable changes to the hermes-max-integration plugin.
 
 ### Security
 
-- **SEC-04: the webhook no longer starts without a secret (fail closed).** Previously an
-  empty `MAX_WEBHOOK_SECRET` only produced a warning — the public endpoint accepted any
-  event and took the sender from the JSON body, so an allowed `user_id` could be forged.
-  `_start_webhook()` now refuses to start and raises the fatal
-  `webhook_secret_required` error instead.
-- **The `X-Max-Bot-Api-Secret` header is verified before the request body.** An
-  unauthenticated call gets `403` before the JSON is read or parsed (and before the body
-  size is checked), and `_verify_raw_secret` no longer treats an empty secret as a match.
-- **Explicit `MAX_WEBHOOK_INSECURE_DEV` dev opt-in:** allows a secretless webhook only
-  when `MAX_WEBHOOK_HOST` is loopback (`127.0.0.1`/`::1`/`localhost`); any other host is
-  rejected with `webhook_insecure_dev_non_loopback`.
-- The webhook body is capped at `WEBHOOK_MAX_BODY_BYTES` (1 MB) — anything larger gets
-  `413`.
-- Interactive setup warns that webhook mode will not start without a secret.
+- **SEC-05: cross-platform sessions are off by default and owner-only.** `/sessions` and `/resume` were intercepted before core unconditionally (`cross_session` defaulted to `true`) and exposed titles/previews/IDs of sessions on every platform to anyone the general allowlist admitted — including the empty-`MAX_ALLOWED_USERS` + `allow_all_users=false` case. Access now requires an explicit opt-in (`MAX_CROSS_SESSION=true` / `cross_session: true`) **and** a caller from the owner list (`MAX_CROSS_SESSION_USERS` / `cross_session_users`, defaulting to a non-empty `MAX_ALLOWED_USERS`); `allow_all_users` alone never grants it. The check runs before any side effect (session-store query, outbound message, `/resume --all` rewrite) and is repeated inside the handler. A non-owner falls through to the core's normal per-platform scoping.
+- A bare `/sessions search` no longer becomes `/resume --all search`; the second "search" is treated as the search form and replies with a usage hint.
 
 ## [2.9.0] — 2026-08-17
 
