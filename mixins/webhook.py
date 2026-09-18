@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import socket as _socket
 import time
 from typing import Any
@@ -17,19 +18,35 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 WEBHOOK_MAX_BODY_BYTES = 1_048_576  # 1 MB
+WEBHOOK_SECRET_HEADER = "X-Max-Bot-Api-Secret"
+# Bind hosts accepted for the explicit secretless development opt-in. Values
+# such as `0.0.0.0`, `::`, a LAN IP or a public hostname listen on interfaces
+# reachable from other machines and are therefore never loopback.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "[::1]"})
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    """True only for an explicit loopback bind host.
+
+    ``0.0.0.0``/``::`` bind every interface, so they are *not* loopback and can
+    never be used for the secretless dev mode.
+    """
+    if not host:
+        return False
+    return str(host).strip().lower() in LOOPBACK_HOSTS
 
 
 def _verify_raw_secret(body: bytes, secret: str, secret_header: str | None) -> bool:
     """Constant-time comparison of webhook secret.
 
     Max sends the raw secret in X-Max-Bot-Api-Secret header (not HMAC).
-    Uses secrets.compare for timing-safe string comparison.
+    Uses secrets.compare_digest for timing-safe string comparison.
+
+    Fails closed: an unconfigured secret, or a missing/empty request header,
+    is never a match — an empty secret must not act as a wildcard.
     """
-    import secrets
     del body  # kept for API compatibility
-    if not secret:
-        return True
-    if not secret_header:
+    if not secret or not secret_header:
         return False
     return secrets.compare_digest(str(secret), str(secret_header))
 
@@ -39,33 +56,14 @@ class WebhookMixin(MaxBaseMixin):
     Mixin for aiohttp webhook server logic.
     """
 
-    async def _start_webhook(self) -> bool:
-        """Start aiohttp webhook server."""
-        try:
-            from aiohttp import web
-        except ImportError:
-            self._set_fatal_error("no_aiohttp", "aiohttp not installed", retryable=False)
-            return False
+    def _build_webhook_app(self, web: Any) -> Any:
+        """Build the aiohttp application serving the webhook endpoint.
 
-        # Port-in-use check
-        try:
-            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
-                sock.settimeout(1)
-                sock.connect(("127.0.0.1", self._webhook_port))
-            self._set_fatal_error("port_in_use", f"Port {self._webhook_port} already in use", retryable=False)
-            return False
-        except (ConnectionRefusedError, OSError):
-            pass  # Port is free
-
+        Split out of :meth:`_start_webhook` so the routing and authentication
+        logic can be exercised without binding a socket.
+        """
         secret = self._webhook_secret
-        path = self._webhook_path
-
-        if not secret:
-            logger.warning(
-                "MAX: webhook started WITHOUT a secret (MAX_WEBHOOK_SECRET empty) — "
-                "anyone can POST events to %s. Set MAX_WEBHOOK_SECRET in production.",
-                self._webhook_url or f"{self._webhook_host}:{self._webhook_port}{path}",
-            )
+        insecure_dev = bool(getattr(self, "_webhook_insecure_dev", False))
 
         app = web.Application()
 
@@ -94,22 +92,34 @@ class WebhookMixin(MaxBaseMixin):
                 _webhook_hits = {k: v for k, v in _webhook_hits.items()
                                  if any(now - t < _WEBHOOK_WINDOW for t in v)}
 
-            # Verify secret
+            # ── Authenticate BEFORE reading or parsing the body ──────────
+            # The header is checked first so an unauthenticated caller never
+            # makes the server buffer or parse attacker-controlled JSON.
             if secret:
-                body = await req.read()
-                sig = req.headers.get("X-Max-Bot-Api-Secret", "")
-                if not _verify_raw_secret(body, secret, sig):
+                if not _verify_raw_secret(
+                    b"", secret, req.headers.get(WEBHOOK_SECRET_HEADER)
+                ):
                     logger.warning("MAX: webhook secret verification failed")
-                    return web.Response(status=403)
-                try:
-                    payload = json.loads(body)
-                except json.JSONDecodeError:
-                    return web.Response(status=400, text="invalid json")
-            else:
-                try:
-                    payload = await req.json()
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    return web.Response(status=400, text="invalid json")
+                    return web.Response(status=403, text="forbidden")
+            elif not insecure_dev:
+                # Defence in depth: _start_webhook refuses to serve this case,
+                # but never accept an unauthenticated event even if reached.
+                logger.error("MAX: webhook request rejected — no secret configured")
+                return web.Response(
+                    status=503, text="webhook is not configured with a secret"
+                )
+
+            # ── Body: bounded read, parsed only after authentication ─────
+            length = req.content_length
+            if length is not None and length > WEBHOOK_MAX_BODY_BYTES:
+                return web.Response(status=413, text="payload too large")
+            body = await req.content.read(WEBHOOK_MAX_BODY_BYTES + 1)
+            if len(body) > WEBHOOK_MAX_BODY_BYTES:
+                return web.Response(status=413, text="payload too large")
+            try:
+                payload = json.loads(body)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return web.Response(status=400, text="invalid json")
 
             event = await self._build_event(payload)
             if event is not None:
@@ -117,7 +127,75 @@ class WebhookMixin(MaxBaseMixin):
             return web.Response(text="ok")
 
         app.router.add_get("/health", health_handler)
-        app.router.add_post(path, webhook_handler)
+        app.router.add_post(self._webhook_path, webhook_handler)
+        return app
+
+    async def _start_webhook(self) -> bool:
+        """Start the aiohttp webhook server.
+
+        Fails closed: without a configured secret the server refuses to start,
+        unless the explicit ``MAX_WEBHOOK_INSECURE_DEV`` opt-in is set *and*
+        the server is bound to a loopback host.
+        """
+        try:
+            from aiohttp import web
+        except ImportError:
+            self._set_fatal_error("no_aiohttp", "aiohttp not installed", retryable=False)
+            return False
+
+        secret = self._webhook_secret
+        insecure_dev = bool(getattr(self, "_webhook_insecure_dev", False))
+        endpoint = (
+            self._webhook_url
+            or f"{self._webhook_host}:{self._webhook_port}{self._webhook_path}"
+        )
+
+        # ── Fail closed before binding anything ─────────────────────────
+        if not secret:
+            if not insecure_dev:
+                self._set_fatal_error(
+                    "webhook_secret_required",
+                    "MAX_WEBHOOK_SECRET is required in webhook mode; refusing to "
+                    "start a secretless endpoint that would accept forged events. "
+                    "Set MAX_WEBHOOK_SECRET, or for local development only set "
+                    "MAX_WEBHOOK_INSECURE_DEV=true with MAX_WEBHOOK_HOST=127.0.0.1.",
+                    retryable=False,
+                )
+                logger.error("MAX: refusing to start webhook without a secret (%s)", endpoint)
+                return False
+            if not _is_loopback_host(self._webhook_host):
+                self._set_fatal_error(
+                    "webhook_insecure_dev_non_loopback",
+                    f"MAX_WEBHOOK_INSECURE_DEV is set but MAX_WEBHOOK_HOST="
+                    f"{self._webhook_host!r} is not a loopback address; refusing to "
+                    "expose a secretless endpoint beyond 127.0.0.1. Use long-polling "
+                    "for development, or set a webhook secret.",
+                    retryable=False,
+                )
+                logger.error(
+                    "MAX: refusing secretless webhook on non-loopback host %r",
+                    self._webhook_host,
+                )
+                return False
+            logger.warning(
+                "MAX: webhook started WITHOUT a secret on loopback %s "
+                "(MAX_WEBHOOK_INSECURE_DEV=true) — development only; do not expose "
+                "this port.",
+                endpoint,
+            )
+
+        # Port-in-use check
+        try:
+            with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as sock:
+                sock.settimeout(1)
+                sock.connect(("127.0.0.1", self._webhook_port))
+            self._set_fatal_error("port_in_use", f"Port {self._webhook_port} already in use", retryable=False)
+            return False
+        except (ConnectionRefusedError, OSError):
+            pass  # Port is free
+
+        path = self._webhook_path
+        app = self._build_webhook_app(web)
 
         self._webhook_app = app
         self._webhook_runner = web.AppRunner(app)

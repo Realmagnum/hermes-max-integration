@@ -6,7 +6,20 @@ All notable changes to the hermes-max-integration plugin.
 
 ### Security
 
-- **SEC-02: the bot token is no longer forwarded to arbitrary attachment URLs.** Incoming audio/image/document downloads now use a separate HTTP client with no default credentials; the `Authorization` header is added only for explicitly trusted HTTPS origins — MAX infrastructure (`.max.ru`, `.oneme.ru`, `.okcdn.ru`, `.cdn-max.ru` — the same suffixes the upload path trusts) and hosts from `MAX_TRUSTED_DOWNLOAD_HOSTS` / `extra["trusted_download_hosts"]` (a `*.example.com` entry covers subdomains only, not the apex). Every other origin is still fetched — without the token — redirects are not followed, and the token is stripped from transport error messages before logging (`_redact_secrets`). Regressions: `tests/test_download_token_leak.py`.
+- **SEC-04: the webhook no longer starts without a secret (fail closed).** Previously an
+  empty `MAX_WEBHOOK_SECRET` only produced a warning — the public endpoint accepted any
+  event and took the sender from the JSON body, so an allowed `user_id` could be forged.
+  `_start_webhook()` now refuses to start and raises the fatal
+  `webhook_secret_required` error instead.
+- **The `X-Max-Bot-Api-Secret` header is verified before the request body.** An
+  unauthenticated call gets `403` before the JSON is read or parsed (and before the body
+  size is checked), and `_verify_raw_secret` no longer treats an empty secret as a match.
+- **Explicit `MAX_WEBHOOK_INSECURE_DEV` dev opt-in:** allows a secretless webhook only
+  when `MAX_WEBHOOK_HOST` is loopback (`127.0.0.1`/`::1`/`localhost`); any other host is
+  rejected with `webhook_insecure_dev_non_loopback`.
+- The webhook body is capped at `WEBHOOK_MAX_BODY_BYTES` (1 MB) — anything larger gets
+  `413`.
+- Interactive setup warns that webhook mode will not start without a secret.
 
 ## [2.9.0] — 2026-08-17
 
@@ -44,7 +57,7 @@ All notable changes to the hermes-max-integration plugin.
 
 - **Ruff: 220 → 0 errors** in `adapter.py`/`mixins/` (PEP 604/585 annotations, imports, auto-fixes); tests clean too
 - **Bandit: High → 0** (only false-positive B105 — env var names, and intentional B104 — `0.0.0.0` for the webhook)
-- **Tests: 167** (154 at release time; the current number is determined by `pytest --collect-only`): +11 SSRF-guard cases, +2 table cache, +12 audio normalization, and wire regressions
+- **Tests: 154** (was 129): +11 SSRF-guard cases, +2 table cache, +12 audio normalization
 
 ### Docs
 

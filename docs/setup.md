@@ -9,7 +9,8 @@
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост webhook |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт webhook |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь webhook |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret`; **обязателен в webhook-режиме** |
+| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета — только при loopback `MAX_WEBHOOK_HOST` (dev) |
 | `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS URL (включает webhook-режим) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей (через запятую) |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
@@ -53,10 +54,11 @@ Long polling идеален для:
 ```bash
 MAX_BOT_TOKEN=ваш_токен
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret
+MAX_WEBHOOK_SECRET=your-secret   # обязателен: без него webhook не запустится
 ```
 
-Webhook требуется для production. Нужен публичный HTTPS URL.
+Webhook требуется для production. Нужен публичный HTTPS URL **и** секрет: без
+`MAX_WEBHOOK_SECRET` gateway отказывается поднимать endpoint (fail-closed).
 
 > **Официально (dev.max.ru/docs-api, сверено 2026-09-16):** MAX принимает события только через Webhook; Long Polling ограничен по скорости и сроку хранения событий и «не подходит для production-окружения». С 25 мая 2026 не поддерживаются HTTP-webhook и самоподписанные сертификаты, endpoint обязан слушать **порт 443** (порт в URL не указывается) и отдавать HTTP 200 за 30 секунд. Плагин по умолчанию биндится на `8646` — наружу его публикует reverse proxy на 443 (см. примеры ниже).
 
@@ -114,13 +116,14 @@ curl -H "Authorization: ваш_токен" \
 ```bash
 # 1. Добавить в ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret
+MAX_WEBHOOK_SECRET=your-secret   # обязателен
 
 # 2. Перезапустить
 sudo systemctl restart hermes-gateway
 ```
 
 При старте: `_start_webhook()` → открывает `0.0.0.0:8646` → регистрирует подписку в MAX API.
+Без секрета старт не произойдёт — gateway пишет ошибку `webhook_secret_required` и остаётся отключённым.
 
 ### Webhook → Long polling
 
@@ -149,6 +152,11 @@ curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
 ### Webhook Secret
 
 Секрет отправляется MAX как сырое значение заголовка `X-Max-Bot-Api-Secret`, а не как HMAC-подпись. Плагин использует `secrets.compare_digest()` для timing-safe сравнения.
+
+Секрет обязателен в webhook-режиме: без `MAX_WEBHOOK_SECRET` сервер не стартует
+(fail-closed), а заголовок проверяется **до** чтения и разбора тела запроса.
+Единственное исключение — явный dev-opt-in `MAX_WEBHOOK_INSECURE_DEV=true`, который
+работает только при `MAX_WEBHOOK_HOST=127.0.0.1`/`::1`/`localhost`.
 
 ### Access Control
 

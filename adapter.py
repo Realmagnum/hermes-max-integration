@@ -315,6 +315,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             os.getenv("MAX_WEBHOOK_SECRET")
             or str(extra.get("webhook_secret", ""))
         )
+        # Explicit, loopback-only escape hatch for local development. Never
+        # enabled by default: a secretless webhook accepts forged events.
+        self._webhook_insecure_dev: bool = _coerce_bool(
+            os.getenv("MAX_WEBHOOK_INSECURE_DEV")
+            or extra.get("webhook_insecure_dev", False),
+            False,
+        )
         self._webhook_url: str = (
             os.getenv("MAX_WEBHOOK_URL")
             or str(extra.get("webhook_url", ""))
@@ -2334,6 +2341,7 @@ def _env_enablement() -> dict | None:
         "MAX_WEBHOOK_PATH": "path",
         "MAX_WEBHOOK_SECRET": "webhook_secret",
         "MAX_WEBHOOK_URL": "webhook_url",
+        "MAX_WEBHOOK_INSECURE_DEV": "webhook_insecure_dev",
         "MAX_GROUP_POLICY": "group_policy",
     }
     for env_name, key in str_vars.items():
@@ -2387,6 +2395,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "token": "MAX_BOT_TOKEN",
         "webhook_secret": "MAX_WEBHOOK_SECRET",
         "webhook_url": "MAX_WEBHOOK_URL",
+        "webhook_insecure_dev": "MAX_WEBHOOK_INSECURE_DEV",
         "host": "MAX_WEBHOOK_HOST",
         "port": "MAX_WEBHOOK_PORT",
         "path": "MAX_WEBHOOK_PATH",
@@ -2462,10 +2471,21 @@ def interactive_setup() -> None:
 
     print()
     print_info("🔒 Webhook security")
+    print_info("Webhook mode requires a secret: without MAX_WEBHOOK_SECRET the gateway "
+               "refuses to start the endpoint (fail-closed).")
     use_secret = prompt_yes_no("Set a webhook secret?", True)
     if use_secret:
         secret = prompt("Webhook secret (5-256 chars)", password=True)
-        save_env_value("MAX_WEBHOOK_SECRET", secret.strip() if secret else "")
+        secret = secret.strip() if secret else ""
+        if secret and len(secret) < 5:
+            print_warning("Secret is shorter than 5 chars — keeping it as entered.")
+        save_env_value("MAX_WEBHOOK_SECRET", secret)
+    else:
+        save_env_value("MAX_WEBHOOK_SECRET", "")
+        print_warning(
+            "No secret set: webhook mode will refuse to start. Leave MAX_WEBHOOK_URL "
+            "unset to use long-polling (no HTTPS required), or set a secret later."
+        )
 
     print()
     host = prompt("HTTP server host", default=get_env_value("MAX_WEBHOOK_HOST") or "0.0.0.0")
