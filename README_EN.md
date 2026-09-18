@@ -338,6 +338,37 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
+| `MAX_QUEUE_MAXSIZE` | ❌ | `1000` | Hard cap on inbound updates waiting to be processed (backpressure) |
+| `MAX_MAX_CONCURRENCY` | ❌ | `8` | Maximum number of messages processed concurrently |
+| `MAX_OVERLOAD_POLICY` | ❌ | `drop_oldest` | Behaviour when the queue is full: `drop_oldest` evicts the oldest update, `drop_newest` rejects the new one |
+| `MAX_DEDUP_MAX` | ❌ | `5000` | Hard cap on the duplicate-suppression table (message IDs) |
+| `MAX_DEDUP_TTL` | ❌ | `300` | Seconds a message ID counts as a duplicate |
+
+---
+
+## 🚦 Backpressure and deduplication
+
+The poller (or webhook) never blocks: inbound updates go into a **bounded queue**
+(`MAX_QUEUE_MAXSIZE`, default 1000) and handlers run with bounded concurrency
+(`MAX_MAX_CONCURRENCY`, default 8). When the queue is full an explicit overload policy
+(`MAX_OVERLOAD_POLICY`) applies:
+
+| Policy | Behaviour | Trade-off |
+|--------|-----------|-----------|
+| `drop_oldest` (default) | The oldest update is evicted, the freshest is kept | Sustained overload loses older messages |
+| `drop_newest` | The incoming update is rejected, the backlog is kept | Processing falls behind the message stream |
+
+Deduplication is hard-capped: the message-ID table never exceeds `MAX_DEDUP_MAX` entries even
+under a continuous burst (expired entries are pruned by `MAX_DEDUP_TTL`, then the oldest are evicted).
+
+Metrics are exposed by `/health` (webhook mode): queue depth and peak, evicted/rejected updates,
+active handlers and concurrency peak, dedup table size:
+
+```bash
+curl -s http://localhost:8646/health
+# {"status":"ok","backpressure":{"enqueued":42,"dispatched":41,"dropped_oldest":1,"queue_depth":0,
+#  "queue_maxsize":1000,"active_handlers":0,"max_concurrency":8,"overload_policy":"drop_oldest", ...}}
+```
 
 ---
 
