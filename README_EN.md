@@ -330,6 +330,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
 | `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Extra media-download origins (comma-separated); `*.max.ru` / `*.oneme.ru` are allowed by default |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
+| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `open` \| `closed` \| `allowlist` (see "Group policies") |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG images (HTML→PNG via Playwright, Pillow fallback) |
@@ -337,6 +338,44 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
+
+---
+
+## 🔐 Group policies
+
+Group messages (updates that carry a `chat_id`) are checked against `MAX_GROUP_POLICY`. Direct dialogs are out of scope for this policy: even `closed` does not block direct messages or commands in DMs.
+
+| Policy | Behaviour |
+|--------|-----------|
+| `open` | Every group message is accepted (explicit opt-in) |
+| `closed` | No group message is accepted at all |
+| `allowlist` (default) | A message is accepted only when it matches **every configured** list |
+
+**Allowlist semantics are AND, not OR.** There are two independent dimensions:
+
+- `MAX_GROUP_ALLOWED_USERS` — users;
+- `MAX_GROUP_ALLOWED_CHATS` — groups.
+
+A message passes when the user is in the user list (if that list is configured) **and** the group is in the group list (if that list is configured). An empty list imposes no restriction, but it is not a grant either: when both lists are empty every group message is rejected (fail closed). An unrecognized `MAX_GROUP_POLICY` value is normalized to `closed`, so a typo cannot open access.
+
+```bash
+# Only user 123456789, in any group
+MAX_GROUP_ALLOWED_USERS=123456789
+
+# Only group -1001234567890, any member
+MAX_GROUP_ALLOWED_CHATS=-1001234567890
+
+# User 123456789 and only in group -1001234567890
+MAX_GROUP_ALLOWED_USERS=123456789
+MAX_GROUP_ALLOWED_CHATS=-1001234567890
+
+# Any group (deliberate decision)
+MAX_GROUP_POLICY=open
+```
+
+> ⚠️ Previously empty lists meant "allow everyone" and the two lists were combined with OR: a user from the user list was admitted into any group. If you relied on that behaviour, set `MAX_GROUP_POLICY=open`.
+
+---
 
 ## Table Image Symbol Reference
 

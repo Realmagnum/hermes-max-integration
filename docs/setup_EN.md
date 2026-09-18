@@ -14,6 +14,7 @@
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
 | `MAX_ALLOWED_USERS` | ❌ | — | User whitelist (comma-separated) |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
+| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `open` \| `closed` \| `allowlist` |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | Users allowed in groups |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Groups allowed for bot |
 | `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
@@ -174,13 +175,18 @@ MAX_ALLOW_ALL_USERS=true
 **Group policies:**
 
 ```bash
-# Closed group — only allowed users
+# Closed groups — the bot stays silent in groups (DMs keep working)
 MAX_GROUP_POLICY=closed
 
-# Whitelist for group
+# Allowlist: every configured dimension must match
 MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
+
+# Any group (deliberate opt-in)
+MAX_GROUP_POLICY=open
 ```
+
+The `allowlist` policy (default) combines the two lists with **AND**: a message passes only when the user is in `MAX_GROUP_ALLOWED_USERS` (if that list is configured) and the group is in `MAX_GROUP_ALLOWED_CHATS` (if that list is configured). Empty lists do not open access: when both are empty, group messages are rejected. See the README "Group policies" section for details.
 
 ## Deployment
 
