@@ -4,46 +4,85 @@
 
 ### How it works
 
-Voice messages from MAX come as audio attachments with `payload.url` for direct download. The adapter automatically:
+Voice messages arrive from MAX as audio attachments with `payload.url`. The plugin only
+downloads and caches the audio — **the Hermes core transcribes it** (≥ 0.20.0):
 
-1. Downloads audio file to `~/.hermes/audio_cache/max_audio_{message_id}.ogg`
-2. Transcribes via faster-whisper
-3. Adds text to message
+1. The adapter caches the audio in the core audio cache: `$HERMES_HOME/cache/audio/`
+   (default `~/.hermes/cache/audio/`). The legacy `~/.hermes/audio_cache/` directory is
+   used instead when it already holds files.
+2. The core transcribes the file per the `stt` section of `config.yaml` (provider,
+   language, model).
+3. The transcript is prepended to the message the agent receives.
+4. With `stt.echo_transcripts: true` (core default) the core also sends the raw transcript
+   back to the chat as a separate `🎙️ "<text>"` message.
+
+The plugin does not transcribe voice itself and holds no STT settings: the dedicated
+stt-venv, `scripts/transcribe_audio.py`, `MAX_STT_ENABLED` and `MAX_STT_VENV` were removed
+(STT moved into the core). All STT configuration lives in the Hermes core.
 
 ### Setup
 
 ```bash
-# Create venv for faster-whisper
-python3 -m venv ~/.hermes/stt-venv
-~/.hermes/stt-venv/bin/pip install faster-whisper
-
-# Copy script
-cp scripts/transcribe_audio.py ~/.hermes/scripts/
+# Interactively: the 🎙️ Speech-to-Text category
+hermes tools
 ```
 
-### Parameters
+Or by hand in `~/.hermes/config.yaml`:
+
+```yaml
+stt:
+  enabled: true
+  language: ru        # core default is "en"; "" = auto-detect
+  provider: local     # local | groq | openai | mistral | xai | elevenlabs | deepinfra
+  echo_transcripts: true
+  local:
+    model: base       # tiny | base | small | medium | large-v3
+```
+
+When `provider` is unset, the core picks one automatically from the available keys
+(`local` comes first in the ladder). For the `local` provider the faster-whisper package
+and the model (`base` ≈ 150 MB) are installed/downloaded on first use.
+
+### Parameters (core defaults)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `MAX_STT_ENABLED` | `true` | Enable/disable STT |
-| `MAX_STT_VENV` | `~/.hermes/stt-venv` | Venv path |
-| Model | `base` | faster-whisper model |
+| `stt.enabled` | `true` | Auto-transcribe inbound voice messages |
+| `stt.language` | `"en"` | Global language; `""` = auto-detect |
+| `stt.provider` | unset | Provider; unset = autodetect from available keys |
+| `stt.echo_transcripts` | `true` | Echo the transcript back as `🎙️ "..."` |
+| `stt.local.model` | `base` | faster-whisper model |
+| `stt.local.vad` | `true` | VAD filter (anti-hallucination on silence) |
+| `stt.groq.model` | `whisper-large-v3-turbo` | Groq model |
+| `stt.openai.model` | `whisper-1` | OpenAI model (`gpt-4o-transcribe`, `gpt-transcribe`, …) |
+| `stt.mistral.model` | `voxtral-mini-latest` | Mistral model (not listed in `hermes tools`) |
+| `stt.elevenlabs.model_id` | `scribe_v2` | ElevenLabs Scribe model |
 
-### Transcription Script
+Each provider also has its own `language` (`language_code` for ElevenLabs), which
+overrides the global `stt.language`.
+
+### Diagnostics
 
 ```bash
-~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
+# 1. What the core is actually configured with
+grep -A8 "^stt:" ~/.hermes/config.yaml
+
+# 2. Audio download cache (empty → the attachment never got downloaded)
+ls -la ~/.hermes/cache/audio/
+
+# 3. What the core says
+grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
 ```
 
-### Troubleshooting
+Typical log lines:
 
-**STT returns empty:**
-- Check model: `ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/assets/`
-- Verify file downloaded: `ls -la ~/.hermes/audio_cache/max_audio_*.ogg`
-
-**Slow transcription:**
-- Use `tiny` model instead of `base`
-- Enable GPU: `export WHISPER_DEVICE=cuda:0`
+- `Voice transcription failed for <path>: <error>` — the provider returned an error
+  (missing key, network, quota, unsupported format).
+- `Configured STT failed for <path>; recovered with local STT` — the local
+  faster-whisper fallback took over.
+- `[voice message could not be transcribed automatically; the audio is available at: …]` —
+  no transcript; the agent sees the file path instead of text.
+- An empty transcript means silence or a too-short clip (VAD trims silence).
 
 ## Table Images
 

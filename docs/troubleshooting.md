@@ -77,21 +77,34 @@ curl -H "Authorization: ваш_токен" \
 
 **Симптомы:**
 - Голосовые сообщения не транскрибируются
-- В логах: `STT returned empty transcription`
+- В чат приходит `🎙️ ""` либо агент видит `[voice message could not be transcribed automatically; the audio is available at: …]`
+- В логах ядра: `Voice transcription failed for <path>: <error>`
 
-**Причина:** Нет faster-whisper или модель не загружена
+**Причина:** транскрибирует ядро Hermes (не плагин): STT выключен (`stt.enabled`), не
+задан язык, у выбранного провайдера нет ключа либо не установлен faster-whisper для
+провайдера `local`.
 
 **Решение:**
 ```bash
-# Проверить venv
-ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/
+# 1. Проверить секцию stt: enabled, language, provider
+grep -A8 "^stt:" ~/.hermes/config.yaml
 
-# Установить модель
-~/.hermes/stt-venv/bin/pip install faster-whisper
+# 2. Настроить интерактивно (категория 🎙️ Speech-to-Text)
+hermes tools
 
-# Проверить файл
-ls -la ~/.hermes/audio_cache/max_audio_*.ogg
+# 3. Для provider: local — поставить пакет в Python шлюза Hermes
+python -m pip install faster-whisper
+
+# 4. Убедиться, что аудио скачалось адаптером
+ls -la ~/.hermes/cache/audio/
+
+# 5. Ошибки ядра по транскрибации
+grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
 ```
+
+Отдельный stt-venv, `scripts/transcribe_audio.py` и переменные `MAX_STT_*` не
+используются: плагин только скачивает и кэширует аудио, а настройки STT живут в
+`config.yaml` ядра. Для русского языка задайте `stt.language: ru` (дефолт ядра — `"en"`).
 
 ### 4. Таблицы не рендерятся
 

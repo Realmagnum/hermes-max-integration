@@ -1,49 +1,87 @@
 # Возможности
 
-## STT (Voice Transcription)
+## STT (транскрипция голоса)
 
-### Как работает
+### Как это работает
 
-Голосовые сообщения от MAX приходят как аудиовложения с `payload.url` для прямой загрузки. Адаптер автоматически:
+Голосовые сообщения приходят из MAX как аудиовложение с `payload.url`. Плагин только
+скачивает и кэширует аудио — **транскрибирует ядро Hermes** (≥ 0.20.0):
 
-1. Загружает аудиофайл в `~/.hermes/audio_cache/max_audio_{message_id}.ogg`
-2. Транскрибирует через faster-whisper
-3. Добавляет текст к сообщению
+1. Адаптер скачивает аудио в кэш аудио ядра: `$HERMES_HOME/cache/audio/`
+   (по умолчанию `~/.hermes/cache/audio/`). Если в легаси-каталоге
+   `~/.hermes/audio_cache/` уже есть файлы, используется он.
+2. Ядро транскрибирует файл по секции `stt` из `config.yaml` (провайдер, язык, модель).
+3. Распознанный текст подставляется в сообщение, которое получает агент.
+4. При `stt.echo_transcripts: true` (дефолт ядра) ядро дополнительно присылает в чат
+   эхо-транскрипт отдельным сообщением в формате `🎙️ "<текст>"`.
+
+Плагин сам голос не транскрибирует и не содержит настроек STT: отдельный stt-venv,
+`scripts/transcribe_audio.py`, `MAX_STT_ENABLED` и `MAX_STT_VENV` удалены (STT вынесен
+в ядро). Всё управление STT — на стороне ядра Hermes.
 
 ### Настройка
 
 ```bash
-# Создать venv для faster-whisper
-python3 -m venv ~/.hermes/stt-venv
-~/.hermes/stt-venv/bin/pip install faster-whisper
-
-# Скопировать скрипт
-cp scripts/transcribe_audio.py ~/.hermes/scripts/
+# Интерактивно: категория 🎙️ Speech-to-Text
+hermes tools
 ```
 
-### Параметры
+Либо вручную в `~/.hermes/config.yaml`:
+
+```yaml
+stt:
+  enabled: true
+  language: ru        # дефолт ядра — "en"; "" = автоопределение
+  provider: local     # local | groq | openai | mistral | xai | elevenlabs | deepinfra
+  echo_transcripts: true
+  local:
+    model: base       # tiny | base | small | medium | large-v3
+```
+
+Если `provider` не задан, ядро подбирает провайдера автоматически по доступным ключам
+(`local` — первый в цепочке). Для провайдера `local` пакет faster-whisper и модель
+(`base` ≈ 150 МБ) ставятся и скачиваются при первом использовании.
+
+### Параметры (дефолты ядра)
 
 | Параметр | По умолчанию | Описание |
 |----------|--------------|----------|
-| `MAX_STT_ENABLED` | `true` | Включить/выключить STT |
-| `MAX_STT_VENV` | `~/.hermes/stt-venv` | Путь к venv |
-| Модель | `base` | faster-whisper модель |
+| `stt.enabled` | `true` | Автотранскрипция входящих голосовых |
+| `stt.language` | `"en"` | Глобальный язык; `""` = автоопределение |
+| `stt.provider` | не задан | Провайдер; не задан = автоподбор по доступным ключам |
+| `stt.echo_transcripts` | `true` | Эхо-транскрипт `🎙️ "..."` в чат |
+| `stt.local.model` | `base` | Модель faster-whisper |
+| `stt.local.vad` | `true` | VAD-фильтр (антигаллюцинации на тишине) |
+| `stt.groq.model` | `whisper-large-v3-turbo` | Модель Groq |
+| `stt.openai.model` | `whisper-1` | Модель OpenAI (`gpt-4o-transcribe`, `gpt-transcribe`, …) |
+| `stt.mistral.model` | `voxtral-mini-latest` | Модель Mistral (в `hermes tools` не показывается) |
+| `stt.elevenlabs.model_id` | `scribe_v2` | Модель ElevenLabs Scribe |
 
-### Скрипт транскрипции
+У каждого провайдера есть и свой `language` (`language_code` у ElevenLabs): он
+переопределяет глобальный `stt.language`.
+
+### Диагностика
 
 ```bash
-~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
+# 1. Что реально настроено в ядре
+grep -A8 "^stt:" ~/.hermes/config.yaml
+
+# 2. Кэш скачанного аудио (пусто → вложение не скачалось)
+ls -la ~/.hermes/cache/audio/
+
+# 3. Что говорит ядро
+grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
 ```
 
-### Troubleshooting
+Характерные записи в логе:
 
-**STT возвращает пустоту:**
-- Проверить модель: `ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/assets/`
-- Убедиться что файл загружен: `ls -la ~/.hermes/audio_cache/max_audio_*.ogg`
-
-**Медленная транскрипция:**
-- Использовать модель `tiny` вместо `base`
-- Включить GPU: `export WHISPER_DEVICE=cuda:0`
+- `Voice transcription failed for <path>: <error>` — провайдер вернул ошибку
+  (нет ключа, сеть, лимит, неподдерживаемый формат).
+- `Configured STT failed for <path>; recovered with local STT` — сработал фоллбэк
+  на локальный faster-whisper.
+- `[voice message could not be transcribed automatically; the audio is available at: …]` —
+  транскрипт не получен, агент видит путь к файлу вместо текста.
+- Пустой транскрипт = тишина или слишком короткий клип (VAD отсекает тишину).
 
 ## Таблицы-картинки
 

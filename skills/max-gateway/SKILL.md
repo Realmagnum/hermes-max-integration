@@ -103,15 +103,23 @@ metadata:
 
 Транскрипция выполняется **ядром Hermes** (≥ 0.20.0) — плагин только скачивает и кэширует аудио:
 
-1. Адаптер автоматически загружает голосовые в кэш; ядро транскрибирует их по конфигу `stt`
+1. Адаптер автоматически скачивает голосовые в кэш аудио ядра (`$HERMES_HOME/cache/audio/`, по умолчанию `~/.hermes/cache/audio/`); ядро транскрибирует их по конфигу `stt`
 2. Провайдеры ядра: `local` (faster-whisper, бесплатно), `groq`, `openai` (whisper-1, gpt-transcribe), `mistral`, `xai`, `elevenlabs`
 3. Настройка: `hermes tools` → категория STT, либо `config.yaml` → `stt` (для русского — `stt.language: ru`)
+4. Транскрипт подставляется в сообщение агента; при `stt.echo_transcripts` ядро дополнительно присылает эхо `🎙️ "<текст>"`
 
 ### Проблемы STT
 
 - Секция `stt` в `config.yaml`: `enabled`, `provider`, `language`, `echo_transcripts`
 - Модель `local` скачивается автоматически при первом использовании (~150 МБ)
-- Если транскрипт не приходит — проверьте `stt.enabled` и язык (`stt.language`), см. README → «Голос не транскрибируется»
+- Если транскрипт не приходит, проверьте по порядку:
+  ```bash
+  grep -A8 "^stt:" ~/.hermes/config.yaml    # enabled / language / provider
+  ls -la ~/.hermes/cache/audio/             # аудио вообще скачалось?
+  grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
+  ```
+  В логе ядра ищите `Voice transcription failed for <path>: <error>` (ошибка провайдера) и маркер `[voice message could not be transcribed automatically; the audio is available at: …]`
+- Подробнее: README → «Голос не транскрибируется», `docs/troubleshooting.md`
 
 ## Проблемы (общие)
 

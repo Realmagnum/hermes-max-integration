@@ -76,22 +76,35 @@ curl -H "Authorization: your_token" \
 ### 3. STT returns empty
 
 **Symptoms:**
-- Voice messages not transcribed
-- Logs: `STT returned empty transcription`
+- Voice messages are not transcribed
+- The chat gets `🎙️ ""`, or the agent sees `[voice message could not be transcribed automatically; the audio is available at: …]`
+- Core logs: `Voice transcription failed for <path>: <error>`
 
-**Cause:** No faster-whisper or model not loaded
+**Cause:** transcription is done by the Hermes core (not the plugin): STT is disabled
+(`stt.enabled`), the language is not set, the selected provider has no API key, or
+faster-whisper is missing for the `local` provider.
 
 **Solution:**
 ```bash
-# Check venv
-ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/
+# 1. Check the stt section: enabled, language, provider
+grep -A8 "^stt:" ~/.hermes/config.yaml
 
-# Install model
-~/.hermes/stt-venv/bin/pip install faster-whisper
+# 2. Configure interactively (the 🎙️ Speech-to-Text category)
+hermes tools
 
-# Check file
-ls -la ~/.hermes/audio_cache/max_audio_*.ogg
+# 3. For provider: local — install the package into the Hermes gateway Python
+python -m pip install faster-whisper
+
+# 4. Make sure the adapter actually downloaded the audio
+ls -la ~/.hermes/cache/audio/
+
+# 5. Core transcription errors
+grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
 ```
+
+A dedicated stt-venv, `scripts/transcribe_audio.py` and the `MAX_STT_*` variables are not
+used: the plugin only downloads and caches audio, while STT settings live in the core
+`config.yaml`. For Russian set `stt.language: ru` (the core default is `"en"`).
 
 ### 4. Tables not rendering
 
