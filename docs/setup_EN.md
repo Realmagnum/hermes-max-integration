@@ -55,7 +55,9 @@ MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
 MAX_WEBHOOK_SECRET=your-secret
 ```
 
-Webhook required for production. Needs public HTTPS URL.
+Webhook is required for production. A public HTTPS URL is needed.
+
+> **Official (dev.max.ru/docs-api, checked 2026-09-16):** MAX delivers events via Webhook only; Long Polling is rate-limited and retention-bound and "is not suitable for a production environment". Since May 25, 2026 HTTP webhooks and self-signed certificates are unsupported, the endpoint must listen on **port 443** (the port must not appear in the URL) and return HTTP 200 within 30 seconds. The plugin binds to `8646` by default, so a reverse proxy must publish it on 443 (see examples below).
 
 ## Webhook Setup
 
