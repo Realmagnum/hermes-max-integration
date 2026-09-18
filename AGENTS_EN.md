@@ -25,8 +25,8 @@ When a user gives you this repository and asks to connect Hermes to Max:
    Without `MAX_WEBHOOK_URL`, the plugin silently remains in long-polling and deletes your manually created subscription.
 8. In webhook mode, the adapter registers the subscription on startup (`mixins/webhook.py:129–147`). Manual curl is only needed for a subscription created externally; in that case, the URL, secret, and `update_types` must match auto-registration:
    ```bash
-   curl -X POST "https://platform-api.max.ru/subscriptions" \
-     -H "Authorization: ***" \
+   curl -X POST "https://platform-api2.max.ru/subscriptions" \
+     -H "Authorization: $MAX_BOT_TOKEN" \
      -H "Content-Type: application/json" \
      -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
    ```

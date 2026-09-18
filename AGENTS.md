@@ -25,8 +25,8 @@
    Без `MAX_WEBHOOK_URL` плагин молча останется в long-polling и удалит вашу ручную подписку.
 8. В режиме вебхука адаптер регистрирует подписку сам при старте (`mixins/webhook.py:129–147`). Ручной curl нужен только для подписки, созданной извне; тогда URL, секрет и `update_types` должны совпадать с авторегистрацией:
    ```bash
-   curl -X POST "https://platform-api.max.ru/subscriptions" \
-     -H "Authorization: ***" \
+   curl -X POST "https://platform-api2.max.ru/subscriptions" \
+     -H "Authorization: $MAX_BOT_TOKEN" \
      -H "Content-Type: application/json" \
      -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
    ```
