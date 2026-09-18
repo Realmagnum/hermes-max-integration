@@ -53,8 +53,8 @@ optional_env:
     description: "Render markdown tables as images via Pillow (true/false, default: false)"
     prompt: "Render tables as images"
   - name: MAX_CROSS_SESSION
-    description: "Opt in to cross-platform session listing — /sessions shows sessions from ALL platforms (CLI, Telegram, Discord, WebUI) and /resume <id> switches to any session. Owner-only: only the user IDs in MAX_CROSS_SESSION_USERS (or MAX_ALLOWED_USERS) get this; everyone else keeps the core's per-platform scoping. (true/false, default: false)"
+    description: "Enable cross-platform session listing — /sessions shows sessions from ALL platforms (CLI, Telegram, Discord, WebUI). /resume <id> switches to any session. Set to false to restore default per-platform scoping. (true/false, default: true)"
     prompt: "Cross-platform session commands"
-  - name: MAX_CROSS_SESSION_USERS
-    description: "Comma-separated Max user IDs allowed to use MAX_CROSS_SESSION (owner-only). Defaults to MAX_ALLOWED_USERS when that list is non-empty and MAX_ALLOW_ALL_USERS is false."
-    prompt: "Cross-session owner user IDs (comma-separated)"
+  - name: MAX_EDIT_THROTTLE
+    description: "Minimum seconds between streaming edits of the same message (default: 0.2). Applies per chat/message; content queued inside the window is flushed automatically."
+    prompt: "Streaming edit throttle in seconds (e.g. 0.2)"

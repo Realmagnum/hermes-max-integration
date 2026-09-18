@@ -21,10 +21,12 @@ Configuration in ~/.hermes/.env:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import mimetypes
 import os
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -42,7 +44,6 @@ from gateway.platforms.base import (
     cache_image_from_bytes,
 )
 
-from .mixins.base import _http_body_snippet, _is_retryable_http_status
 from .mixins.buttons import ButtonsMixin
 from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
     _ALLOWED_UPLOAD_HOSTS,
@@ -69,9 +70,12 @@ POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
 UPLOAD_DELAY = 2.0
 
-# Interactive model-picker sessions: a button tap is honoured only while its
-# session is younger than this. Sliding — every accepted tap refreshes it.
-MODEL_PICKER_TTL_SECONDS = 15 * 60
+# Streaming edit throttle. Per-message state lives in MaxAdapter._edit_states,
+# so two concurrent chats can never consume each other's slot (CODE-03).
+EDIT_THROTTLE_SECONDS = 0.2
+# Upper bound on tracked (chat, message) streams; idle entries are pruned first
+# so a long-lived adapter cannot grow one state per message forever.
+EDIT_STATES_MAX = 256
 
 # SSRF allowlist is in .mixins.media_upload
 
@@ -163,6 +167,35 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _coerce_float(value: Any, default: float) -> float:
+    """Coerce env/config strings to a non-negative float."""
+    if value is None or value == "":
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+@dataclass
+class _StreamEditState:
+    """Per-(chat, message) streaming-edit bookkeeping (CODE-03).
+
+    Kept per message instead of on the adapter so concurrent streams cannot
+    share a throttle slot. ``last_edit_at`` gates the next PUT, ``pending_text``
+    holds the content of a throttled call until ``flush_task`` delivers it, and
+    ``lock`` serialises the direct and timer-driven PUT for one message.
+    """
+
+    chat_id: str
+    message_id: str
+    last_edit_at: float = 0.0
+    pending_text: str | None = None
+    flush_task: asyncio.Task | None = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
 # ── MaxAdapter ───────────────────────────────────────────────────────────
 
 class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
@@ -233,10 +266,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         )
         # Use webhook if URL is explicitly configured
         self._use_webhook: bool = bool(self._webhook_url)
-        # Webhook readiness: the server can be listening (health) while MAX is
-        # not delivering anything to it (not ready) — see /health vs /ready.
-        self._webhook_ready: bool = False
-        self._webhook_ready_reason: str = "webhook not started"
 
         # Access control
         self.allowed_users: list = extra.get("allowed_users", [])
@@ -285,7 +314,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._exec_approval_state: dict[str, str] = {}   # approval_id → session_key
         self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
         self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
-        self._model_picker_state: dict[str, dict] = {}    # scoped chat → picker session (owner/message bound)
+        self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
+
+        # Streaming edit throttle — one state entry per (chat_id, message_id)
+        self._edit_throttle: float = _coerce_float(
+            os.getenv("MAX_EDIT_THROTTLE") or extra.get("edit_throttle"),
+            EDIT_THROTTLE_SECONDS,
+        )
+        self._edit_states: dict[str, _StreamEditState] = {}
 
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
@@ -355,76 +391,33 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             follow_redirects=False,
         )
 
-        # Verify token with /me. A transport error, a non-200 status, an
-        # unparsable body or an explicit ``success: false`` must NOT be reported
-        # as a live connection: doing so makes the gateway claim a healthy
-        # adapter that can neither receive nor deliver a single message.
+        # Verify token with /me
         try:
             resp = await self._http_client.get(f"{MAX_API_BASE}/me", timeout=httpx.Timeout(10.0))
-        except Exception as e:  # noqa: BLE001 — transport failure: nothing was established
-            await self._close_http_client()
-            self._set_fatal_error(
-                "conn_fail", f"/me transport error: {type(e).__name__}: {e}", retryable=True,
-            )
-            return False
-
-        if resp.status_code != 200:
-            await self._close_http_client()
             if resp.status_code == 401:
+                await self._http_client.aclose()
+                self._http_client = None
                 self._set_fatal_error("invalid_token", "MAX bot token is invalid", retryable=False)
+                return False
+            if resp.status_code == 200:
+                d = resp.json()
+                logger.info("MAX: connected as @%s (id=%s)", d.get("username", "?"), d.get("user_id"))
+                # Register slash commands via PATCH /me/commands
+                try:
+                    await self._set_bot_commands()
+                except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
+                    logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
             else:
-                self._set_fatal_error(
-                    "conn_fail",
-                    f"/me returned HTTP {resp.status_code}{_http_body_snippet(resp)}",
-                    retryable=_is_retryable_http_status(resp.status_code),
-                )
-            logger.warning("MAX: /me returned HTTP %s — not connected", resp.status_code)
+                logger.warning("MAX: /me returned %s", resp.status_code)
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            await self._http_client.aclose()
+            self._http_client = None
+            self._set_fatal_error("conn_fail", str(e), retryable=True)
             return False
-
-        try:
-            me = resp.json()
-        except ValueError:
-            me = None
-        if not isinstance(me, dict) or me.get("success") is False:
-            detail = me.get("message") if isinstance(me, dict) else "unparsable JSON body"
-            await self._close_http_client()
-            self._set_fatal_error(
-                "conn_fail",
-                f"/me did not return bot info: {detail or 'success=false'}",
-                retryable=False,
-            )
-            return False
-
-        logger.info("MAX: connected as @%s (id=%s)", me.get("username", "?"), me.get("user_id"))
-        # Register slash commands via PATCH /me/commands
-        try:
-            await self._set_bot_commands()
-        except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
 
         if self._use_webhook:
-            started = await self._start_webhook()
-        else:
-            started = await self._start_polling()
-
-        if not started:
-            # _start_webhook/_start_polling recorded the fatal error and tore
-            # down whatever they partially started; the HTTP client is ours.
-            self._webhook_ready = False
-            logger.warning("MAX: receive path failed to start — not connected")
-            await self._close_http_client()
-            return False
-        return True
-
-    async def _close_http_client(self) -> None:
-        """Close and forget the HTTP client. Safe on a half-initialized adapter."""
-        client, self._http_client = self._http_client, None
-        if client is None:
-            return
-        try:
-            await client.aclose()
-        except Exception as exc:  # noqa: BLE001 — shutdown must not raise
-            logger.debug("MAX: http client close failed: %s", exc)
+            return await self._start_webhook()
+        return await self._start_polling()
 
     async def disconnect(self) -> None:
         """Shut down the adapter."""
@@ -444,9 +437,31 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             task.cancel()
         self._background_tasks.clear()
 
-        await self._teardown_webhook_server()
+        # Cancel pending streaming-edit flush timers (CODE-03) so a closed
+        # adapter cannot PUT against a closed client.
+        pending_flushes = [
+            state.flush_task
+            for state in self._edit_states.values()
+            if state.flush_task is not None and not state.flush_task.done()
+        ]
+        self._edit_states.clear()
+        for task in pending_flushes:
+            task.cancel()
+        for task in pending_flushes:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
-        await self._close_http_client()
+        if self._webhook_runner:
+            try:
+                await self._webhook_runner.cleanup()
+            except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
+                logger.debug("MAX: webhook cleanup error: %s", exc)
+            self._webhook_runner = None
+            self._webhook_app = None
+
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
 
         self._mark_disconnected()
         logger.info("MAX: disconnected")
@@ -1320,6 +1335,121 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             logger.info("MAX: split outbound message into %s chunks for %s", len(chunks), chat_id)
         return last_result or SendResult(success=False, error="No content to send")
 
+    # ═════════════════════════════════════════════════════════════════════
+    # Streaming edits — per-message throttle with guaranteed flush (CODE-03)
+    # ═════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _edit_state_key(chat_id: str, message_id: str) -> str:
+        """State key: one entry per (chat, message) pair.
+
+        message_id alone is unique in MAX, but chat_id is folded into the key so
+        typing renewal always targets the right chat and a duplicate/stale mid
+        from another chat can never collide with this stream's slot.
+        """
+        return f"{chat_id}\x00{message_id}"
+
+    def _get_edit_state(self, chat_id: str, message_id: str) -> _StreamEditState:
+        key = self._edit_state_key(chat_id, message_id)
+        state = self._edit_states.get(key)
+        if state is None:
+            if len(self._edit_states) >= EDIT_STATES_MAX:
+                self._prune_edit_states()
+            state = _StreamEditState(chat_id=chat_id, message_id=message_id)
+            self._edit_states[key] = state
+        return state
+
+    def _prune_edit_states(self) -> None:
+        """Drop the oldest idle streams so tracked state stays bounded.
+
+        Only entries with nothing queued and no live flush timer are eligible,
+        oldest ``last_edit_at`` first. Dropping one merely costs that message a
+        fresh throttle window on its next edit.
+        """
+        idle = [
+            (key, state)
+            for key, state in self._edit_states.items()
+            if state.pending_text is None
+            and (state.flush_task is None or state.flush_task.done())
+        ]
+        idle.sort(key=lambda item: item[1].last_edit_at)
+        for key, _state in idle[: max(1, len(idle) // 2)]:
+            self._edit_states.pop(key, None)
+
+    @staticmethod
+    def _cancel_flush_task(state: _StreamEditState) -> None:
+        """Cancel the pending flush timer for one message, if any."""
+        task = state.flush_task
+        state.flush_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _discard_edit_state(self, chat_id: str, message_id: str) -> None:
+        """Drop per-message state and its timer (stream finished)."""
+        state = self._edit_states.pop(self._edit_state_key(chat_id, message_id), None)
+        if state is not None:
+            self._cancel_flush_task(state)
+
+    async def _perform_edit(self, state: _StreamEditState, content: str) -> SendResult:
+        """Truncate/normalise ``content`` and PUT it to MAX (single attempt)."""
+        text = content[:MAX_MESSAGE_LENGTH - 3] + "..." if len(content) > MAX_MESSAGE_LENGTH else content
+        text = self._convert_markdown_tables(text)
+        body = {"text": text, "format": "markdown"}
+        try:
+            resp = await self._http_client.put(
+                f"{MAX_API_BASE}/messages",
+                params={"message_id": state.message_id},
+                json=body,
+            )
+            resp.raise_for_status()
+            # MAX clears typing indicator on message edit — renew it
+            await self.send_typing(state.chat_id)
+            return SendResult(success=True, message_id=state.message_id, raw_response=resp.json())
+        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            logger.error("MAX: edit_message failed: %s", e)
+            return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
+
+    def _schedule_flush(self, state: _StreamEditState) -> None:
+        """(Re)start the timer that delivers throttled content.
+
+        A newer throttled edit cancels the older timer and restarts it, so the
+        last queued content always wins and is delivered even when no further
+        edit_message call ever arrives.
+        """
+        self._cancel_flush_task(state)
+        key = self._edit_state_key(state.chat_id, state.message_id)
+        try:
+            state.flush_task = asyncio.create_task(self._flush_pending_edit(key))
+        except RuntimeError:  # no running loop — nothing to schedule on
+            logger.debug("MAX: no event loop for streaming edit flush")
+
+    async def _flush_pending_edit(self, key: str) -> None:
+        """Deliver content stored by the last throttled edit_message call."""
+        state = self._edit_states.get(key)
+        if state is None:
+            return
+        try:
+            while True:
+                remaining = self._edit_throttle - (time.monotonic() - state.last_edit_at)
+                if remaining > 0:
+                    await asyncio.sleep(remaining)
+                text = state.pending_text
+                if text is None:
+                    return
+                state.pending_text = None
+                async with state.lock:
+                    state.last_edit_at = time.monotonic()
+                    await self._perform_edit(state, text)
+                if state.pending_text is None:
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — flush must never kill the loop
+            logger.error("MAX: pending edit flush failed: %s", exc)
+        finally:
+            if self._edit_states.get(key) is state:
+                state.flush_task = None
+
     async def edit_message(
         self,
         chat_id: str,
@@ -1330,49 +1460,35 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     ) -> SendResult:
         """Edit an existing message — for streaming support.
 
-        Throttles edits to 800ms minimum interval to avoid MAX rate limits.
+        Throttling is tracked per (chat_id, message_id), so two concurrent chats
+        each keep their own slot and can no longer suppress each other's PUT.
+        A throttled edit is never dropped: it is stored and delivered by its own
+        timer once the throttle window expires. ``finalize=True`` always sends
+        immediately and releases the per-message state.
         Renews typing indicator after each edit (MAX clears it on edit).
         """
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
 
-        # Streaming throttle: minimum 200ms between edits to avoid flooding.
-        # Unlike the old 800ms throttle, this stores the content when skipped
-        # so no edit is ever silently lost.
+        state = self._get_edit_state(chat_id, message_id)
         now = time.monotonic()
-        last = getattr(self, "_last_edit_at", 0.0)
-        if not finalize and last > 0 and (now - last) < 0.2:
-            self._pending_edit = content
+
+        if not finalize and state.last_edit_at > 0 and (now - state.last_edit_at) < self._edit_throttle:
+            state.pending_text = content
+            self._schedule_flush(state)
             logger.debug("MAX: edit_message throttled, content queued")
             return SendResult(success=True, message_id=message_id)
 
-        # If there was a throttled edit, merge it with the current content.
-        # The content parameter already carries the full accumulated text from
-        # the agent, so _pending_edit is used only for internal bookkeeping —
-        # no actual merging needed on the wire, the agent already concatenated.
-        if getattr(self, "_pending_edit", None) is not None:
-            self._pending_edit = None
+        # Unthrottled path (or finalize): this content supersedes anything queued.
+        self._cancel_flush_task(state)
+        state.pending_text = None
+        async with state.lock:
+            state.last_edit_at = time.monotonic()
+            result = await self._perform_edit(state, content)
 
-        self._last_edit_at = now
         if finalize:
-            self._last_edit_at = 0.0
-
-        text = content[:MAX_MESSAGE_LENGTH - 3] + "..." if len(content) > MAX_MESSAGE_LENGTH else content
-        text = self._convert_markdown_tables(text)
-        body = {"text": text, "format": "markdown"}
-        try:
-            resp = await self._http_client.put(
-                f"{MAX_API_BASE}/messages",
-                params={"message_id": message_id},
-                json=body,
-            )
-            resp.raise_for_status()
-            # MAX clears typing indicator on message edit — renew it
-            await self.send_typing(chat_id)
-            return SendResult(success=True, message_id=message_id, raw_response=resp.json())
-        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.error("MAX: edit_message failed: %s", e)
-            return SendResult(success=False, error="Edit failed (see logs)", retryable=True)
+            self._discard_edit_state(chat_id, message_id)
+        return result
 
     async def delete_message(self, chat_id: str, message_id: str) -> SendResult:
         """Delete a message by ID."""
@@ -1760,11 +1876,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
           model:pick:{model}:{provider} — model selected, switch
           model:page:{provider}:{page} — page navigation
           model:back — back to provider list
-
-        Every tap is gated through :meth:`_model_picker_state_for`, so a tap is
-        only honoured when it belongs to a live session of *this* user, came
-        from the picker message that session is currently showing, and has not
-        outlived ``MODEL_PICKER_TTL_SECONDS``.
         """
         # Build the correct scoped_chat matching how send_model_picker stores state.
         # If chat_id (raw numeric) is present, the message was in a group → "chat:{id}".
@@ -1774,20 +1885,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         else:
             scoped_chat = f"user:{user_id}"
 
-        state = self._model_picker_state_for(
-            scoped_chat, user_id=user_id, message_id=self._callback_message_id(raw_payload),
-        )
-        if state is None:
-            return None
-
         parts = data.split(":", 3)
 
         if len(parts) >= 3 and parts[1] == "provider":
             # Provider selected
             provider_slug = parts[2]
-            await self._on_model_provider_selected(
-                scoped_chat, provider_slug, str(state.get("provider_msg_id", "")), state=state,
-            )
+            state = self._model_picker_state.get(scoped_chat)
+
+            msg_id = state.get("provider_msg_id", "") if state else ""
+            await self._on_model_provider_selected(scoped_chat, provider_slug, msg_id)
             return None
 
         if len(parts) >= 4 and parts[1] == "page":
@@ -1797,7 +1903,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 page = int(parts[3])
             except ValueError:
                 page = 0
-            await self._on_model_page_selected(scoped_chat, provider_slug, page, state=state)
+            state = self._model_picker_state.get(scoped_chat)
+            if state:
+                await self._on_model_page_selected(scoped_chat, provider_slug, page)
             return None
 
         if len(parts) >= 3 and parts[1] == "pick":
@@ -1807,108 +1915,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             model_id = parts[2]
             provider_slug = parts[3] if len(parts) >= 4 else ""
             if provider_slug:
-                return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id, state=state)
+                return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
 
         if data == "model:back":
-            await self._on_model_back(scoped_chat, user_id, state=state)
+            await self._on_model_back(scoped_chat, user_id)
             return None
 
         logger.warning("MAX: unhandled model callback: %s", data)
         return None
-
-    # ── Model picker session state ───────────────────────────────────────
-
-    @staticmethod
-    def _callback_message_id(payload: dict[str, Any]) -> str:
-        """Message id a callback button was attached to, "" when not exposed.
-
-        MAX sends the pressed message inside ``message``; the id lives in
-        ``message.body.mid`` (``message.mid`` in the documented callback
-        envelope). Absent ids are tolerated — the tap is then only checked
-        against owner and TTL, never against a guessed message id.
-        """
-        msg = payload.get("message") or {}
-        callback = payload.get("callback") or payload.get("message_callback") or {}
-        body = msg.get("body") or {}
-        return str(
-            body.get("mid")
-            or msg.get("mid")
-            or callback.get("mid")
-            or callback.get("message_id")
-            or ""
-        )
-
-    @staticmethod
-    def _model_picker_owner(chat_id: str, metadata: dict[str, Any] | None) -> str:
-        """User id owning a picker session, "" when it cannot be known yet.
-
-        Core builds the ``send_model_picker`` metadata for routing, not for
-        identity, so the requester is only knowable up front in a DM
-        (``chat_id`` = ``user:<id>``). In a group the session binds to the
-        first user who taps a button (see ``_model_picker_state_for``).
-        """
-        for key in ("owner_user_id", "user_id"):
-            value = (metadata or {}).get(key)
-            if value:
-                return str(value)
-        prefix, _, rest = str(chat_id).partition(":")
-        return rest if prefix == "user" and rest else ""
-
-    def _prune_model_picker_state(self, now: float | None = None) -> None:
-        """Drop expired picker sessions so abandoned pickers stop being actionable."""
-        now = time.monotonic() if now is None else now
-        expired = [
-            key for key, state in self._model_picker_state.items()
-            if now - float(state.get("updated_at") or 0.0) > MODEL_PICKER_TTL_SECONDS
-        ]
-        for key in expired:
-            self._model_picker_state.pop(key, None)
-            logger.info("MAX: model picker session expired: %s", key)
-
-    def _model_picker_state_for(
-        self, key: str, *, user_id: str = "", message_id: str = "",
-    ) -> dict[str, Any] | None:
-        """Resolve the live picker session for a button tap, or None.
-
-        Enforced, in order: the session exists and is not older than
-        ``MODEL_PICKER_TTL_SECONDS`` (sliding — an accepted tap refreshes it),
-        the tapping user owns the session, and — when the payload exposes the
-        pressed message id — the tap comes from the picker message the session
-        is currently showing rather than a superseded one. Only a tap that
-        clears every check binds an unowned (group) session.
-        """
-        self._prune_model_picker_state()
-        state = self._model_picker_state.get(key)
-        if not state:
-            logger.info("MAX: model picker tap without a live session (%s)", key)
-            return None
-
-        owner = str(state.get("owner_user_id") or "")
-        if owner and str(user_id) != owner:
-            logger.warning(
-                "MAX: ignoring model picker tap from non-owner user=%s owner=%s chat=%s",
-                user_id, owner, key,
-            )
-            return None
-
-        expected = {
-            str(state.get(field)) for field in ("provider_msg_id", "model_msg_id")
-            if state.get(field)
-        }
-        if message_id and expected and str(message_id) not in expected:
-            logger.info(
-                "MAX: ignoring stale model picker button mid=%s (expected %s, chat=%s)",
-                message_id, sorted(expected), key,
-            )
-            return None
-
-        if not owner and user_id:
-            # Group session: bind it to the first user whose tap was accepted.
-            state["owner_user_id"] = str(user_id)
-            logger.info("MAX: model picker session %s bound to user %s", key, user_id)
-
-        state["updated_at"] = time.monotonic()
-        return state
 
     # ═════════════════════════════════════════════════════════════════════
     # Model picker
@@ -1969,9 +1983,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
-            now = time.monotonic()
-            # Session is bound to its owner and to the message currently showing
-            # the buttons, and expires after MODEL_PICKER_TTL_SECONDS of disuse.
             self._model_picker_state[str(chat_id)] = {
                 "provider_msg_id": result.message_id,  # ID сообщения с провайдерами (текст+кнопки)
                 "providers": providers,
@@ -1979,19 +1990,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 "on_model_selected": on_model_selected,
                 "current_model": current_model,
                 "current_provider": current_provider,
-                "owner_user_id": self._model_picker_owner(chat_id, metadata),
-                "created_at": now,
-                "updated_at": now,
             }
         return result
 
     async def _on_model_provider_selected(
-        self, chat_id: str, provider_slug: str, message_id: str, page: int = 0, is_pagination: bool = False,
-        state: dict[str, Any] | None = None,
+        self, chat_id: str, provider_slug: str, message_id: str, page: int = 0, is_pagination: bool = False
     ) -> None:
         """Step 2: Show models for the selected provider (with pagination)."""
-        if state is None:
-            state = self._model_picker_state.get(str(chat_id))
+        state = self._model_picker_state.get(str(chat_id))
         if not state:
             return
 
@@ -2090,11 +2096,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 self._model_picker_state[str(chat_id)] = state
 
     async def _on_model_page_selected(
-        self, chat_id: str, provider_slug: str, page: int, state: dict[str, Any] | None = None,
+        self, chat_id: str, provider_slug: str, page: int
     ) -> None:
         """Handle page navigation in model picker."""
-        if state is None:
-            state = self._model_picker_state.get(str(chat_id))
+        state = self._model_picker_state.get(str(chat_id))
         if not state:
             return
 
@@ -2102,25 +2107,17 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         model_msg_id = state.get("model_msg_id", "")
         if not model_msg_id:
             # Fallback: show from scratch
-            await self._on_model_provider_selected(chat_id, provider_slug, "", page, state=state)
+            await self._on_model_provider_selected(chat_id, provider_slug, "", page)
             return
 
         # Pass model_msg_id as message_id and is_pagination=True
-        await self._on_model_provider_selected(
-            chat_id, provider_slug, model_msg_id, page, is_pagination=True, state=state,
-        )
+        await self._on_model_provider_selected(chat_id, provider_slug, model_msg_id, page, is_pagination=True)
 
     async def _on_model_picked(
         self, chat_id: str, model_id: str, provider_slug: str, user_id: str,
-        state: dict[str, Any] | None = None,
     ) -> MessageEvent | None:
         """Step 3: Model selected — call on_model_selected callback."""
-        key = str(chat_id)
-        if state is None:
-            state = self._model_picker_state.pop(key, None)
-        elif self._model_picker_state.get(key) is state:
-            # Claim the session once: a replayed tap finds no state and is ignored.
-            self._model_picker_state.pop(key, None)
+        state = self._model_picker_state.pop(str(chat_id), None)
         if not state:
             return None
 
@@ -2147,12 +2144,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
 
         return None
 
-    async def _on_model_back(
-        self, chat_id: str, user_id: str, state: dict[str, Any] | None = None,
-    ) -> None:
+    async def _on_model_back(self, chat_id: str, user_id: str) -> None:
         """Go back to provider selection."""
-        if state is None:
-            state = self._model_picker_state.get(str(chat_id))
+        state = self._model_picker_state.get(str(chat_id))
         if not state:
             return
 
