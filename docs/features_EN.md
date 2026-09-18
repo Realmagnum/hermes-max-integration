@@ -206,32 +206,37 @@ Interactive model selection with pagination (15 per page).
 
 ### Confirm/Clarify
 
-**Confirm:**
+There is no public `adapter.clarify()` method. The core calls the adapter through
+`send_clarify`, and the user's answer arrives as a callback with the prefix
+`clarify:{clarify_id}:{index|other}`.
+
+**Sending the question:**
+
 ```python
-result = await adapter.clarify(
+result = await adapter.send_clarify(
     chat_id="chat:123",
-    question="Confirm action?",
-    options=["Yes", "No"],
+    question="Which server?",
+    choices=["web-01", "db-main"],   # None → the question is sent as plain text
+    clarify_id="clr-42",
+    session_key="telegram:42",
 )
 ```
 
-**Clarify:**
-```python
-result = await adapter.clarify(
-    chat_id="chat:123",
-    question="Which server?",
-    options=["web-01", "db-main"],
-)
-```
+**Answer (callback):** `clarify:clr-42:0`, `clarify:clr-42:1`, …,
+`clarify:clr-42:other` (the last one puts the session into free-text input
+mode). Handler — `_handle_clarify_callback`. Dangerous-command approval is a
+separate `exec` prefix, slash-command confirmation is `sc` (full table in
+`docs/api.md`).
 
 ## File Upload
 
 ### Two-step Upload
 
-1. `POST /uploads?type=image` → get upload URL
-2. `PUT <upload_url>` → upload file
-3. Get CDN token
-4. `POST /messages` with `attachments: [{type: "image", payload: {token: "..."}}]`
+1. `POST /uploads?type=image` → get the upload URL (`url` field) and, for
+   audio/video, the `token` right away
+2. `POST <url>` as a multipart form with the `data` field → get the `token`
+   (for image/file)
+3. `POST /messages` with `attachments: [{type: "image", payload: {token: "..."}}]`
 
 ### SSRF Allowlist
 
@@ -248,12 +253,19 @@ _ALLOWED_UPLOAD_HOSTS = {
 
 ### Send Methods
 
-| Method | Type | Description |
-|--------|------|-------------|
-| `send_voice()` | voice | Voice message |
-| `send_video()` | video | Video message |
-| `send_document()` | document | Document |
-| `send_image()` | image | Image (via CDN) |
+`_upload_send(chat_id, path, type, ...)` passes a MAX attachment type, not the
+method name: `send_voice()` sends `type=audio`, `send_document()` sends
+`type=file`.
+
+| Method | Attachment `type` | Description |
+|--------|-------------------|-------------|
+| `send_voice()` | `audio` | Voice message |
+| `send_video()` | `video` | Video message |
+| `send_document()` | `file` | Document |
+| `send_image_file()` | `image` | Image from a file (via CDN) |
+| `send_image()` | `image` (`payload.url`) | Image by external URL, no upload |
+| `send_multiple_images()` | `image` | Several images in one message |
+| `send_animation()` | `image` | GIF (MAX sends it as an image) |
 
 ## Cross-Platform Sessions
 
