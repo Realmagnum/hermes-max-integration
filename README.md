@@ -30,7 +30,7 @@
 | ⚡ **Индикатор ввода** | Отображение набора текста для всех типов чатов |
 | 🔧 **Standalone-отправитель** | Отправка сообщений из cron/send_message через `_standalone_send` с нативной доставкой файлов. `hermes send "текст MEDIA:/file"` — работает без модификации ядра |
 | 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. Включено по умолчанию (`MAX_CROSS_SESSION=true`) |
-| 🧪 **Тесты** | pytest + pytest-asyncio, **126 тестов** |
+| 🧪 **Тесты** | pytest + pytest-asyncio, **167 тестов** (`pytest --collect-only`) |
 | 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
 | 📋 **Слеш-команды** | 20 команд (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) через MAX API `PATCH /me/commands` |
 
@@ -103,7 +103,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 
 | Сценарий | Что было раньше | Что стало |
 |----------|----------------|-----------|
-| 📊 **Дашборд мониторинга** | «\| Сервер \| Статус \|» текстом | Цветная таблица с иконками |
+| 📊 **Дашборд мониторинга** | «| Сервер | Статус |» текстом | Цветная таблица с иконками |
 | 📋 **Список задач** | Нечитаемые строки | Чёткие колонки с приоритетами |
 | 🏗️ **CI/CD статус** | Слитые строки | Аккуратный PNG с этапами |
 | 📈 **Отчёты** | Развалившаяся разметка | Готовая для пересылки картинка |
@@ -119,7 +119,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 
 | Попытка | Результат |
 |---------|-----------|
-| `` ``` `` code fence | MAX не поддерживает — теги отображались как текст |
+| ` ``` ` code fence | MAX не поддерживает — теги отображались как текст |
 | `<pre>` HTML-тег | Работает только в HTML-режиме, но тогда весь остальной markdown перестаёт парситься |
 | inline `` `code` `` | Работает как fallback, но без границ и выравнивания |
 | Простой текст с `\|` и `---` | Читаемо, но без моноширинного шрифта выглядит неаккуратно |
@@ -141,7 +141,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 | Разбивка сообщений | ✅ | ✅ Улучшена |
 | Извлечение медиа | ✅ | ✅ Расширено |
 | Дедупликация сообщений | ❌ | ✅ 300 сек |
-| Тесты | ✅ Базовые | ✅ 94 теста |
+| Тесты | ✅ Базовые | ✅ 167 тестов |
 | Настройка | ✅ | ✅ + табл. |
 
 ## Как это работает (архитектура)
@@ -173,15 +173,6 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 hermes plugins install Realmagnum/hermes-max-integration --enable
 ```
 
-> **Источник.** Основной репозиторий разработки — Gitea:
-> <https://gitea.rmg7.com/agent/hermes-max-integration>. Shorthand `owner/repo`
-> резолвится Hermes **только** в GitHub, поэтому команда выше клонирует
-> <https://github.com/Realmagnum/hermes-max-integration>. Проверено 2026-09-16:
-> публичный GitHub-репозиторий существует, его `main` = `b004c573` (совпадает с
-> базой аудита); зеркалирование Gitea↔GitHub не проверялось — не предполагайте его.
-> Установка напрямую из Gitea — полным git-URL (доступность хоста зависит от сети):
-> `hermes plugins install https://gitea.rmg7.com/agent/hermes-max-integration.git --enable`
-
 ### 2. Получить токен
 
 Зарегистрироваться на https://business.max.ru/self (юрлицо/ИП/самозанятый РФ).
@@ -201,12 +192,6 @@ MAX_BOT_TOKEN=ваш_токен
 MAX_ALLOWED_USERS=ваш_id_в_max
 ```
 
-> ⚠️ **Безопасная конфигурация по умолчанию — «только владелец».** `MAX_ALLOWED_USERS`
-> указывайте всегда: пустой список при `MAX_ALLOW_ALL_USERS=false` **не** закрывает
-> доступ — до ядра дойдёт любой, кто может написать боту. Если ботом пользуется больше
-> одного человека или он доступен из группы, задайте `MAX_CROSS_SESSION=false`.
-> Что именно защищено и что пока нет — [docs/security.md](docs/security.md).
-
 ### 4. Включить таблицы-картинки (опционально)
 
 Рекомендуемый рендер — **HTML→PNG через Playwright/Chromium** (аккуратные таблицы,
@@ -217,27 +202,18 @@ MAX_ALLOWED_USERS=ваш_id_в_max
 > (venv), иначе пакет не попадёт в рантайм плагина. Windows:
 > `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
 
-> **Предварительно.** Скрипты запускаются из каталога плагина, а `python`/`pip`
-> берутся из venv шлюза (иначе пакет не попадёт в рантайм). Каталог установки
-> зависит от профиля Hermes: `$HERMES_HOME/plugins/max-platform` (по умолчанию
-> `~/.hermes/plugins/max-platform`). Путь к нужному Python берём из shebang `hermes`.
-
 ```bash
-# Каталог плагина (активный профиль Hermes) и Python его окружения:
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
-HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
-
 # Вариант A (рекомендуется): HTML→PNG через Playwright.
 #   Использует установленный Chrome/Chromium (system) или скачивает bundled:
-"$HERMES_PY" -m pip install 'playwright>=1.40'
-"$HERMES_PY" -m playwright install chromium    # ~115 МБ, один раз; либо установите Chrome/Chromium вручную
+python -m pip install 'playwright>=1.40'
+python -m playwright install chromium          # ~115 МБ, один раз; либо установите Chrome/Chromium вручную
 
 # Идемпотентный скрипт вместо ручных команд (ставит только недостающее):
-"$HERMES_PY" scripts/setup-playwright.py --check-only   # диагностика (exit 1, если чего-то нет)
-"$HERMES_PY" scripts/setup-playwright.py               # установка недостающего
+python scripts/setup-playwright.py --check-only   # диагностика (exit 1, если чего-то нет)
+python scripts/setup-playwright.py                # установка недостающего
 
 # Вариант B (фоллбэк): классическая отрисовка через Pillow
-"$HERMES_PY" -m pip install Pillow
+python -m pip install Pillow
 
 echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
 ```
@@ -320,7 +296,7 @@ display:
 Для быстрой проверки работоспособности MAX выполните скрипт диагностики (должен быть в `scripts/diagnose.sh` репозитория плагина). Скрипт сам определяет текущий режим (webhook или long polling) и адаптирует проверки:
 
 ```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина (активный профиль)
+cd ~/.hermes/plugins/max-platform
 
 # Базовая диагностика (без отправки сообщения)
 ./scripts/diagnose.sh
@@ -337,12 +313,12 @@ cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог пл�
 |------------|---------|-----------|----------|
 | `MAX_BOT_TOKEN` | ✅ | — | Токен бота |
 | `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | Базовый URL API (документация рекомендует `https://platform-api2.max.ru`) |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука (за reverse proxy ставьте `127.0.0.1`) |
+| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт вебхука |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь вебхука |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret`; **обязателен в webhook-режиме** — пустое значение даёт только предупреждение в логе (SEC-04) |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
 | `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS (включает webhook-режим) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей; **пустое значение доступ не закрывает** — задавайте явно |
+| `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
@@ -351,22 +327,7 @@ cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог пл�
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume (см. ниже) — **включать только в одно-владельческом контуре** |
-
-## Справочник символов таблиц
-
-| Исходный эмодзи | Отображается | Значение | Цвет |
-|----------------|--------------|----------|------|
-| ✅ | ✓ | Готово / Done | `#16a34a` |
-| ❌ | ✗ | Ошибка / Failed | `#dc2626` |
-| ⚠️ | ⚠ | На проверке / Warning | `#ea580c` |
-| ⏳ / ⌛ | ◷ | Ожидание / Pending | `#ca8a04` |
-| ⏳ + schedule | ▶ | Запланировано / Scheduled | `#3b82f6` |
-| 🔴 | ● | Критично (красный) | `#dc2626` |
-| 🟢 | ● | Хорошо (зелёный) | `#16a34a` |
-| 🟡 | ● | Средне (жёлтый) | `#ca8a04` |
-
-Если ни Playwright/Chromium, ни Pillow не установлены — автопереключение на текстовый `` `code` `` режим.
+| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume (см. ниже) |
 
 ---
 
@@ -392,14 +353,6 @@ platforms:
 ```
 
 **Отключение:** `MAX_CROSS_SESSION=false` в `.env` — вернёт стандартное поведение ядра (только MAX-сессии).
-
-> ⚠️ **Multi-user warning.** Кросс-платформенные сессии включены по умолчанию
-> (`MAX_CROSS_SESSION=true`), а проверка доступа для них неполная: при пустом
-> `MAX_ALLOWED_USERS` запрос к `/sessions` проходит до ядра и раскрывает заголовки,
-> превью и ID сессий **всех** платформ (SEC-05). Пока задача не закрыта, включайте
-> `MAX_CROSS_SESSION=true` только в одно-владельческом контуре без доступа из групп,
-> а для бота, доступного нескольким людям, ставьте `MAX_CROSS_SESSION=false`.
-> Подробнее: [docs/security.md](docs/security.md).
 
 ---
 
@@ -460,6 +413,19 @@ await adapter.send_buttons(
 
 Если нужно несколько кнопок в одном ряду — используйте `_post_interactive()` напрямую с готовой структурой рядов.
 
+| Исходный эмодзи | Отображается | Значение | Цвет |
+|----------------|--------------|----------|------|
+| ✅ | ✓ | Готово / Done | `#16a34a` |
+| ❌ | ✗ | Ошибка / Failed | `#dc2626` |
+| ⚠️ | ⚠ | На проверке / Warning | `#ea580c` |
+| ⏳ / ⌛ | ◷ | Ожидание / Pending | `#ca8a04` |
+| ⏳ + schedule | ▶ | Запланировано / Scheduled | `#3b82f6` |
+| 🔴 | ● | Критично (красный) | `#dc2626` |
+| 🟢 | ● | Хорошо (зелёный) | `#16a34a` |
+| 🟡 | ● | Средне (жёлтый) | `#ca8a04` |
+
+Если ни Playwright/Chromium, ни Pillow не установлены — автопереключение на текстовый `` `code` `` режим.
+
 ---
 
 ## 📎 Нативная доставка файлов (standalone sender)
@@ -502,10 +468,8 @@ send_message MEDIA delivery is currently only supported for telegram, discord...
 Это лечится опциональным скриптом, который добавляет MAX в список поддерживаемых платформ в `tools/send_message_tool.py`:
 
 ```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина
-HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # Python окружения шлюза
-"$HERMES_PY" scripts/apply-core-fix.py          # применить
-"$HERMES_PY" scripts/apply-core-fix.py --revert # откатить
+python3 scripts/apply-core-fix.py       # применить
+python3 scripts/apply-core-fix.py --revert  # откатить
 ```
 
 После применения:
@@ -516,8 +480,7 @@ hermes send --to max:USER_ID "текст MEDIA:/file.pdf"     # ✅ и так р
 
 ## Документация
 
-- [Настройка](docs/setup.md) — .env, webhook, deployment
-- [Безопасность](docs/security.md) — честная модель: что защищено, что нет, известные проблемы
+- [Настройка](docs/setup.md) — .env, webhook, security, deployment
 - [Возможности](docs/features.md) — STT, таблицы, стриминг, кнопки, файлы
 - [API](docs/api.md) — форматы MAX API, callbacks, загрузка файлов
 - [Диагностика](docs/troubleshooting.md) — ошибки, diagnose.sh, логи
@@ -535,20 +498,17 @@ curl http://localhost:8646/health
 ### Таблицы не стали картинками
 
 ```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина
-HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # Python окружения шлюза
-
 # Проверить что включено
 grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
 
 # Диагностика рендера: playwright-пакет и Chromium на месте?
-"$HERMES_PY" scripts/setup-playwright.py --check-only
-#   MISSING → "$HERMES_PY" scripts/setup-playwright.py  (ставит недостающее)
-#   либо вручную: "$HERMES_PY" -m pip install 'playwright>=1.40'
-#                 "$HERMES_PY" -m playwright install chromium
+python scripts/setup-playwright.py --check-only
+#   MISSING → python scripts/setup-playwright.py  (ставит недостающее)
+#   либо вручную: python -m pip install 'playwright>=1.40'
+#                 python -m playwright install chromium
 
 # Проверить Pillow (фоллбэк-рендер)
-"$HERMES_PY" -m pip list | grep -i pillow
+pip list | grep -i pillow
 
 # Проверить логи
 grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
@@ -588,17 +548,19 @@ hermes-max-integration/
 ├── __init__.py              # register() — точка входа
 ├── pyproject.toml           # Python-пакет
 ├── adapter.py               # MaxAdapter (~2600 строк)
-├── mixins/                  # Слои адаптера: buttons, sessions, webhook, media, tables
-├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
-│                            #   release.sh, setup-playwright.py
-├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (навык для AI-агента)
-├── tests/                   # pytest: 126 тестов
-├── docs/                    # api.md, features.md, setup.md, troubleshooting.md (+ _EN)
+├── scripts/
+│   └── apply-core-fix.py      # Опциональный патч core для MEDIA-only
+├── skills/
+│   └── max-gateway/
+│       └── SKILL.md         # Навык для AI-агента
+├── tests/                   # pytest: 167 тестов
 ├── AGENTS.md                # Инструкции для AI-агентов
 ├── after-install.md         # Пост-установка
 ├── cliff.toml               # git-cliff config (EN)
 ├── cliff-ru.toml            # git-cliff config (RU)
 ├── README_EN.md             # Английская версия
+├── docs/
+│   └── webhook.md           # Архитектура вебхука
 └── .github/workflows/ci.yml # CI/CD
 ```
 
@@ -608,28 +570,16 @@ hermes-max-integration/
 
 ## Безопасность
 
-Что **реально** реализовано и какие ограничения остаются — в
-[docs/security.md](docs/security.md). Кратко:
+| Мера | Детали |
+|------|--------|
+| 🛡️ **SSRF Защита** | URL загрузок проверяются по белому списку `*.max.ru` / `*.oneme.ru` |
+| 🔐 **Токен** | `Authorization` не передаётся при HTTP-редиректах |
+| 🔑 **Секрет вебхука** | Сравнение через `secrets.compare_digest` (защита от timing) |
+| 🔊 **Приватность голоса** | Аудио-кэш с правами `0700` |
+| 🧹 **Чистка ошибок** | Токены и URL удалены из сообщений об ошибках |
+| 🔍 **CI** | `bandit` SAST + `pip-audit` при каждом пуше |
 
-| Мера | Детали и ограничения |
-|------|----------------------|
-| 🔐 **Токен на редиректах** | HTTP-клиент загрузок создан с `follow_redirects=False`, но заголовок `Authorization` всё равно уходит на исходный URL вложения (SEC-02, открыто) |
-| 🛡️ **Фильтр входящих URL** | Отклоняются не-http(s) схемы, литеральные private/loopback/link-local/reserved IP, `localhost`, `*.local`; имена хостов без DNS-проверки принимаются (SEC-03, открыто). Белый список `*.max.ru` / `*.oneme.ru` относится только к **исходящим** загрузкам |
-| 🔑 **Секрет вебхука** | Сравнение через `secrets.compare_digest`; пустой секрет — только предупреждение, обработка продолжается (SEC-04, открыто) |
-| 🔊 **Приватность голоса** | Каталог аудио-кэша создаётся с `mode=0o700` (эффективно ограничен umask) |
-| 🧹 **Логи** | Из URL удаляются userinfo и query-строка; гарантий очистки текстов исключений сторонних библиотек нет |
-| 🔍 **CI** | В `.github/workflows/ci.yml` есть ruff, pytest, bandit и pip-audit, но ruff/bandit не покрывают `mixins/`, триггер — только `main`, фактический запуск на используемом runner не подтверждён |
-| 🚧 **Доступ** | Allowlist и групповые политики реализованы, но пустой список доступа не закрывает (SEC-05/SEC-06, открыто) |
-
-**Не используйте плагин в публичном или многопользовательском контуре, пока не закрыты
-SEC-01…07.** Этот раздел и `docs/security.md` — не гарантия безопасности: отсутствие
-находки не означает отсутствие уязвимости.
-
-**Проведённые аудиты:** `e87ee64` (2026-07-17, исправление 10 уязвимостей),
-`70eb490`/`d9626b5` (2026-07-18, 5 MEDIUM/LOW и `nosec B104`), `e632014` (2026-08-17,
-редиректы, SSRF-guard, предупреждение о секрете), бэклог текущего аудита — `abd2f0f`
-(2026-09-15, база `b004c573`: 7 SEC, 8 CODE, 4 BUILD, 10 DOC). Полный pytest, Ruff,
-Bandit и pip-audit на момент аудита не запускались, реальный MAX E2E не выполнялся.
+Полный аудит и исправления: коммит `e87ee64`.
 
 ## История проекта
 

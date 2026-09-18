@@ -17,11 +17,9 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🟣 **Max Messenger** | Full gateway integration with max.ru |
 | 📡 **Dual Mode** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
 | 🎤 **STT Voice** | Auto-download voice → transcription by the Hermes core (core STT) |
-| 🖼️ **Tables as Images** | Render markdown tables as PNGs with colored status icons |
+| 🖼️ **Tables as Images** | Render markdown tables as PNGs via Playwright (primary) or Pillow (fallback), with colored status icons |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
-| 🔘 **Interactive Buttons** | callback + link + message + request_contact/geo + model picker/approval/clarify |
-| 🔗 **Link Buttons** | Link buttons in messages (`send_buttons()` with the `link` type) |
-| 👁️ **send_action** | Extended statuses: typing, sending_photo/video/audio/file, read, typing_off |
+| 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
 | ✂️ **Auto-chunking** | Smart 4000-char message splitting preserving paragraphs |
 | ⬆️ **File Upload** | Two-step upload: `POST /uploads` → PUT → token → send |
 | 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
@@ -29,8 +27,7 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
-| 🌐 **Cross-Platform Sessions** | `/sessions` lists sessions from ALL platforms, `/resume <id>` switches to any of them. Enabled by default (`MAX_CROSS_SESSION=true`) |
-| 🧪 **Tested** | pytest + pytest-asyncio, **126 tests** |
+| 🧪 **Tested** | pytest + pytest-asyncio, **167 tests** (`pytest --collect-only`) |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
 
@@ -141,7 +138,7 @@ We tried several approaches before settling on PNG:
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 94 tests |
+| Tests | ✅ Basic | ✅ 167 tests |
 | Interactive setup | ✅ | ✅ + tables |
 
 ## Architecture
@@ -156,8 +153,8 @@ We tried several approaches before settling on PNG:
                                             │  │  ↓        │  │
                                             │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
                                             │  │  ↓   ↓    │  │    → Playwright(HTML→PNG) or Pillow → PNG
-                                            │  │ text  PN  │  │    → POST /uploads
-                                            │  │       G   │  │    → PUT → token
+                                            │  │ text PNG  │  │    → POST /uploads
+                                            │  │       │   │  │    → PUT → token
                                             │  └───────────┘  │    → POST /messages
                                             │  ┌───────────┐  │
                                             │  │ STT (core) │──┼── core STT (config.yaml)
@@ -172,15 +169,6 @@ We tried several approaches before settling on PNG:
 ```bash
 hermes plugins install Realmagnum/hermes-max-integration --enable
 ```
-
-> **Source.** The primary development repository is Gitea:
-> <https://gitea.rmg7.com/agent/hermes-max-integration>. The `owner/repo` shorthand
-> resolves **only** to GitHub, so the command above clones
-> <https://github.com/Realmagnum/hermes-max-integration>. Verified 2026-09-16: the
-> public GitHub repository exists and its `main` = `b004c573` (matches the audit
-> base); Gitea↔GitHub mirroring was not verified — do not assume it. To install
-> straight from Gitea, pass the full Git URL (host reachability depends on your
-> network): `hermes plugins install https://gitea.rmg7.com/agent/hermes-max-integration.git --enable`
 
 ### 2. Get a bot token
 
@@ -211,28 +199,18 @@ falls back to classic Pillow rendering.
 > runs in (its venv), otherwise the package won't reach the plugin runtime.
 > Windows: `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
 
-> **Prerequisites.** The scripts run from the plugin directory, and `python`/`pip`
-> must come from the gateway's venv (otherwise the package won't reach the plugin
-> runtime). The install directory follows the Hermes profile:
-> `$HERMES_HOME/plugins/max-platform` (default `~/.hermes/plugins/max-platform`).
-> Resolve the interpreter from the `hermes` shebang.
-
 ```bash
-# Plugin directory (active Hermes profile) and the interpreter of its venv:
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
-HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
-
 # Variant A (recommended): HTML→PNG via Playwright.
 #   Uses system Chrome/Chromium (channel="chrome") or downloads bundled:
-"$HERMES_PY" -m pip install 'playwright>=1.40'
-"$HERMES_PY" -m playwright install chromium    # ~115 MB, one-time; or install Chrome/Chromium manually
+python -m pip install 'playwright>=1.40'
+python -m playwright install chromium          # ~115 MB, one-time; or install Chrome/Chromium manually
 
 # Idempotent helper script instead of manual commands (installs only what's missing):
-"$HERMES_PY" scripts/setup-playwright.py --check-only   # diagnostics (exit 1 if anything missing)
-"$HERMES_PY" scripts/setup-playwright.py               # install what's missing
+python scripts/setup-playwright.py --check-only   # diagnostics (exit 1 if anything missing)
+python scripts/setup-playwright.py                # install what's missing
 
 # Variant B (fallback): classic rendering via Pillow
-"$HERMES_PY" -m pip install Pillow
+python -m pip install Pillow
 
 echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
 ```
@@ -315,7 +293,7 @@ This tells the gateway to deliver the final answer as a new message if streaming
 For a quick health check, run the diagnostics script (located in `scripts/diagnose.sh`). It auto-detects the current mode (webhook or long polling) and adapts the checks:
 
 ```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # plugin directory (active profile)
+cd ~/.hermes/plugins/max-platform
 
 # Basic check (no test message)
 ./scripts/diagnose.sh
@@ -346,7 +324,6 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform `/sessions` and `/resume` (see below) |
 
 ## Table Image Symbol Reference
 
@@ -361,91 +338,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | 🟢 | ● | Good (green) | `#16a34a` |
 | 🟡 | ● | Mid (yellow) | `#ca8a04` |
 
-Falls back to inline `` `code` `` text if neither Playwright/Chromium nor Pillow is installed.
-
----
-
-## 🌐 Cross-Platform Sessions
-
-**Why:** by default the Hermes core shows sessions only within a single platform — from MAX you see MAX sessions only. That is correct for multi-tenant setups, but inconvenient when one user works across several platforms.
-
-**How it works:** the adapter intercepts `/sessions` and `/resume` before the core, queries `SessionDB` without a platform filter and formats the response.
-
-| Command | Action | Example output |
-|---------|--------|----------------|
-| `/sessions` | Last 15 sessions from all platforms | `1. 💻 cli — Zabbix deploy...` |
-| `/sessions search <q>` | Search across all sessions | `🔍 Sessions matching "traefik"` |
-| `/resume <id>` | Switch to any session | (switches without an error) |
-
-**Requirement:** for `/resume --all` add `max` to `platforms:` in config.yaml:
-```yaml
-platforms:
-  max:
-    extra:
-      allow_admin_from:
-        - "95825064"  # your MAX user_id
-```
-
-**Disabling:** `MAX_CROSS_SESSION=false` in `.env` — restores the default core behaviour (MAX sessions only).
-
----
-
-## 👁️ send_action — Extended Statuses
-
-`send_typing()` now delegates to `send_action()`, which supports all MAX API statuses:
-
-| Method | action | MAX API | Description |
-|--------|--------|---------|-------------|
-| `send_typing()` | `typing` | `typing_on` | Typing (default) |
-| `send_action(cid, "typing_off")` | `typing_off` | `typing_off` | Hide the indicator |
-| `send_action(cid, "sending_photo")` | `sending_photo` | `sending_photo` | Sending a photo |
-| `send_action(cid, "sending_video")` | `sending_video` | `sending_video` | Sending a video |
-| `send_action(cid, "sending_audio")` | `sending_audio` | `sending_audio` | Sending audio |
-| `send_action(cid, "sending_file")` | `sending_file` | `sending_file` | Sending a file |
-| `send_action(cid, "read")` | `read` | `read` | Mark as read |
-
-```python
-await adapter.send_action("chat:123", "sending_file")
-```
-
-## 🔗 Link Buttons and send_buttons()
-
-New public method `send_buttons()` — send messages with inline buttons of any type:
-
-```python
-await adapter.send_buttons(
-    chat_id="chat:123",
-    text="Choose an action:",
-    buttons=[
-        {"type": "link", "text": "🌐 Open website", "url": "https://example.com"},
-        {"type": "callback", "text": "✅ Confirm", "payload": "confirm:123"},
-        {"type": "request_contact", "text": "📞 Share phone number"},
-    ],
-)
-```
-
-Supported button types:
-
-| type | Parameters | Description |
-|------|-----------|-------------|
-| `callback` | `text`, `payload` (+ optional `label`) | Inline callback with payload |
-| `link` | `text`, `url` (+ optional `label`) | Opens a URL |
-| `message` | `text`, `payload` (+ optional `label`) | Sends a pre-filled message |
-| `request_contact` | `text` (+ optional `label`) | Requests a contact |
-| `request_geo_location` | `text` (+ optional `label`) | Requests a geolocation |
-
-Each button occupies its own row (message width). The standard MAX limit is up to 10 buttons per message.
-
-With 3+ buttons they are numbered automatically (`1.`, `2.`, `3.`...) both in the message body and on the buttons themselves.
-
-The optional `label` field holds the **full description text** for the fallback in the message body — unlike `text` (which goes on the button and may be truncated by MAX on mobile devices). If `label` is omitted, `text` is used.
-
-```python
-# text — short (on the button), label — full (in the description)
-{"type": "callback", "text": "Basic", "label": "Basic — 500₽/mo, 10GB", "payload": "basic"}
-```
-
-If you need several buttons in one row, use `_post_interactive()` directly with a ready-made row structure.
+Auto-fallbacks to inline `` `code` `` text if Pillow is not installed.
 
 ---
 
@@ -489,10 +382,8 @@ send_message MEDIA delivery is currently only supported for telegram, discord...
 Fix with the optional script that adds MAX to the supported platform list in `tools/send_message_tool.py`:
 
 ```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # plugin directory
-HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # gateway venv interpreter
-"$HERMES_PY" scripts/apply-core-fix.py          # apply
-"$HERMES_PY" scripts/apply-core-fix.py --revert # revert
+python3 scripts/apply-core-fix.py       # apply
+python3 scripts/apply-core-fix.py --revert  # revert
 ```
 
 After applying:
@@ -503,10 +394,10 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 
 ## Documentation
 
-- [Setup](docs/setup_EN.md) — .env, webhook, security, deployment
-- [Features](docs/features_EN.md) — STT, tables, streaming, buttons, files
-- [API](docs/api_EN.md) — MAX API formats, callbacks, file upload
-- [Troubleshooting](docs/troubleshooting_EN.md) — errors, diagnose.sh, logs
+- [Setup](docs/setup.md) — .env, webhook, security, deployment
+- [Features](docs/features.md) — STT, tables, streaming, buttons, files
+- [API](docs/api.md) — MAX API formats, callbacks, file upload
+- [Troubleshooting](docs/troubleshooting.md) — errors, diagnose.sh, logs
 
 ## Troubleshooting
 
@@ -521,20 +412,17 @@ curl http://localhost:8646/health
 ### Tables not rendering as images
 
 ```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # plugin directory
-HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # gateway venv interpreter
-
 # Check config
 grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
 
 # Renderer diagnostics: playwright package + Chromium present?
-"$HERMES_PY" scripts/setup-playwright.py --check-only
-#   MISSING → "$HERMES_PY" scripts/setup-playwright.py  (installs what's missing)
-#   or manually: "$HERMES_PY" -m pip install 'playwright>=1.40'
-#                "$HERMES_PY" -m playwright install chromium
+python scripts/setup-playwright.py --check-only
+#   MISSING → python scripts/setup-playwright.py  (installs what's missing)
+#   or manually: python -m pip install 'playwright>=1.40'
+#                python -m playwright install chromium
 
 # Check Pillow (fallback renderer)
-"$HERMES_PY" -m pip list | grep -i pillow
+pip list | grep -i pillow
 
 # Check logs
 grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
@@ -574,17 +462,19 @@ hermes-max-integration/
 ├── __init__.py              # register() entry point
 ├── pyproject.toml           # Python package config
 ├── adapter.py               # MaxAdapter (~2600 lines)
-├── mixins/                  # Adapter layers: buttons, sessions, webhook, media, tables
-├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
-│                            #   release.sh, setup-playwright.py
-├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
-├── tests/                   # pytest: 126 tests
-├── docs/                    # api.md, features.md, setup.md, troubleshooting.md (+ _EN)
+├── scripts/
+│   └── apply-core-fix.py      # Optional core patch for MEDIA-only
+├── skills/
+│   └── max-gateway/
+│       └── SKILL.md         # Agent skill
+├── tests/                   # pytest: 167 tests
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)
 ├── cliff-ru.toml            # git-cliff config (RU)
 ├── README.md                # Russian version
+├── docs/
+│   └── webhook.md           # Webhook architecture (Russian)
 └── .github/workflows/ci.yml # CI/CD
 ```
 

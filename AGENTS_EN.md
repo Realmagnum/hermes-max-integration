@@ -61,8 +61,8 @@ When a user gives you this repository and asks to connect Hermes to Max:
 - Model/provider/language are configured in the core, not in the plugin.
 
 **Tables as Images (`MAX_TABLE_AS_IMAGE=true`):**
-- Pipe markdown tables (`| A | B |\n|---|---|`) are rendered as Pillow-generated PNG images.
+- Pipe markdown tables (`| A | B |\n|---|---|`) are rendered as PNG images: Playwright (HTML→PNG) is the primary engine, Pillow the fallback.
 - Emoji status icons (✅❌⚠️⏳) are replaced with Unicode symbols (✓✗⚠◷▶) in semantic colors.
 - Images are uploaded via two-step API (`POST /uploads` → PUT → token → POST /messages`).
-- If Pillow is not installed, falls back to inline `` `code` `` text rendering.
+- If neither Playwright/Chromium nor Pillow is installed, falls back to inline `` `code` `` text rendering.
 - Generated PNGs are cached in `~/.hermes/table_images/`.
