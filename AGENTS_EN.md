@@ -48,7 +48,7 @@ When a user gives you this repository and asks to connect Hermes to Max:
 - Webhook `secret` is sent back by Max as the raw `X-Max-Bot-Api-Secret` header value, not as an HMAC signature.
 - **CRITICAL: Webhook and long polling are mutually exclusive.** If a webhook subscription exists, MAX API routes ALL updates to the webhook URL and `/updates` returns empty. Even after removing `MAX_WEBHOOK_URL` from .env and restarting in long-polling mode, the stale webhook subscription persists in MAX API and blocks message delivery. **Always delete the old webhook subscription when switching modes:**
   ```bash
-  curl -X DELETE "https://platform-api.max.ru/subscriptions?url=..." -H "Authorization: ***"
+  curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=..." -H "Authorization: $MAX_BOT_TOKEN"
   ```
   The plugin now has auto-cleanup on startup (since v2.1.4+), but manual cleanup may still be needed if the webhook was registered externally.
 - `POST /messages` accepts `user_id` or `chat_id`; message `text` is up to 4000 characters and `format` can be `markdown` or `html`.
