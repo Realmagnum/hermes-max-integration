@@ -159,14 +159,19 @@ grep -A3 'max:' ~/.hermes/config.yaml | grep fresh_final
 - Webhook not working
 - No errors in logs
 
-**Cause:** MinCifry CA not in standard bundles
+**Cause:** The MAX API CA is missing from the standard Python/OS bundles.
 
-**Solution:**
+**Solution:** the plugin offers no switch to disable SSL verification — there is no `MAX_INSECURE_SSL` variable in the code (`adapter.py`), so that "fix" does not apply. Add the CA to the trusted stores:
+
 ```bash
-# For testing
-MAX_INSECURE_SSL=true
+# Option 1: system store (Debian/Ubuntu example)
+sudo cp max-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
 
-# For production — add CA to system
+# Option 2: the Hermes process only
+# SSL_CERT_FILE=/path/to/ca-bundle.crt hermes gateway restart
+
+# Verify the chain to the API
+curl -v https://platform-api.max.ru/me 2>&1 | grep -i "SSL\|certificate"
 ```
 
 ### 7. MAX API auth format error
