@@ -37,6 +37,8 @@ Next steps:
    **Long polling (simpler, no HTTPS):**
    - Just set `MAX_BOT_TOKEN` and restart. The adapter auto-uses long-polling.
    - No public URL needed. Good for development.
+   - ⚠️ On startup in this mode the adapter deletes existing webhook subscriptions in MAX API
+     (`adapter.py:418–450`) — the two modes are mutually exclusive.
 
    **Webhook (production) — requires a reverse proxy:**
    - MAX API connects **only to port 443** over HTTPS.
@@ -51,7 +53,9 @@ Next steps:
      ```bash
      cloudflared tunnel --url http://localhost:8646
      ```
-   - In `.env`, set the public URL and secret:
+   - In `.env` **both** mode parameters are mandatory: `MAX_WEBHOOK_URL` (public HTTPS URL — the
+     single switch that selects webhook mode, `adapter.py:226,230`) and `MAX_WEBHOOK_SECRET`
+     (5–256 characters; the server compares it with the `X-Max-Bot-Api-Secret` header, `mixins/webhook.py:63–68`):
      ```bash
      MAX_WEBHOOK_URL=https://max.example.com/max/webhook
      MAX_WEBHOOK_SECRET=my-secret-abc123
@@ -59,13 +63,16 @@ Next steps:
      MAX_WEBHOOK_PORT=8646
      MAX_WEBHOOK_PATH=/max/webhook
      ```
-   - Register the subscription in MAX API (the adapter does this automatically on startup, but manual registration is also possible):
+   - The adapter registers the subscription itself on startup with the URL and secret from `.env`
+     (`mixins/webhook.py:129–147`). A manual curl is only needed for an externally created
+     subscription; then the URL, secret and `update_types` must match the auto-registration:
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \
-       -H "Authorization: ***" \
+       -H "Authorization: $MAX_BOT_TOKEN" \
        -H "Content-Type: application/json" \
-       -d '{"url":"https://max.example.com/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"my-secret-abc123"}'
+       -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
      ```
+     ⚠️ Without `MAX_WEBHOOK_URL` in `.env` the plugin starts in long-polling and deletes such a subscription.
 
 5. **Restart Hermes gateway:**
    ```bash

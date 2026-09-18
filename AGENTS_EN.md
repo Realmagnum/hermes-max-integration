@@ -18,15 +18,19 @@ When a user gives you this repository and asks to connect Hermes to Max:
 5. Help the user obtain `MAX_BOT_TOKEN` from Max for Partners.
    Current checked path: `Chat-bots → Go → Advanced settings → Configure → Token` after bot moderation.
 6. Treat `MAX_BOT_TOKEN` and `MAX_WEBHOOK_SECRET` as secrets. Do not print them back to the chat.
-7. Configure a public HTTPS webhook URL that points to the local Hermes gateway server, default local URL `http://localhost:8646/max/webhook`.
-   Or use long-polling mode (no HTTPS needed) — just set the token and restart.
-8. For webhook mode, register through Max Bot API:
+7. Choose a mode — it is determined **only** by the presence of `MAX_WEBHOOK_URL` (`adapter.py:226,230`):
+   - **long-polling** (default, no HTTPS needed) — set only `MAX_BOT_TOKEN` and restart.
+     ⚠️ On startup in this mode, the adapter deletes existing webhook subscriptions (`adapter.py:418–450`).
+   - **webhook** — **both** parameters are required: `MAX_WEBHOOK_URL` (a public HTTPS URL for the local `http://127.0.0.1:8646/max/webhook`) and `MAX_WEBHOOK_SECRET` (5–256 characters, the same value as in the subscription; without it, the endpoint accepts events from any sender, `mixins/webhook.py:63–68`).
+   Without `MAX_WEBHOOK_URL`, the plugin silently remains in long-polling and deletes your manually created subscription.
+8. In webhook mode, the adapter registers the subscription on startup (`mixins/webhook.py:129–147`). Manual curl is only needed for a subscription created externally; in that case, the URL, secret, and `update_types` must match auto-registration:
    ```bash
-   curl -X POST "https://platform-api.max.ru/subscriptions" \
-     -H "Authorization: ***" \
+   curl -X POST "https://platform-api2.max.ru/subscriptions" \
+     -H "Authorization: $MAX_BOT_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"url":"https://your-domain/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"your-secret"}'
+     -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
    ```
+   Verify the active mode: logs should show `MAX: webhook on ...`, not `MAX: long polling started`; `GET /subscriptions` should show your `MAX_WEBHOOK_URL`.
 9. Restart Hermes gateway and verify:
    ```bash
    hermes gateway restart
@@ -44,7 +48,7 @@ When a user gives you this repository and asks to connect Hermes to Max:
 - Webhook `secret` is sent back by Max as the raw `X-Max-Bot-Api-Secret` header value, not as an HMAC signature.
 - **CRITICAL: Webhook and long polling are mutually exclusive.** If a webhook subscription exists, MAX API routes ALL updates to the webhook URL and `/updates` returns empty. Even after removing `MAX_WEBHOOK_URL` from .env and restarting in long-polling mode, the stale webhook subscription persists in MAX API and blocks message delivery. **Always delete the old webhook subscription when switching modes:**
   ```bash
-  curl -X DELETE "https://platform-api.max.ru/subscriptions?url=..." -H "Authorization: ***"
+  curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=..." -H "Authorization: $MAX_BOT_TOKEN"
   ```
   The plugin now has auto-cleanup on startup (since v2.1.4+), but manual cleanup may still be needed if the webhook was registered externally.
 - `POST /messages` accepts `user_id` or `chat_id`; message `text` is up to 4000 characters and `format` can be `markdown` or `html`.
