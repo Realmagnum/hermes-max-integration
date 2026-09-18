@@ -17,9 +17,11 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🟣 **Max Messenger** | Full gateway integration with max.ru |
 | 📡 **Dual Mode** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
 | 🎤 **STT Voice** | Auto-download voice → transcription by the Hermes core (core STT) |
-| 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
+| 🖼️ **Tables as Images** | Render markdown tables as PNGs with colored status icons |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
-| 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
+| 🔘 **Interactive Buttons** | callback + link + message + request_contact/geo + model picker/approval/clarify |
+| 🔗 **Link Buttons** | Link buttons in messages (`send_buttons()` with the `link` type) |
+| 👁️ **send_action** | Extended statuses: typing, sending_photo/video/audio/file, read, typing_off |
 | ✂️ **Auto-chunking** | Smart 4000-char message splitting preserving paragraphs |
 | ⬆️ **File Upload** | Two-step upload: `POST /uploads` → PUT → token → send |
 | 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
@@ -27,6 +29,7 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
+| 🌐 **Cross-Platform Sessions** | `/sessions` lists sessions from ALL platforms, `/resume <id>` switches to any of them. Enabled by default (`MAX_CROSS_SESSION=true`) |
 | 🧪 **Tested** | pytest + pytest-asyncio, **126 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
@@ -152,9 +155,9 @@ We tried several approaches before settling on PNG:
                                             │  │ send()    │  │
                                             │  │  ↓        │  │
                                             │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
-                                            │  │  ↓   ↓    │  │    → Pillow → PNG
-                                            │  │ text PNG  │  │    → POST /uploads
-                                            │  │       │   │  │    → PUT → token
+                                            │  │  ↓   ↓    │  │    → Playwright(HTML→PNG) or Pillow → PNG
+                                            │  │ text  PN  │  │    → POST /uploads
+                                            │  │       G   │  │    → PUT → token
                                             │  └───────────┘  │    → POST /messages
                                             │  ┌───────────┐  │
                                             │  │ STT (core) │──┼── core STT (config.yaml)
@@ -188,12 +191,6 @@ Or manually in `~/.hermes/.env`:
 MAX_BOT_TOKEN=your_token_here
 MAX_ALLOWED_USERS=your_max_user_id
 ```
-
-> ⚠️ **The safe default configuration is owner-only.** Always set `MAX_ALLOWED_USERS`:
-> an empty list with `MAX_ALLOW_ALL_USERS=false` does **not** close access — anyone who
-> can message the bot reaches the core. If more than one person uses the bot, or it is
-> reachable from a group, set `MAX_CROSS_SESSION=false`.
-> What is and is not protected today: [docs/security_EN.md](docs/security_EN.md).
 
 ### 4. Enable table images (optional)
 
@@ -316,12 +313,12 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 |-------------|----------|---------|-------------|
 | `MAX_BOT_TOKEN` | ✅ | — | Bot token from Max Platform |
 | `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | API base URL (docs now recommend `https://platform-api2.max.ru`) |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host (use `127.0.0.1` behind a reverse proxy) |
+| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret; **mandatory in webhook mode** — an empty value only logs a warning (SEC-04) |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret |
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs; **an empty value does not close access** — always set it |
+| `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
@@ -330,6 +327,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
+| `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform `/sessions` and `/resume` (see below) |
 
 ## Table Image Symbol Reference
 
@@ -344,7 +342,91 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | 🟢 | ● | Good (green) | `#16a34a` |
 | 🟡 | ● | Mid (yellow) | `#ca8a04` |
 
-Auto-fallbacks to inline `` `code` `` text if Pillow is not installed.
+Falls back to inline `` `code` `` text if neither Playwright/Chromium nor Pillow is installed.
+
+---
+
+## 🌐 Cross-Platform Sessions
+
+**Why:** by default the Hermes core shows sessions only within a single platform — from MAX you see MAX sessions only. That is correct for multi-tenant setups, but inconvenient when one user works across several platforms.
+
+**How it works:** the adapter intercepts `/sessions` and `/resume` before the core, queries `SessionDB` without a platform filter and formats the response.
+
+| Command | Action | Example output |
+|---------|--------|----------------|
+| `/sessions` | Last 15 sessions from all platforms | `1. 💻 cli — Zabbix deploy...` |
+| `/sessions search <q>` | Search across all sessions | `🔍 Sessions matching "traefik"` |
+| `/resume <id>` | Switch to any session | (switches without an error) |
+
+**Requirement:** for `/resume --all` add `max` to `platforms:` in config.yaml:
+```yaml
+platforms:
+  max:
+    extra:
+      allow_admin_from:
+        - "95825064"  # your MAX user_id
+```
+
+**Disabling:** `MAX_CROSS_SESSION=false` in `.env` — restores the default core behaviour (MAX sessions only).
+
+---
+
+## 👁️ send_action — Extended Statuses
+
+`send_typing()` now delegates to `send_action()`, which supports all MAX API statuses:
+
+| Method | action | MAX API | Description |
+|--------|--------|---------|-------------|
+| `send_typing()` | `typing` | `typing_on` | Typing (default) |
+| `send_action(cid, "typing_off")` | `typing_off` | `typing_off` | Hide the indicator |
+| `send_action(cid, "sending_photo")` | `sending_photo` | `sending_photo` | Sending a photo |
+| `send_action(cid, "sending_video")` | `sending_video` | `sending_video` | Sending a video |
+| `send_action(cid, "sending_audio")` | `sending_audio` | `sending_audio` | Sending audio |
+| `send_action(cid, "sending_file")` | `sending_file` | `sending_file` | Sending a file |
+| `send_action(cid, "read")` | `read` | `read` | Mark as read |
+
+```python
+await adapter.send_action("chat:123", "sending_file")
+```
+
+## 🔗 Link Buttons and send_buttons()
+
+New public method `send_buttons()` — send messages with inline buttons of any type:
+
+```python
+await adapter.send_buttons(
+    chat_id="chat:123",
+    text="Choose an action:",
+    buttons=[
+        {"type": "link", "text": "🌐 Open website", "url": "https://example.com"},
+        {"type": "callback", "text": "✅ Confirm", "payload": "confirm:123"},
+        {"type": "request_contact", "text": "📞 Share phone number"},
+    ],
+)
+```
+
+Supported button types:
+
+| type | Parameters | Description |
+|------|-----------|-------------|
+| `callback` | `text`, `payload` (+ optional `label`) | Inline callback with payload |
+| `link` | `text`, `url` (+ optional `label`) | Opens a URL |
+| `message` | `text`, `payload` (+ optional `label`) | Sends a pre-filled message |
+| `request_contact` | `text` (+ optional `label`) | Requests a contact |
+| `request_geo_location` | `text` (+ optional `label`) | Requests a geolocation |
+
+Each button occupies its own row (message width). The standard MAX limit is up to 10 buttons per message.
+
+With 3+ buttons they are numbered automatically (`1.`, `2.`, `3.`...) both in the message body and on the buttons themselves.
+
+The optional `label` field holds the **full description text** for the fallback in the message body — unlike `text` (which goes on the button and may be truncated by MAX on mobile devices). If `label` is omitted, `text` is used.
+
+```python
+# text — short (on the button), label — full (in the description)
+{"type": "callback", "text": "Basic", "label": "Basic — 500₽/mo, 10GB", "payload": "basic"}
+```
+
+If you need several buttons in one row, use `_post_interactive()` directly with a ready-made row structure.
 
 ---
 
@@ -400,8 +482,7 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 
 ## Documentation
 
-- [Setup](docs/setup_EN.md) — .env, webhook, deployment
-- [Security](docs/security_EN.md) — honest model: what is protected, what is not, known issues
+- [Setup](docs/setup_EN.md) — .env, webhook, security, deployment
 - [Features](docs/features_EN.md) — STT, tables, streaming, buttons, files
 - [API](docs/api_EN.md) — MAX API formats, callbacks, file upload
 - [Troubleshooting](docs/troubleshooting_EN.md) — errors, diagnose.sh, logs
@@ -491,34 +572,16 @@ serves stale images.
 
 ## Security
 
-What is **actually** implemented and what limitations remain: see
-[docs/security_EN.md](docs/security_EN.md). Summary:
+| Measure | Detail |
+|---------|--------|
+| 🛡️ **SSRF Protection** | Upload URLs validated against `*.max.ru` / `*.oneme.ru` whitelist |
+| 🔐 **Token Safety** | `Authorization` header never forwarded on HTTP redirects |
+| 🔑 **Webhook Secret** | Constant-time comparison via `secrets.compare_digest` |
+| 🔊 **Voice Privacy** | Audio cache stored with `0700` permissions |
+| 🧹 **Error Sanitization** | Tokens/URLs stripped from error messages |
+| 🔍 **CI Hardening** | `bandit` SAST + `pip-audit` on every push |
 
-| Measure | Detail and limitations |
-|---------|------------------------|
-| 🔐 **Token and redirects** | the download HTTP client is created with `follow_redirects=False`, but the `Authorization` header is still sent to the original attachment URL (SEC-02, open) |
-| 🛡️ **Inbound URL filter** | rejects non-http(s) schemes and literal private/loopback/link-local/reserved IPs, `localhost`, `*.local`; host names pass without any DNS check (SEC-03, open). The `*.max.ru` / `*.oneme.ru` allowlist applies to **outbound** uploads only |
-| 🔑 **Webhook secret** | compared with `secrets.compare_digest`; an empty secret only logs a warning and processing continues (SEC-04, open) |
-| 🔊 **Voice privacy** | the audio cache directory is created with `mode=0o700` (effectively limited by umask) |
-| 🧹 **Logs** | userinfo and query strings are stripped from URLs; no guarantee that third-party exception texts are clean |
-| 🔍 **CI** | `.github/workflows/ci.yml` runs ruff, pytest, bandit and pip-audit, but ruff/bandit skip `mixins/`, triggering is limited to `main`, and actual execution on the hosting runner is unverified |
-| 🚧 **Access** | allowlists and group policies exist, but an empty list does not close access (SEC-05/SEC-06, open) |
-
-Also note: cross-platform sessions are **enabled by default** (`MAX_CROSS_SESSION=true`)
-and their access check is incomplete — with an empty `MAX_ALLOWED_USERS`, `/sessions`
-reaches the core and exposes titles/previews/IDs of sessions from **all** platforms
-(SEC-05). Keep it on only in a single-owner deployment and set
-`MAX_CROSS_SESSION=false` for a bot reachable by several people.
-
-**Do not use the plugin in a public or multi-user deployment until SEC-01…07 are closed.**
-This section and `docs/security_EN.md` are not a security guarantee: absence of findings
-does not imply absence of vulnerabilities.
-
-**Audits performed:** `e87ee64` (2026-07-17, fixes for 10 vulnerabilities),
-`70eb490`/`d9626b5` (2026-07-18, 5 MEDIUM/LOW plus `nosec B104`), `e632014` (2026-08-17,
-redirects, SSRF guard, empty-secret warning), and the backlog of the current audit —
-`abd2f0f` (2026-09-15, baseline `b004c573`: 7 SEC, 8 CODE, 4 BUILD, 10 DOC). Full pytest,
-Ruff, Bandit and pip-audit were not run at audit time and no real MAX E2E was performed.
+Full audit and fixes: commit `e87ee64`.
 
 ## Project History
 

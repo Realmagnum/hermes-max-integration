@@ -35,7 +35,10 @@ FENCE_CLOSE = re.compile(r"^```\s*$")
 # Pairs that are known to be out of sync and are tracked separately. Keeping
 # them here (instead of silently skipping the whole check) means the list is
 # visible and shrinks as the debt is paid off.
-KNOWN_DRIFT = set()
+KNOWN_DRIFT = {
+    # The EN translation predates the RU Roadmap section (114 RU lines vs 79 EN).
+    "docs/refactor-plan.md",
+}
 
 # Directory names never scanned for documentation pairs.
 SKIP_DIRS = {".git", ".github", "assets", "__pycache__", ".venv", "node_modules"}
@@ -120,14 +123,10 @@ def check_pair(ru_path: Path, en_path: Path, root: Path) -> list[str]:
             f"env tokens differ: RU-only={sorted(tok_ru - tok_en)} EN-only={sorted(tok_en - tok_ru)}"
         )
 
-    ru_name = ru_path.name
-    en_name = en_path.name
     for target in sorted(links(ru)):
-        if "_EN" in target and Path(target).name != en_name:
+        if "_EN" in target:
             problems.append(f"RU file links to a translated file: {target}")
     for target in sorted(links(en)):
-        if Path(target).name == ru_name:
-            continue
         if "_EN" in target:
             continue
         variant = en_variant(target)
