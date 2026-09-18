@@ -28,9 +28,11 @@ metadata:
 ## Процедура
 
 1. Проверьте, установлен ли Hermes: `hermes --version`
-2. Установите зависимости плагина:
+2. Установите зависимости плагина в тот же Python, где работает шлюз Hermes
+   (venv ядра; путь берём из shebang `hermes`):
    ```bash
-   pip install aiohttp httpx
+   HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+   "$HERMES_PY" -m pip install aiohttp httpx
    ```
 3. Установите и включите плагин:
    ```bash

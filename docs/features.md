@@ -127,8 +127,10 @@ Markdown-таблицы (`| A | B |\n|---|---|`) рендерятся как PNG
 
 **Pillow/Playwright не установлены:**
 ```bash
-python scripts/setup-playwright.py          # ставит playwright + Chromium
-python -m pip install Pillow                # фоллбэк-рендер
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # Python окружения шлюза
+"$HERMES_PY" scripts/setup-playwright.py    # ставит playwright + Chromium
+"$HERMES_PY" -m pip install Pillow          # фоллбэк-рендер
 ```
 
 **Текст обрезается:**

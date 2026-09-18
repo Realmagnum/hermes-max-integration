@@ -173,6 +173,15 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 hermes plugins install Realmagnum/hermes-max-integration --enable
 ```
 
+> **Источник.** Основной репозиторий разработки — Gitea:
+> <https://gitea.rmg7.com/agent/hermes-max-integration>. Shorthand `owner/repo`
+> резолвится Hermes **только** в GitHub, поэтому команда выше клонирует
+> <https://github.com/Realmagnum/hermes-max-integration>. Проверено 2026-09-16:
+> публичный GitHub-репозиторий существует, его `main` = `b004c573` (совпадает с
+> базой аудита); зеркалирование Gitea↔GitHub не проверялось — не предполагайте его.
+> Установка напрямую из Gitea — полным git-URL (доступность хоста зависит от сети):
+> `hermes plugins install https://gitea.rmg7.com/agent/hermes-max-integration.git --enable`
+
 ### 2. Получить токен
 
 Зарегистрироваться на https://business.max.ru/self (юрлицо/ИП/самозанятый РФ).
@@ -208,18 +217,27 @@ MAX_ALLOWED_USERS=ваш_id_в_max
 > (venv), иначе пакет не попадёт в рантайм плагина. Windows:
 > `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
 
+> **Предварительно.** Скрипты запускаются из каталога плагина, а `python`/`pip`
+> берутся из venv шлюза (иначе пакет не попадёт в рантайм). Каталог установки
+> зависит от профиля Hermes: `$HERMES_HOME/plugins/max-platform` (по умолчанию
+> `~/.hermes/plugins/max-platform`). Путь к нужному Python берём из shebang `hermes`.
+
 ```bash
+# Каталог плагина (активный профиль Hermes) и Python его окружения:
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+
 # Вариант A (рекомендуется): HTML→PNG через Playwright.
 #   Использует установленный Chrome/Chromium (system) или скачивает bundled:
-python -m pip install 'playwright>=1.40'
-python -m playwright install chromium          # ~115 МБ, один раз; либо установите Chrome/Chromium вручную
+"$HERMES_PY" -m pip install 'playwright>=1.40'
+"$HERMES_PY" -m playwright install chromium    # ~115 МБ, один раз; либо установите Chrome/Chromium вручную
 
 # Идемпотентный скрипт вместо ручных команд (ставит только недостающее):
-python scripts/setup-playwright.py --check-only   # диагностика (exit 1, если чего-то нет)
-python scripts/setup-playwright.py                # установка недостающего
+"$HERMES_PY" scripts/setup-playwright.py --check-only   # диагностика (exit 1, если чего-то нет)
+"$HERMES_PY" scripts/setup-playwright.py               # установка недостающего
 
 # Вариант B (фоллбэк): классическая отрисовка через Pillow
-python -m pip install Pillow
+"$HERMES_PY" -m pip install Pillow
 
 echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
 ```
@@ -302,7 +320,7 @@ display:
 Для быстрой проверки работоспособности MAX выполните скрипт диагностики (должен быть в `scripts/diagnose.sh` репозитория плагина). Скрипт сам определяет текущий режим (webhook или long polling) и адаптирует проверки:
 
 ```bash
-cd ~/.hermes/plugins/max-platform
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина (активный профиль)
 
 # Базовая диагностика (без отправки сообщения)
 ./scripts/diagnose.sh
@@ -484,8 +502,10 @@ send_message MEDIA delivery is currently only supported for telegram, discord...
 Это лечится опциональным скриптом, который добавляет MAX в список поддерживаемых платформ в `tools/send_message_tool.py`:
 
 ```bash
-python3 scripts/apply-core-fix.py       # применить
-python3 scripts/apply-core-fix.py --revert  # откатить
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # Python окружения шлюза
+"$HERMES_PY" scripts/apply-core-fix.py          # применить
+"$HERMES_PY" scripts/apply-core-fix.py --revert # откатить
 ```
 
 После применения:
@@ -515,17 +535,20 @@ curl http://localhost:8646/health
 ### Таблицы не стали картинками
 
 ```bash
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # Python окружения шлюза
+
 # Проверить что включено
 grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
 
 # Диагностика рендера: playwright-пакет и Chromium на месте?
-python scripts/setup-playwright.py --check-only
-#   MISSING → python scripts/setup-playwright.py  (ставит недостающее)
-#   либо вручную: python -m pip install 'playwright>=1.40'
-#                 python -m playwright install chromium
+"$HERMES_PY" scripts/setup-playwright.py --check-only
+#   MISSING → "$HERMES_PY" scripts/setup-playwright.py  (ставит недостающее)
+#   либо вручную: "$HERMES_PY" -m pip install 'playwright>=1.40'
+#                 "$HERMES_PY" -m playwright install chromium
 
 # Проверить Pillow (фоллбэк-рендер)
-pip list | grep -i pillow
+"$HERMES_PY" -m pip list | grep -i pillow
 
 # Проверить логи
 grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
@@ -565,19 +588,17 @@ hermes-max-integration/
 ├── __init__.py              # register() — точка входа
 ├── pyproject.toml           # Python-пакет
 ├── adapter.py               # MaxAdapter (~2600 строк)
-├── scripts/
-│   └── apply-core-fix.py      # Опциональный патч core для MEDIA-only
-├── skills/
-│   └── max-gateway/
-│       └── SKILL.md         # Навык для AI-агента
+├── mixins/                  # Слои адаптера: buttons, sessions, webhook, media, tables
+├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
+│                            #   release.sh, setup-playwright.py
+├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (навык для AI-агента)
 ├── tests/                   # pytest: 126 тестов
+├── docs/                    # api.md, features.md, setup.md, troubleshooting.md (+ _EN)
 ├── AGENTS.md                # Инструкции для AI-агентов
 ├── after-install.md         # Пост-установка
 ├── cliff.toml               # git-cliff config (EN)
 ├── cliff-ru.toml            # git-cliff config (RU)
 ├── README_EN.md             # Английская версия
-├── docs/
-│   └── webhook.md           # Архитектура вебхука
 └── .github/workflows/ci.yml # CI/CD
 ```
 

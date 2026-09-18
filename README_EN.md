@@ -173,6 +173,15 @@ We tried several approaches before settling on PNG:
 hermes plugins install Realmagnum/hermes-max-integration --enable
 ```
 
+> **Source.** The primary development repository is Gitea:
+> <https://gitea.rmg7.com/agent/hermes-max-integration>. The `owner/repo` shorthand
+> resolves **only** to GitHub, so the command above clones
+> <https://github.com/Realmagnum/hermes-max-integration>. Verified 2026-09-16: the
+> public GitHub repository exists and its `main` = `b004c573` (matches the audit
+> base); Gitea↔GitHub mirroring was not verified — do not assume it. To install
+> straight from Gitea, pass the full Git URL (host reachability depends on your
+> network): `hermes plugins install https://gitea.rmg7.com/agent/hermes-max-integration.git --enable`
+
 ### 2. Get a bot token
 
 Register at https://business.max.ru/self (requires Russian legal entity / sole proprietor).
@@ -202,18 +211,28 @@ falls back to classic Pillow rendering.
 > runs in (its venv), otherwise the package won't reach the plugin runtime.
 > Windows: `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
 
+> **Prerequisites.** The scripts run from the plugin directory, and `python`/`pip`
+> must come from the gateway's venv (otherwise the package won't reach the plugin
+> runtime). The install directory follows the Hermes profile:
+> `$HERMES_HOME/plugins/max-platform` (default `~/.hermes/plugins/max-platform`).
+> Resolve the interpreter from the `hermes` shebang.
+
 ```bash
+# Plugin directory (active Hermes profile) and the interpreter of its venv:
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+
 # Variant A (recommended): HTML→PNG via Playwright.
 #   Uses system Chrome/Chromium (channel="chrome") or downloads bundled:
-python -m pip install 'playwright>=1.40'
-python -m playwright install chromium          # ~115 MB, one-time; or install Chrome/Chromium manually
+"$HERMES_PY" -m pip install 'playwright>=1.40'
+"$HERMES_PY" -m playwright install chromium    # ~115 MB, one-time; or install Chrome/Chromium manually
 
 # Idempotent helper script instead of manual commands (installs only what's missing):
-python scripts/setup-playwright.py --check-only   # diagnostics (exit 1 if anything missing)
-python scripts/setup-playwright.py                # install what's missing
+"$HERMES_PY" scripts/setup-playwright.py --check-only   # diagnostics (exit 1 if anything missing)
+"$HERMES_PY" scripts/setup-playwright.py               # install what's missing
 
 # Variant B (fallback): classic rendering via Pillow
-python -m pip install Pillow
+"$HERMES_PY" -m pip install Pillow
 
 echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
 ```
@@ -296,7 +315,7 @@ This tells the gateway to deliver the final answer as a new message if streaming
 For a quick health check, run the diagnostics script (located in `scripts/diagnose.sh`). It auto-detects the current mode (webhook or long polling) and adapts the checks:
 
 ```bash
-cd ~/.hermes/plugins/max-platform
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # plugin directory (active profile)
 
 # Basic check (no test message)
 ./scripts/diagnose.sh
@@ -470,8 +489,10 @@ send_message MEDIA delivery is currently only supported for telegram, discord...
 Fix with the optional script that adds MAX to the supported platform list in `tools/send_message_tool.py`:
 
 ```bash
-python3 scripts/apply-core-fix.py       # apply
-python3 scripts/apply-core-fix.py --revert  # revert
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # plugin directory
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # gateway venv interpreter
+"$HERMES_PY" scripts/apply-core-fix.py          # apply
+"$HERMES_PY" scripts/apply-core-fix.py --revert # revert
 ```
 
 After applying:
@@ -500,17 +521,20 @@ curl http://localhost:8646/health
 ### Tables not rendering as images
 
 ```bash
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # plugin directory
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # gateway venv interpreter
+
 # Check config
 grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
 
 # Renderer diagnostics: playwright package + Chromium present?
-python scripts/setup-playwright.py --check-only
-#   MISSING → python scripts/setup-playwright.py  (installs what's missing)
-#   or manually: python -m pip install 'playwright>=1.40'
-#                python -m playwright install chromium
+"$HERMES_PY" scripts/setup-playwright.py --check-only
+#   MISSING → "$HERMES_PY" scripts/setup-playwright.py  (installs what's missing)
+#   or manually: "$HERMES_PY" -m pip install 'playwright>=1.40'
+#                "$HERMES_PY" -m playwright install chromium
 
 # Check Pillow (fallback renderer)
-pip list | grep -i pillow
+"$HERMES_PY" -m pip list | grep -i pillow
 
 # Check logs
 grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
@@ -550,19 +574,17 @@ hermes-max-integration/
 ├── __init__.py              # register() entry point
 ├── pyproject.toml           # Python package config
 ├── adapter.py               # MaxAdapter (~2600 lines)
-├── scripts/
-│   └── apply-core-fix.py      # Optional core patch for MEDIA-only
-├── skills/
-│   └── max-gateway/
-│       └── SKILL.md         # Agent skill
+├── mixins/                  # Adapter layers: buttons, sessions, webhook, media, tables
+├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
+│                            #   release.sh, setup-playwright.py
+├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
 ├── tests/                   # pytest: 126 tests
+├── docs/                    # api.md, features.md, setup.md, troubleshooting.md (+ _EN)
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)
 ├── cliff-ru.toml            # git-cliff config (RU)
 ├── README.md                # Russian version
-├── docs/
-│   └── webhook.md           # Webhook architecture (Russian)
 └── .github/workflows/ci.yml # CI/CD
 ```
 
