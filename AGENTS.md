@@ -18,15 +18,19 @@
 5. Помогите пользователю получить `MAX_BOT_TOKEN` от Max для партнёров.
    Актуальный путь: `Чат-боты → Перейти → Расширенные настройки → Настроить → Токен` после модерации бота.
 6. Обращайтесь с `MAX_BOT_TOKEN` и `MAX_WEBHOOK_SECRET` как с секретами. Не выводите их обратно в чат.
-7. Настройте публичный HTTPS-URL вебхука, указывающий на локальный сервер шлюза Hermes, локальный URL по умолчанию `http://localhost:8646/max/webhook`.
-   Или используйте режим long-polling (HTTPS не нужен) — просто установите токен и перезапустите.
-8. Для режима вебхука зарегистрируйтесь через MAX Bot API:
+7. Выберите режим — он определяется **только** наличием `MAX_WEBHOOK_URL` (`adapter.py:226,230`):
+   - **long-polling** (по умолчанию, HTTPS не нужен) — задайте только `MAX_BOT_TOKEN` и перезапустите.
+     ⚠️ При старте в этом режиме адаптер удаляет существующие подписки вебхука (`adapter.py:418–450`).
+   - **webhook** — обязательны **оба** параметра: `MAX_WEBHOOK_URL` (публичный HTTPS-URL на локальный `http://127.0.0.1:8646/max/webhook`) и `MAX_WEBHOOK_SECRET` (5–256 символов, тот же, что в подписке; без него endpoint принимает события от любого отправителя, `mixins/webhook.py:63–68`).
+   Без `MAX_WEBHOOK_URL` плагин молча останется в long-polling и удалит вашу ручную подписку.
+8. В режиме вебхука адаптер регистрирует подписку сам при старте (`mixins/webhook.py:129–147`). Ручной curl нужен только для подписки, созданной извне; тогда URL, секрет и `update_types` должны совпадать с авторегистрацией:
    ```bash
    curl -X POST "https://platform-api.max.ru/subscriptions" \
      -H "Authorization: ***" \
      -H "Content-Type: application/json" \
-     -d '{"url":"https://your-domain/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"your-secret"}'
+     -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
    ```
+   Проверьте активный режим: в логах `MAX: webhook on ...`, а не `MAX: long polling started`; `GET /subscriptions` показывает ваш `MAX_WEBHOOK_URL`.
 9. Перезапустите шлюз Hermes и проверьте:
    ```bash
    hermes gateway restart
