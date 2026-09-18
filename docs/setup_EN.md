@@ -15,6 +15,7 @@
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | Users allowed in groups |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Groups allowed for bot |
+| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Extra media-download origins (comma-separated); `*.max.ru` / `*.oneme.ru` are allowed by default |
 | `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
 | `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to venv for faster-whisper |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG (HTML→PNG via Playwright, Pillow fallback) |

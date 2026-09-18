@@ -15,6 +15,7 @@
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
+| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Дополнительные origins для скачивания медиа (через запятую); по умолчанию только `*.max.ru` / `*.oneme.ru` |
 | `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
 | `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |

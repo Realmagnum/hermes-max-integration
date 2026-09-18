@@ -317,6 +317,7 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
 | `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS (включает webhook-режим) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей |
+| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Дополнительные origins для скачивания медиа (через запятую); по умолчанию только `*.max.ru` / `*.oneme.ru` |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
@@ -573,7 +574,7 @@ hermes-max-integration/
 
 | Мера | Детали |
 |------|--------|
-| 🛡️ **SSRF Защита** | URL загрузок проверяются по белому списку `*.max.ru` / `*.oneme.ru` |
+| 🛡️ **SSRF Защита** | Загрузка — белый список `*.max.ru` / `*.oneme.ru`; скачивание — тот же белый список, только HTTPS, проверка всех A/AAAA и подключение к проверенному IP (анти-rebinding), редиректы не выполняются. Дополнительные origins — `download_allowed_hosts` / `MAX_DOWNLOAD_ALLOWED_HOSTS` |
 | 🔐 **Токен** | `Authorization` не передаётся при HTTP-редиректах |
 | 🔑 **Секрет вебхука** | Сравнение через `secrets.compare_digest` (защита от timing) |
 | 🔊 **Приватность голоса** | Аудио-кэш с правами `0700` |

@@ -21,17 +21,15 @@ Configuration in ~/.hermes/.env:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import mimetypes
 import os
-import random
+import socket
 import time
-from collections.abc import Iterable, Iterator
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from gateway.config import Platform, PlatformConfig
@@ -47,7 +45,6 @@ from gateway.platforms.base import (
 )
 
 from .mixins.buttons import ButtonsMixin
-from .mixins.callback_auth import CallbackAuthMixin
 from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
     _ALLOWED_UPLOAD_HOSTS,
     MediaUploadMixin,
@@ -69,18 +66,22 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 MAX_MESSAGE_LENGTH = 4000
-# Text budget per chunk: MAX_MESSAGE_LENGTH minus headroom for the "(i/n)\n"
-# numbering prefix that the sender prepends to every chunk of a split message.
-OUTBOUND_CHUNK_MARGIN = 100
-OUTBOUND_CHUNK_LIMIT = max(500, MAX_MESSAGE_LENGTH - OUTBOUND_CHUNK_MARGIN)
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
-POLL_BACKOFF_MAX = 60.0  # upper bound for a single backoff sleep
-POLL_BACKOFF_JITTER = 0.25  # ±25% random spread around the bounded delay
-POLL_RETRY_AFTER_MAX = 300.0  # upper bound for a server-provided Retry-After
 UPLOAD_DELAY = 2.0
 
 # SSRF allowlist is in .mixins.media_upload
+
+# ── Media-download SSRF policy ───────────────────────────────────────────
+# MAX serves every attachment from its own CDN, so download origins are a
+# closed allowlist (suffix match, subdomains included) and the transport is
+# https-only — the request carries the bot token (Authorization header).
+# Deployments that relay media through their own proxy can extend the list
+# with the ``download_allowed_hosts`` config key / MAX_DOWNLOAD_ALLOWED_HOSTS
+# env var (comma-separated hostnames; a leading "*." is accepted).
+DOWNLOAD_ALLOWED_HOST_SUFFIXES: tuple[str, ...] = (".max.ru", ".oneme.ru")
+DOWNLOAD_ALLOWED_SCHEMES: frozenset[str] = frozenset({"https"})
+DOWNLOAD_REDIRECT_STATUS_CODES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
 
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy reverse proxy; порт защищён host firewall
 DEFAULT_WEBHOOK_PORT = 8646
@@ -94,143 +95,8 @@ AUDIO_CACHE_DIR = Path(
 # Ensure cache dir exists with restricted permissions (voice messages are private)
 AUDIO_CACHE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-# ── Inbound attachment downloads (SEC-02) ────────────────────────────────
-# Download URLs are taken from inbound events, so the sender of a message can
-# influence them (long polling through MAX, or an unprotected webhook). The
-# bot token is therefore attached ONLY to explicitly trusted HTTPS origins:
-# MAX-owned infrastructure (the same domains the upload path already trusts)
-# plus whatever the operator lists in MAX_TRUSTED_DOWNLOAD_HOSTS /
-# config extra "trusted_download_hosts". Every other origin is fetched with a
-# credential-free client.
-# Mirrors the upload-path allow-list in mixins/standalone.py (which trusts
-# .max.ru/.oneme.ru/.okcdn.ru/.cdn-max.ru): every host in
-# mixins/media_upload.py::_ALLOWED_UPLOAD_HOSTS is covered by one of these
-# suffixes, so there is no separate "known API/CDN names" list to maintain.
-_TRUSTED_DOWNLOAD_HOST_SUFFIXES = (".max.ru", ".oneme.ru", ".okcdn.ru", ".cdn-max.ru")
-_DOWNLOAD_USER_AGENT = "HermesAgent/1.0 MaxBot"
-
-
-def _parse_trusted_download_hosts(raw: Any) -> set[str]:
-    """Parse ``MAX_TRUSTED_DOWNLOAD_HOSTS`` / ``extra["trusted_download_hosts"]``.
-
-    Accepts a comma-separated string or a sequence of entries. An entry may be
-    a bare host (``cdn.example.com``), a subdomain wildcard (``*.example.com``,
-    which does NOT match the apex) or a full URL. Scheme, port, userinfo,
-    path and a trailing dot are stripped; malformed entries are ignored.
-    """
-    if isinstance(raw, str):
-        parts: list[Any] = raw.split(",")
-    elif isinstance(raw, (list, tuple, set, frozenset)):
-        parts = list(raw)
-    else:
-        return set()
-
-    hosts: set[str] = set()
-    for part in parts:
-        entry = str(part).strip().lower()
-        if not entry:
-            continue
-        if "://" in entry:
-            entry = urlparse(entry).hostname or ""
-        else:
-            entry = entry.split("/", 1)[0]
-        if "@" in entry:
-            entry = entry.rsplit("@", 1)[1]
-        if entry.startswith("[") and "]" in entry:
-            entry = entry[1:entry.index("]")]
-        elif ":" in entry:
-            entry = entry.split(":", 1)[0]
-        entry = entry.rstrip(".")
-        if entry:
-            hosts.add(entry)
-    return hosts
-
-
 # ── Helpers ──────────────────────────────────────────────────────────────
 import json as _json
-
-# Random source for poll backoff jitter. Tests seed it for determinism;
-# production keeps the module-level generator.
-_POLL_RNG = random.Random()  # nosec B311 — jitter only, not security-relevant
-
-
-def _parse_retry_after(raw: Any) -> float | None:
-    """Parse an HTTP ``Retry-After`` header value into a non-negative delay.
-
-    Accepts both forms defined by RFC 9110: a delta-seconds integer/float or
-    an HTTP-date. Returns ``None`` when the header is absent or unusable, and
-    clamps the result to ``POLL_RETRY_AFTER_MAX`` so a hostile/broken server
-    cannot park the poll loop for hours.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-        seconds = float(raw)
-    else:
-        value = str(raw).strip()
-        if not value:
-            return None
-        try:
-            seconds = float(value)
-        except ValueError:
-            try:
-                parsed = parsedate_to_datetime(value)
-            except (TypeError, ValueError):
-                return None
-            if parsed is None:  # pragma: no cover - defensive
-                return None
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=UTC)
-            seconds = (parsed - datetime.now(UTC)).total_seconds()
-    return max(0.0, min(seconds, POLL_RETRY_AFTER_MAX))
-
-
-def _poll_backoff_delay(
-    errs: int,
-    *,
-    base: float = POLL_ERROR_DELAY,
-    cap: float = POLL_BACKOFF_MAX,
-    jitter: float = POLL_BACKOFF_JITTER,
-    rng: random.Random | None = None,
-) -> float:
-    """Bounded exponential backoff with jitter for the ``errs``-th failure.
-
-    ``base * 2 ** (errs - 1)`` (exponent clamped at 4 so the doubling stops),
-    capped at ``cap`` and spread by ±``jitter`` of the capped value. The
-    result is always inside ``[0, cap]`` and never negative.
-    """
-    exponent = min(max(int(errs), 1) - 1, 4)
-    delay = min(base * (2 ** exponent), cap)
-    if jitter > 0:
-        spread = delay * jitter
-        delay = (rng or _POLL_RNG).uniform(delay - spread, delay + spread)
-    return max(0.0, min(delay, cap))
-
-
-def _poll_status_delay(headers: Any, errs: int) -> float:
-    """Delay before retrying a poll that answered with a non-200 status.
-
-    ``Retry-After`` wins when the server sends one (429/503 mainly); otherwise
-    the same bounded exponential backoff as transport errors is used.
-    """
-    raw = None
-    if headers is not None:
-        getter = getattr(headers, "get", None)
-        if callable(getter):
-            # httpx.Headers is case-insensitive; plain dicts are not, so try
-            # both spellings before giving up.
-            raw = getter("Retry-After")
-            if raw is None:
-                raw = getter("retry-after")
-    retry_after = _parse_retry_after(raw)
-    if retry_after is not None:
-        return retry_after
-    return _poll_backoff_delay(errs)
-
-
-async def _poll_sleep(delay: float) -> None:
-    """Sleep between poll attempts (indirection point for virtual-clock tests)."""
-    await asyncio.sleep(delay)
 
 
 def _safe_url_for_log(url: str) -> str:
@@ -244,25 +110,84 @@ def _safe_url_for_log(url: str) -> str:
     return url
 
 
-# ── Model picker callback payload codec (CODE-04) ────────────────────────
-# Inline-keyboard callback payloads are ':' -delimited
-# (`model:pick:<model>:<provider>`). Model IDs legitimately contain ':' —
-# Ollama tags (`llama3:8b`) and OpenRouter suffixes (`...:free`) — so the
-# variable fields are percent-encoded to keep the delimiter unambiguous.
-# Percent-encoding is reversible, contains no ':', and stays readable in logs.
+def _parse_host_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Return the IP literal *host* denotes, or ``None`` when it is a DNS name.
 
-def _picker_encode(value: Any) -> str:
-    """Encode one model-picker payload field so ':' cannot split it."""
-    return quote(str(value), safe="")
-
-
-def _picker_decode(token: str) -> str:
-    """Decode a model-picker payload field encoded by :func:`_picker_encode`.
-
-    Never raises: undecodable tokens come back as-is and are rejected by the
-    handlers, which validate them against the live picker state.
+    ``ipaddress.ip_address`` only accepts canonical spellings, so the legacy
+    IPv4 forms every libc resolver understands — ``2130706433``,
+    ``0x7f000001``, ``017700000001``, ``0177.0.0.1``, ``127.1`` — were
+    classified as "unparseable, therefore a hostname" and slipped through the
+    first version of the download guard. Canonicalise them exactly like
+    ``inet_aton`` does, so the guard reasons about the address the OS will
+    actually dial.
     """
-    return unquote(token)
+    candidate = str(host).strip()
+    if candidate.startswith("[") and candidate.endswith("]"):
+        candidate = candidate[1:-1]
+    # An IPv6 zone/scope id ("fe80::1%en0") is meaningless for a remote host.
+    candidate = candidate.split("%", 1)[0]
+    if not candidate:
+        return None
+    try:
+        return ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    try:
+        packed = socket.inet_aton(candidate)
+    except OSError:
+        return None
+    return ipaddress.IPv4Address(packed)
+
+
+def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True only for addresses that are routable on the public internet."""
+    # IPv4-mapped/-compatible IPv6 must be judged by the IPv4 address it is.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _is_public_ip(mapped)
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+        return False
+    if ip.is_reserved or ip.is_unspecified:
+        # ``is_reserved`` also covers NAT64-mapped dead ends such as
+        # 64:ff9b::7f00:1, which Python reports as *global*.
+        return False
+    # ``is_global`` rejects everything else that is not publicly routable,
+    # including the shared/CGNAT 100.64.0.0/10 block and documentation nets.
+    return bool(ip.is_global)
+
+
+def _normalize_host_suffixes(value: Any) -> tuple[str, ...]:
+    """Normalise an allowlist config value to ``(".example.com", ...)`` form.
+
+    Accepts a comma/semicolon separated string or a list of hostnames; a
+    leading ``*.`` wildcard (the way CDN hosts are usually written) is
+    accepted and equivalent to the bare suffix.
+    """
+    if isinstance(value, str):
+        parts: list[Any] = value.replace(";", ",").split(",")
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        parts = list(value)
+    else:
+        return ()
+    suffixes: list[str] = []
+    for part in parts:
+        host = str(part).strip().lower().rstrip(".")
+        if not host:
+            continue
+        host = host.removeprefix("*")
+        if not host.startswith("."):
+            host = f".{host}"
+        if len(host) > 1:
+            suffixes.append(host)
+    return tuple(suffixes)
+
+
+def _host_allowed_by_suffixes(host: str, suffixes: tuple[str, ...]) -> bool:
+    """True when *host* is one of *suffixes* or a subdomain of one."""
+    for suffix in suffixes:
+        if host == suffix[1:] or host.endswith(suffix):
+            return True
+    return False
 
 
 def _find_audio_url_direct(obj: Any, depth: int = 0) -> str | None:
@@ -326,83 +251,9 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-# ── Outbound chunking (CODE-02) ──────────────────────────────────────────
-#
-# The chunker is lossless by construction: it never trims, drops or re-joins
-# characters, so ``"".join(chunks) == content`` for any input. Boundary
-# whitespace therefore survives a split, which is what makes the concatenated
-# payload equal to the source text.
-
-
-def _split_keep_separators(text: str, sep: str) -> list[str]:
-    """Split ``text`` on ``sep``, keeping each separator on the piece before it.
-
-    ``"".join(result) == text`` holds for every input, including empty pieces
-    (``"a\\n\\nb".split("\\n")`` -> ``["a", "", "b"]`` -> ``["a\\n", "\\n", "b"]``).
-    """
-    pieces = text.split(sep)
-    result = [piece + sep for piece in pieces[:-1]]
-    if pieces[-1]:
-        result.append(pieces[-1])
-    return result
-
-
-def _iter_text_segments(text: str, limit: int) -> Iterator[str]:
-    """Yield ordered segments of ``text``, each no longer than ``limit``.
-
-    Concatenating the segments reproduces ``text`` exactly. Splitting prefers
-    boundaries in this order: line, word, character — a word longer than the
-    limit is the only case that gets cut mid-word.
-    """
-    for line in _split_keep_separators(text, "\n"):
-        if len(line) <= limit:
-            yield line
-            continue
-        for word in _split_keep_separators(line, " "):
-            if len(word) <= limit:
-                yield word
-            else:
-                for start in range(0, len(word), limit):
-                    yield word[start:start + limit]
-
-
-def _pack_segments(segments: Iterable[str], limit: int) -> list[str]:
-    """Greedily pack segments into chunks of at most ``limit`` characters."""
-    chunks: list[str] = []
-    current = ""
-    for segment in segments:
-        if current and len(current) + len(segment) > limit:
-            chunks.append(current)
-            current = segment
-        else:
-            current += segment
-    if current:
-        chunks.append(current)
-    return chunks
-
-
-def _move_leading_whitespace(chunks: list[str], cap: int) -> None:
-    """Move a chunk's leading whitespace onto the previous chunk while it fits.
-
-    In-place, and never moves a chunk's last character, so the concatenation of
-    ``chunks`` is unchanged (losslessness is preserved). ``cap`` is the maximum
-    allowed length of a chunk's text — the caller sets it so that the numbered
-    payload still fits the API limit. Keeps a message from starting with a blank
-    line when a chunk boundary lands inside a paragraph break.
-    """
-    for idx in range(1, len(chunks)):
-        while (
-            len(chunks[idx]) > 1
-            and chunks[idx][0] in " \t\n"
-            and len(chunks[idx - 1]) < cap
-        ):
-            chunks[idx - 1] += chunks[idx][0]
-            chunks[idx] = chunks[idx][1:]
-
-
 # ── MaxAdapter ───────────────────────────────────────────────────────────
 
-class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
+class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
     """MAX messenger platform adapter (voice transcription via Hermes core STT)."""
 
     def __init__(self, config: PlatformConfig):
@@ -497,17 +348,19 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             or str(extra.get("group_allow_chats", ""))
         )
 
-        # Attachment downloads (SEC-02): extra origins allowed to receive the
-        # bot token. MAX-owned hosts are trusted implicitly; nothing else gets
-        # credentials unless the operator opted in here.
-        self._trusted_download_hosts: set[str] = _parse_trusted_download_hosts(
-            os.getenv("MAX_TRUSTED_DOWNLOAD_HOSTS")
-            or extra.get("trusted_download_hosts", "")
+        # Media-download SSRF policy. The MAX CDN suffixes are always allowed;
+        # `download_allowed_hosts` (config) / MAX_DOWNLOAD_ALLOWED_HOSTS (env)
+        # adds deployment-specific origins, e.g. a self-hosted media proxy.
+        self._download_allowed_suffixes: tuple[str, ...] = (
+            DOWNLOAD_ALLOWED_HOST_SUFFIXES
+            + _normalize_host_suffixes(
+                os.getenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "")
+                or extra.get("download_allowed_hosts", "")
+            )
         )
 
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
-        self._download_client: httpx.AsyncClient | None = None
         self._webhook_runner: Any = None  # aiohttp.web.AppRunner
         self._webhook_site: Any = None
         self._webhook_app: Any = None
@@ -523,11 +376,10 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         # DM routing: chat_id → user_id
         self._dm_user_ids: dict[str, str] = {}
 
-        # Interactive button state tracking (SEC-01): owner/chat/message-bound
-        # records with TTL — see mixins/callback_auth.py. The attribute names
-        # _exec_approval_state / _slash_confirm_state / _clarify_state are
-        # aliases onto the same registry.
-        self._init_callback_auth()
+        # Interactive button state tracking
+        self._exec_approval_state: dict[str, str] = {}   # approval_id → session_key
+        self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
+        self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
         self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
 
     # ═════════════════════════════════════════════════════════════════════
@@ -588,13 +440,6 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             self._set_fatal_error("no_token", "MAX_BOT_TOKEN not configured", retryable=False)
             return False
 
-        # SEC-02: drop the attachment client from a previous connect so a
-        # repeated connect cannot leak it (the API client is the core
-        # lifecycle's concern — see CODE-07).
-        if self._download_client:
-            await self._download_client.aclose()
-            self._download_client = None
-
         # SECURITY: Do NOT follow redirects blindly — Authorization header
         # (token) would be forwarded to any redirect target (token leak).
         # Redirects with Authorization are disabled; if the Max API ever
@@ -605,25 +450,12 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             follow_redirects=False,
         )
 
-        # SEC-02: separate client for inbound attachments. It carries NO default
-        # credentials — the token is added per request only for trusted HTTPS
-        # origins (see _attachment_download_headers), and redirects stay off so
-        # a trusted URL cannot bounce the token to another host.
-        self._download_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(30.0),
-            headers={"User-Agent": _DOWNLOAD_USER_AGENT},
-            follow_redirects=False,
-        )
-
         # Verify token with /me
         try:
             resp = await self._http_client.get(f"{MAX_API_BASE}/me", timeout=httpx.Timeout(10.0))
             if resp.status_code == 401:
                 await self._http_client.aclose()
                 self._http_client = None
-                if self._download_client:
-                    await self._download_client.aclose()
-                    self._download_client = None
                 self._set_fatal_error("invalid_token", "MAX bot token is invalid", retryable=False)
                 return False
             if resp.status_code == 200:
@@ -639,9 +471,6 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             await self._http_client.aclose()
             self._http_client = None
-            if self._download_client:
-                await self._download_client.aclose()
-                self._download_client = None
             self._set_fatal_error("conn_fail", str(e), retryable=True)
             return False
 
@@ -678,10 +507,6 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
-
-        if self._download_client:
-            await self._download_client.aclose()
-            self._download_client = None
 
         self._mark_disconnected()
         logger.info("MAX: disconnected")
@@ -748,17 +573,7 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         return True
 
     async def _poll_loop(self) -> None:
-        """Long poll /updates with marker-based pagination.
-
-        Every non-200 response and every transport error shares one retry
-        policy: bounded exponential backoff with jitter, honouring the
-        server's ``Retry-After`` when it sends one (429/503). HTTP 401 is the
-        one *fatal* status — MAX rejected the bot token, so retrying can only
-        hammer the API; the loop stops and publishes the fatal auth state
-        (same ``invalid_token`` code ``connect()`` uses for its /me check)
-        so the supervisor can surface it instead of seeing a live adapter
-        that can never receive anything.
-        """
+        """Long poll /updates with marker-based pagination."""
         last_marker = 0
         errs = 0
         while not self._stop.is_set():
@@ -777,36 +592,15 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
                     if marker:
                         last_marker = marker
                     errs = 0
-                elif resp.status_code == 401:
-                    logger.error(
-                        "MAX: poll rejected with HTTP 401 — bot token is invalid, "
-                        "long polling stopped (check MAX_BOT_TOKEN)",
-                    )
-                    self._set_fatal_error(
-                        "invalid_token",
-                        "MAX bot token is invalid (HTTP 401 from GET /updates)",
-                        retryable=False,
-                    )
-                    self._stop.set()
-                    return
                 else:
                     errs += 1
-                    delay = _poll_status_delay(getattr(resp, "headers", None), errs)
-                    logger.warning(
-                        "MAX: poll HTTP %s (attempt %d), retrying in %.1fs",
-                        resp.status_code, errs, delay,
-                    )
-                    await _poll_sleep(delay)
+                    logger.warning("MAX: poll HTTP %s (attempt %d)", resp.status_code, errs)
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 errs += 1
-                delay = _poll_backoff_delay(errs)
-                logger.warning(
-                    "MAX: poll error (attempt %d): %s: %s — retrying in %.1fs",
-                    errs, type(e).__name__, e, delay,
-                )
-                await _poll_sleep(delay)
+                logger.warning("MAX: poll error (attempt %d): %s: %s", errs, type(e).__name__, e)
+                await asyncio.sleep(min(POLL_ERROR_DELAY * (2 ** min(errs - 1, 4)), 60))
 
     # ═════════════════════════════════════════════════════════════════════
     # Webhook server
@@ -1054,18 +848,6 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             user_name=user_name,
         )
 
-        # SEC-01: remember who owns this conversation so prompts triggered by
-        # this turn (approval / slash-confirm / clarify / model picker) can be
-        # bound to that user — outbound prompts receive only a session key.
-        try:
-            session_key = self._source_session_key(source)
-        except Exception as exc:  # noqa: BLE001 — ownership is best-effort here
-            logger.debug("MAX: could not derive session key for owner tracking: %s", exc)
-            session_key = ""
-        self._remember_interaction_owner(
-            session_key=session_key, chat_id=scoped_chat_id, user_id=user_id,
-        )
-
         return MessageEvent(
             text=text,
             message_type=msg_type,
@@ -1240,80 +1022,126 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         return f"{parsed.scheme}://{parsed.netloc}{path}"
 
     @staticmethod
-    def _validate_download_url(url: str) -> bool:
-        """SSRF guard for media downloads: allow only public http(s) hosts.
+    def _validate_download_url(
+        url: str,
+        allowed_suffixes: tuple[str, ...] = DOWNLOAD_ALLOWED_HOST_SUFFIXES,
+    ) -> bool:
+        """SSRF guard for media downloads: allow only public https CDN origins.
 
-        Rejects non-http schemes, loopback/private/link-local IPs (e.g.
-        169.254.169.254 metadata endpoint, 127.0.0.1, 10.x internal nets)
-        and bare ``localhost``/``*.local`` hostnames.
+        Layered, cheapest check first:
+
+        * scheme must be https — the request carries the bot token, so
+          plaintext transport is not acceptable;
+        * credentials in the URL (``user:pass@host``) are rejected;
+        * bare ``localhost`` / ``*.local`` names are rejected;
+        * a host that is an IP literal — including the legacy inet_aton
+          spellings ``2130706433`` / ``0x7f000001`` / ``0177.0.0.1`` / ``127.1``
+          that ``ipaddress`` alone cannot parse — must be a public address;
+        * every other host must match the CDN suffix allowlist.
+
+        This is the synchronous half of the guard and needs no DNS. DNS
+        answers are validated and the connection is pinned to the validated
+        address in :meth:`_prepare_download`.
         """
-        import ipaddress
-
         parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https"):
+        if parsed.scheme.lower() not in DOWNLOAD_ALLOWED_SCHEMES:
+            return False
+        if parsed.username or parsed.password:
             return False
         host = parsed.hostname
         if not host:
             return False
         host_l = host.lower().rstrip(".")
+        if not host_l:
+            return False
         if host_l == "localhost" or host_l.endswith(".local"):
             return False
-        # If the host is a literal IP, reject non-public ranges.
+        if not _host_allowed_by_suffixes(host_l, allowed_suffixes):
+            return False
+        ip = _parse_host_ip(host_l)
+        if ip is not None:
+            return _is_public_ip(ip)
+        return True
+
+    def _download_url_allowed(self, url: str) -> bool:
+        """Instance-level guard: class default suffixes plus configured ones."""
+        return self._validate_download_url(url, self._download_allowed_suffixes)
+
+    @staticmethod
+    def _resolve_public_addresses(host: str, port: int) -> list[str] | None:
+        """Resolve *host* and return its addresses only if all of them are public.
+
+        A name answering with a mix of public and internal records must not be
+        usable: the resolver may hand back either one, so the whole answer is
+        rejected. Returns ``None`` when resolution fails or any A/AAAA record
+        points outside the public internet.
+        """
         try:
-            ip = ipaddress.ip_address(host_l)
-        except ValueError:
-            ip = None
-        if ip is None:
-            return True
-        return not (ip.is_private or ip.is_loopback or ip.is_link_local
-                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            return None
+        addresses: set[str] = set()
+        for _family, _socktype, _proto, _canonname, sockaddr in infos:
+            ip = _parse_host_ip(str(sockaddr[0]))
+            if ip is None or not _is_public_ip(ip):
+                return None
+            addresses.add(str(ip))
+        if not addresses:
+            return None
+        return sorted(addresses)
 
-    def _is_trusted_download_origin(self, url: str) -> bool:
-        """Return True only for HTTPS URLs on a host we explicitly trust.
+    @staticmethod
+    def _pin_download_request(
+        url: str, ip: str
+    ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        """Rewrite *url* to dial *ip* directly, keeping the original Host/SNI.
 
-        SEC-02: attachment URLs are attacker-influenced, so the bot token may
-        only travel to MAX-owned hosts (``.max.ru``/``.oneme.ru``/``.okcdn.ru``/
-        ``.cdn-max.ru`` — the same suffix list the upload path trusts) or to
-        hosts the operator configured in ``MAX_TRUSTED_DOWNLOAD_HOSTS`` /
-        ``extra["trusted_download_hosts"]``. Plain HTTP never receives
-        credentials, and a ``*.example.com`` entry matches subdomains only —
-        ``example.com`` itself needs its own entry.
+        The socket target is the address that was validated above, so a second
+        DNS answer (rebinding) cannot point the connection at an internal
+        service; ``sni_hostname`` keeps TLS verification against the real
+        hostname instead of the literal address.
         """
         parsed = urlparse(url)
-        if parsed.scheme != "https":
-            return False
-        host = (parsed.hostname or "").lower().rstrip(".")
-        if not host:
-            return False
-        if host.endswith(_TRUSTED_DOWNLOAD_HOST_SUFFIXES):
-            return True
-        for entry in self._trusted_download_hosts:
-            if entry.startswith("*."):
-                if host.endswith(entry[1:]):
-                    return True
-            elif host == entry:
-                return True
-        return False
+        host = parsed.hostname or ""
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        address = f"[{ip}]" if ":" in ip else ip
+        netloc = f"{address}:{port}" if port is not None else address
+        pinned_url = parsed._replace(netloc=netloc).geturl()
+        host_header = f"[{host}]" if ":" in host else host
+        if port is not None and port != 443:
+            host_header = f"{host_header}:{port}"
+        return pinned_url, {"Host": host_header}, {"sni_hostname": host}
 
-    def _attachment_download_headers(self, url: str, accept: str) -> dict[str, str]:
-        """Request headers for an attachment download.
+    async def _prepare_download(
+        self, url: str
+    ) -> tuple[str, dict[str, str], dict[str, Any]] | None:
+        """Validate, resolve and pin a media-download URL.
 
-        The ``Authorization`` header is present only when the origin is trusted
-        — an untrusted origin still gets the file (if it is public) but never
-        the bot token.
+        Returns ``(request_url, extra_headers, httpcore_extensions)`` ready to
+        pass to ``self._http_client.get``, or ``None`` when *url* must not be
+        fetched (blocked origin, DNS answer touching a non-public range, or a
+        resolution failure).
         """
-        headers = {"User-Agent": _DOWNLOAD_USER_AGENT, "Accept": accept}
-        if self._token and self._is_trusted_download_origin(url):
-            headers["Authorization"] = self._token
-        return headers
-
-    def _redact_secrets(self, text: str) -> str:
-        """Remove the bot token from a string before it reaches the logs."""
-        if not text:
-            return text
-        if self._token and len(self._token) >= 8:
-            text = text.replace(self._token, "[redacted]")
-        return text
+        if not self._download_url_allowed(url):
+            return None
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        ip = _parse_host_ip(host)
+        if ip is None:
+            try:
+                port = parsed.port or 443
+            except ValueError:
+                return None
+            addresses = await asyncio.to_thread(
+                self._resolve_public_addresses, host, port
+            )
+            if not addresses:
+                return None
+            ip = ipaddress.ip_address(addresses[0])
+        return self._pin_download_request(url, str(ip))
 
     @staticmethod
     def _detect_image_mime(data: bytes) -> str:
@@ -1347,20 +1175,33 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
     ) -> tuple[str, str] | None:
         """Download audio attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._download_client:
+        if not url or not self._http_client:
             return None
-        if not self._validate_download_url(url):
-            logger.warning("MAX: refusing to download %s from blocked host: %s", kind, self._safe_url_for_log(url))
+        prepared = await self._prepare_download(url)
+        if prepared is None:
+            logger.warning(
+                "MAX: refusing to download %s from %s "
+                "(not an allowed public CDN origin — see download_allowed_hosts)",
+                kind, self._safe_url_for_log(url),
+            )
             return None
-        headers = self._attachment_download_headers(url, "audio/*,*/*;q=0.8")
+        request_url, pin_headers, extensions = prepared
+        headers = {
+            "Authorization": self._token,
+            "User-Agent": "HermesAgent/1.0 MaxBot",
+            "Accept": "audio/*,*/*;q=0.8",
+            **pin_headers,
+        }
         try:
-            resp = await self._download_client.get(url, headers=headers)
+            resp = await self._http_client.get(request_url, headers=headers, extensions=extensions)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning(
-                "MAX: failed to download %s from %s: %s",
-                kind, self._safe_url_for_log(url), self._redact_secrets(str(exc)),
-            )
+            logger.warning("MAX: failed to download %s from %s: %s", kind, self._safe_url_for_log(url), exc)
+            return None
+        if resp.status_code in DOWNLOAD_REDIRECT_STATUS_CODES:
+            # Redirects are not followed: the Location may point anywhere and
+            # the request carries the bot token (see SEC-02).
+            logger.warning("MAX: refusing redirect for %s: %s", kind, self._safe_url_for_log(url))
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -1383,20 +1224,31 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
     ) -> tuple[str, str] | None:
         """Download image attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._download_client:
+        if not url or not self._http_client:
             return None
-        if not self._validate_download_url(url):
-            logger.warning("MAX: refusing to download image from blocked host: %s", self._safe_url_for_log(url))
+        prepared = await self._prepare_download(url)
+        if prepared is None:
+            logger.warning(
+                "MAX: refusing to download image from %s "
+                "(not an allowed public CDN origin — see download_allowed_hosts)",
+                self._safe_url_for_log(url),
+            )
             return None
-        headers = self._attachment_download_headers(url, "image/*,*/*;q=0.8")
+        request_url, pin_headers, extensions = prepared
+        headers = {
+            "Authorization": self._token,
+            "User-Agent": "HermesAgent/1.0 MaxBot",
+            "Accept": "image/*,*/*;q=0.8",
+            **pin_headers,
+        }
         try:
-            resp = await self._download_client.get(url, headers=headers)
+            resp = await self._http_client.get(request_url, headers=headers, extensions=extensions)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning(
-                "MAX: failed to download image from %s: %s",
-                self._safe_url_for_log(url), self._redact_secrets(str(exc)),
-            )
+            logger.warning("MAX: failed to download image from %s: %s", self._safe_url_for_log(url), exc)
+            return None
+        if resp.status_code in DOWNLOAD_REDIRECT_STATUS_CODES:
+            logger.warning("MAX: refusing redirect for image: %s", self._safe_url_for_log(url))
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         if not content_type or content_type == "application/octet-stream":
@@ -1423,20 +1275,31 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
     ) -> tuple[str, str] | None:
         """Download document attachment and cache it."""
         url = self._find_first_url(attachment)
-        if not url or not self._download_client:
+        if not url or not self._http_client:
             return None
-        if not self._validate_download_url(url):
-            logger.warning("MAX: refusing to download document from blocked host: %s", self._safe_url_for_log(url))
+        prepared = await self._prepare_download(url)
+        if prepared is None:
+            logger.warning(
+                "MAX: refusing to download document from %s "
+                "(not an allowed public CDN origin — see download_allowed_hosts)",
+                self._safe_url_for_log(url),
+            )
             return None
-        headers = self._attachment_download_headers(url, "application/*,text/*,*/*;q=0.8")
+        request_url, pin_headers, extensions = prepared
+        headers = {
+            "Authorization": self._token,
+            "User-Agent": "HermesAgent/1.0 MaxBot",
+            "Accept": "application/*,text/*,*/*;q=0.8",
+            **pin_headers,
+        }
         try:
-            resp = await self._download_client.get(url, headers=headers)
+            resp = await self._http_client.get(request_url, headers=headers, extensions=extensions)
             resp.raise_for_status()
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.warning(
-                "MAX: failed to download document from %s: %s",
-                self._safe_url_for_log(url), self._redact_secrets(str(exc)),
-            )
+            logger.warning("MAX: failed to download document from %s: %s", self._safe_url_for_log(url), exc)
+            return None
+        if resp.status_code in DOWNLOAD_REDIRECT_STATUS_CODES:
+            logger.warning("MAX: refusing redirect for document: %s", self._safe_url_for_log(url))
             return None
         content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
         filename = self._find_first_filename(attachment) or Path(urlparse(url).path).name or "document"
@@ -1472,53 +1335,62 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
     # Outbound: send messages
     # ═════════════════════════════════════════════════════════════════════
 
-    def _split_outbound_text(
-        self, content: str, limit: int | None = None
-    ) -> list[str]:
-        """Split long outbound text into Max-sized chunks (≤ ``limit`` chars).
+    def _split_outbound_text(self, content: str) -> list[str]:
+        """Split long outbound text into Max-sized chunks (≤4000 chars).
 
-        Lossless: ``"".join(result) == content`` for every input — the splitter
-        never trims or re-joins characters, so nothing is dropped at a chunk
-        boundary. Splits prefer paragraph, then line, then word boundaries and
-        only cut mid-word for a word longer than the limit.
+        Preserves paragraph boundaries where possible; hard-splits long
+        paragraphs by word, then by character as a last resort.
         """
-        budget = OUTBOUND_CHUNK_LIMIT if limit is None else max(1, limit)
-        if len(content) <= budget:
+        limit = max(500, min(MAX_MESSAGE_LENGTH, 4000) - 100)
+        if len(content) <= limit:
             return [content]
-        segments = _iter_text_segments(content, budget)
-        return _pack_segments(segments, budget)
 
-    def _numbered_outbound_chunks(self, content: str) -> list[str]:
-        """Chunk ``content`` and prepend the ``(i/n)\\n`` numbering prefix.
+        chunks: list[str] = []
+        current = ""
 
-        The prefix is accounted for *before* splitting (CODE-02): the split is
-        re-run with a reduced text budget until the number of chunks — and
-        therefore the prefix width — is stable, so the sender never has to
-        truncate a chunk after the fact. ``"".join`` of the returned texts with
-        the prefixes removed reproduces ``content`` exactly, and no payload
-        exceeds ``MAX_MESSAGE_LENGTH``.
-        """
-        budget = OUTBOUND_CHUNK_LIMIT
-        chunks = self._split_outbound_text(content, budget)
-        for _ in range(8):  # prefix width changes at most once per digit count
-            if len(chunks) <= 1:
-                break
-            prefix_len = len(f"({len(chunks)}/{len(chunks)})\n")
-            if prefix_len >= budget:
-                break  # pragma: no cover - defensive: 3900-char budget never yields this
-            renumbered = self._split_outbound_text(content, budget - prefix_len)
-            stable = len(renumbered) == len(chunks)
-            chunks = renumbered
-            if stable:
-                break
-        if len(chunks) <= 1:
-            return chunks
-        total = len(chunks)
-        prefix_len = len(f"({total}/{total})\n")
-        # Leading whitespace may move onto the previous chunk, but only within
-        # the API limit (MAX_MESSAGE_LENGTH) that the prefix is not using.
-        _move_leading_whitespace(chunks, MAX_MESSAGE_LENGTH - prefix_len)
-        return [f"({idx}/{total})\n{text}" for idx, text in enumerate(chunks, start=1)]
+        def flush() -> None:
+            nonlocal current
+            if current:
+                chunks.append(current.strip())
+                current = ""
+
+        for block in content.split("\n\n"):
+            block = block.strip()
+            if not block:
+                continue
+            candidate = f"{current}\n\n{block}" if current else block
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            flush()
+            if len(block) <= limit:
+                current = block
+                continue
+            # Very long paragraph: split by lines then words
+            line_current = ""
+            for line in block.splitlines() or [block]:
+                for word in line.split(" "):
+                    if not word:
+                        continue
+                    if len(word) > limit:
+                        if line_current:
+                            chunks.append(line_current.strip())
+                            line_current = ""
+                        for i in range(0, len(word), limit):
+                            chunks.append(word[i:i + limit])
+                        continue
+                    candidate_word = f"{line_current} {word}" if line_current else word
+                    if len(candidate_word) <= limit:
+                        line_current = candidate_word
+                    else:
+                        chunks.append(line_current.strip())
+                        line_current = word
+                if line_current and len(line_current) + 1 <= limit:
+                    line_current += "\n"
+            if line_current:
+                chunks.append(line_current.strip())
+        flush()
+        return chunks or [content[:limit]]
 
     async def send(
         self,
@@ -1585,12 +1457,14 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             content = self._convert_markdown_tables(content)
 
         # ── Send ───────────────────────────────────────────────────────
-        # Numbering prefixes are budgeted before the split, so no chunk is
-        # truncated after the fact (CODE-02).
-        chunks = self._numbered_outbound_chunks(content)
+        chunks = self._split_outbound_text(content)
         last_result: SendResult | None = None
 
         for idx, text in enumerate(chunks, start=1):
+            if len(chunks) > 1:
+                prefix = f"({idx}/{len(chunks)})\n"
+                text = prefix + text[:max(0, 3900 - len(prefix))]
+
             body: dict[str, Any] = {
                 "text": text,
                 "format": "markdown",
@@ -1908,31 +1782,8 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         )
         chat_id = str(raw_chat_id)
 
-        # Message the buttons live on — the third binding of SEC-01. MAX puts
-        # it in message.body.mid; tolerate the flatter shapes seen in the wild.
-        body = (msg.get("body") or {}) if msg else {}
-        message_id = str(
-            body.get("mid") or msg.get("mid") or msg.get("message_id") or ""
-        )
-
         logger.info("MAX: callback received: data=%s from user=%s chat_id=%s",
                      data, user_id, chat_id)
-
-        # Prompts are registered against the *scoped* chat id ("chat:777" /
-        # "user:42"); callbacks carry the raw numeric group id. Normalise once
-        # so the bound-chat check compares like with like.
-        scoped_chat = f"chat:{chat_id}" if chat_id else f"user:{user_id}"
-
-        # ── Common authorization gate (SEC-01) ───────────────────────────
-        # Runs before any handler so no dispatch path can pop state or reach a
-        # resolver without passing the same checks (exec approval, slash
-        # confirm, clarify, model picker).
-        if not self._is_callback_user_allowed(user_id):
-            logger.warning(
-                "MAX: ignoring callback from unauthorized user=%s chat_id=%s data=%s",
-                user_id, chat_id, data,
-            )
-            return None
 
         # Dispatch based on prefix
         parts = data.split(":", 2)
@@ -1940,31 +1791,22 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
 
         if prefix == "exec":
             # Dangerous command approval buttons
-            return await self._handle_exec_callback(
-                data, user_id, payload, chat_id=scoped_chat, message_id=message_id,
-            )
+            return await self._handle_exec_callback(data, user_id, payload)
         elif prefix == "sc":
             # Slash-command confirmation buttons
-            return await self._handle_slash_confirm_callback(
-                data, user_id, payload, chat_id=scoped_chat, message_id=message_id,
-            )
+            return await self._handle_slash_confirm_callback(data, user_id, payload)
         elif prefix == "clarify":
             # Clarify choice buttons
-            return await self._handle_clarify_callback(
-                data, user_id, payload, chat_id=scoped_chat, message_id=message_id,
-            )
+            return await self._handle_clarify_callback(data, user_id, payload)
         elif prefix == "model":
             # Model picker buttons
-            return await self._handle_model_callback(
-                data, user_id, payload, chat_id, message_id=message_id,
-            )
+            return await self._handle_model_callback(data, user_id, payload, chat_id)
         else:
             logger.warning("MAX: unknown callback prefix: %s", prefix)
             return None
 
     async def _handle_exec_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any],
-        chat_id: str = "", message_id: str = "",
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
     ) -> MessageEvent | None:
         """Route exec approval button to resolve_gateway_approval."""
         # Format: exec:{choice}:{approval_id}
@@ -1974,29 +1816,10 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         choice = parts[1]   # once / session / always / deny
         approval_id = parts[2]
 
-        # SEC-01: the presser must be the owner of this approval, in the bound
-        # chat, on the bound prompt message. Unauthorized presses neither call
-        # the resolver nor delete the owner's pending state.
-        record, reason = self._consume_interaction(
-            "exec", approval_id,
-            user_id=user_id, chat_id=chat_id, message_id=message_id,
-        )
-        if record is None:
-            if reason == "unknown":
-                logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
-                await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
-            elif reason == "expired":
-                await self.send(f"user:{user_id}", "❌ This approval has expired.")
-            else:
-                logger.warning(
-                    "MAX: refusing approval %s from user=%s chat=%s: %s",
-                    approval_id, user_id, chat_id, reason,
-                )
-            return None
-
-        session_key = str(record.get("session_key") or "")
+        session_key = self._exec_approval_state.pop(approval_id, None)
         if not session_key:
-            logger.warning("MAX: approval %s has no session key — ignoring", approval_id)
+            logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
+            await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
             return None
 
         from tools.approval import has_blocking_approval, resolve_gateway_approval
@@ -2027,8 +1850,7 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         return None
 
     async def _handle_slash_confirm_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any],
-        chat_id: str = "", message_id: str = "",
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
     ) -> MessageEvent | None:
         """Route slash-confirm button to tools.slash_confirm.resolve."""
         # Format: sc:{choice}:{confirm_id}
@@ -2038,24 +1860,9 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         choice = parts[1]     # once / always / cancel
         confirm_id = parts[2]
 
-        # SEC-01: same owner/chat/message gate as exec approvals.
-        record, reason = self._consume_interaction(
-            "sc", confirm_id,
-            user_id=user_id, chat_id=chat_id, message_id=message_id,
-        )
-        if record is None:
-            if reason != "unknown":
-                logger.warning(
-                    "MAX: refusing slash-confirm %s from user=%s chat=%s: %s",
-                    confirm_id, user_id, chat_id, reason,
-                )
-            else:
-                logger.warning("MAX: unknown confirm_id in callback: %s", confirm_id)
-            return None
-
-        session_key = str(record.get("session_key") or "")
+        session_key = self._slash_confirm_state.pop(confirm_id, None)
         if not session_key:
-            logger.warning("MAX: slash-confirm %s has no session key — ignoring", confirm_id)
+            logger.warning("MAX: unknown confirm_id in callback: %s", confirm_id)
             return None
 
         from tools import slash_confirm as _sc
@@ -2069,8 +1876,7 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         return None
 
     async def _handle_clarify_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any],
-        chat_id: str = "", message_id: str = "",
+        self, data: str, user_id: str, raw_payload: dict[str, Any]
     ) -> MessageEvent | None:
         """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
         # Format: clarify:{clarify_id}:{choice_index}
@@ -2080,19 +1886,9 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         clarify_id = parts[1]
         choice_idx = parts[2]
 
-        # SEC-01: a stranger must not answer somebody else's clarify prompt.
-        record, reason = self._consume_interaction(
-            "clarify", clarify_id,
-            user_id=user_id, chat_id=chat_id, message_id=message_id,
-        )
-        if record is None:
-            if reason != "unknown":
-                logger.warning(
-                    "MAX: refusing clarify %s from user=%s chat=%s: %s",
-                    clarify_id, user_id, chat_id, reason,
-                )
-            else:
-                logger.warning("MAX: unknown clarify_id in callback: %s", clarify_id)
+        session_key = self._clarify_state.pop(clarify_id, None)
+        if not session_key:
+            logger.warning("MAX: unknown clarify_id in callback: %s", clarify_id)
             return None
 
         try:
@@ -2142,12 +1938,10 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
 
     async def _handle_model_callback(
         self, data: str, user_id: str, raw_payload: dict[str, Any], chat_id: str,
-        message_id: str = "",
     ) -> MessageEvent | None:
         """Route model picker button callbacks.
 
-        Formats (variable fields are percent-encoded by `_picker_encode`, so
-        model IDs containing ':' round-trip unchanged):
+        Formats:
           model:provider:{slug}  — provider selected, show models
           model:pick:{model}:{provider} — model selected, switch
           model:page:{provider}:{page} — page navigation
@@ -2161,36 +1955,12 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         else:
             scoped_chat = f"user:{user_id}"
 
-        # SEC-01: the picker state is owner-bound too — another participant of
-        # the same chat must not switch the owner's model (see CODE-06 for the
-        # stale-message angle).
-        picker_state = self._model_picker_state.get(scoped_chat)
-        if picker_state is not None:
-            reason = self._model_picker_deny_reason(
-                picker_state, user_id=user_id, message_id=message_id,
-            )
-            if reason:
-                if reason == "expired picker state":
-                    self._model_picker_state.pop(scoped_chat, None)
-                logger.warning(
-                    "MAX: refusing model callback %s from user=%s chat=%s: %s",
-                    data, user_id, scoped_chat, reason,
-                )
-                return None
-            # Sliding TTL: an active picker stays usable while it is being used.
-            picker_state["expires_at"] = self._callback_clock() + self._callback_ttl
-
         parts = data.split(":", 3)
 
         if len(parts) >= 3 and parts[1] == "provider":
             # Provider selected
-            provider_slug = _picker_decode(parts[2])
+            provider_slug = parts[2]
             state = self._model_picker_state.get(scoped_chat)
-            if not state or not self._provider_known(state, provider_slug):
-                logger.warning(
-                    "MAX: model callback for unknown/expired provider %r", provider_slug,
-                )
-                return None
 
             msg_id = state.get("provider_msg_id", "") if state else ""
             await self._on_model_provider_selected(scoped_chat, provider_slug, msg_id)
@@ -2198,52 +1968,24 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
 
         if len(parts) >= 4 and parts[1] == "page":
             # Page navigation
-            provider_slug = _picker_decode(parts[2])
+            provider_slug = parts[2]
             try:
                 page = int(parts[3])
             except ValueError:
                 page = 0
             state = self._model_picker_state.get(scoped_chat)
-            if state and self._provider_known(state, provider_slug):
+            if state:
                 await self._on_model_page_selected(scoped_chat, provider_slug, page)
-            else:
-                logger.warning(
-                    "MAX: model page callback for unknown/expired provider %r", provider_slug,
-                )
             return None
 
         if len(parts) >= 3 and parts[1] == "pick":
             # Model selected
             # Format: model:pick:{model}:{provider}
             # parts[2] = model, parts[3] = provider (if present)
-            model_id = _picker_decode(parts[2])
-            provider_slug = _picker_decode(parts[3]) if len(parts) >= 4 else ""
-            if not provider_slug:
-                logger.warning("MAX: model pick callback missing provider: %s", data)
-                return None
-            state = self._model_picker_state.get(scoped_chat)
-            if not state:
-                logger.warning("MAX: model pick callback with no picker state: %s", data)
-                return None
-            provider = next(
-                (p for p in state.get("providers", []) if p.get("slug") == provider_slug),
-                None,
-            )
-            # Reject anything the live picker state does not know: a stale
-            # button, an expired picker, or a malformed/legacy payload that
-            # decodes into an unknown provider or an unoffered model.
-            if provider is None:
-                logger.warning(
-                    "MAX: model pick callback for unknown/expired provider %r", provider_slug,
-                )
-                return None
-            if model_id not in provider.get("models", []):
-                logger.warning(
-                    "MAX: model pick callback for unknown model %r of provider %r",
-                    model_id, provider_slug,
-                )
-                return None
-            return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
+            model_id = parts[2]
+            provider_slug = parts[3] if len(parts) >= 4 else ""
+            if provider_slug:
+                return await self._on_model_picked(scoped_chat, model_id, provider_slug, user_id)
 
         if data == "model:back":
             await self._on_model_back(scoped_chat, user_id)
@@ -2252,33 +1994,9 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         logger.warning("MAX: unhandled model callback: %s", data)
         return None
 
-    @staticmethod
-    def _provider_known(state: dict[str, Any], provider_slug: str) -> bool:
-        """True when the picker state still lists this provider slug."""
-        return any(p.get("slug") == provider_slug for p in state.get("providers", []))
-
     # ═════════════════════════════════════════════════════════════════════
     # Model picker
     # ═════════════════════════════════════════════════════════════════════
-
-    def _model_picker_deny_reason(
-        self, state: dict[str, Any], *, user_id: str, message_id: str = "",
-    ) -> str:
-        """Return why ``state`` must not be driven by this press, or "" (SEC-01)."""
-        owner = str(state.get("owner_user_id") or "")
-        if not owner:
-            return "unbound picker (owner unknown)"
-        if str(user_id) != owner:
-            return f"user {user_id} is not the picker owner ({owner})"
-        if self._callback_clock() >= float(state.get("expires_at") or 0.0):
-            return "expired picker state"
-        bound_mids = {
-            str(state.get(key) or "") for key in ("provider_msg_id", "model_msg_id")
-        }
-        bound_mids.discard("")
-        if bound_mids and message_id and str(message_id) not in bound_mids:
-            return "stale picker button (message id mismatch)"
-        return ""
 
     async def send_model_picker(
         self,
@@ -2324,7 +2042,7 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             row.append({
                 "type": "callback",
                 "text": btn_text,
-                "payload": f"model:provider:{_picker_encode(slug)}",
+                "payload": f"model:provider:{slug}",
             })
             if len(row) >= 2:
                 buttons.append(row)
@@ -2335,11 +2053,6 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
-            # Drop expired pickers so abandoned ones cannot pile up.
-            now = self._callback_clock()
-            for stale_chat, stale in list(self._model_picker_state.items()):
-                if now >= float(stale.get("expires_at") or 0.0):
-                    self._model_picker_state.pop(stale_chat, None)
             self._model_picker_state[str(chat_id)] = {
                 "provider_msg_id": result.message_id,  # ID сообщения с провайдерами (текст+кнопки)
                 "providers": providers,
@@ -2347,11 +2060,6 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
                 "on_model_selected": on_model_selected,
                 "current_model": current_model,
                 "current_provider": current_provider,
-                # SEC-01: owner binding + TTL — see _model_picker_deny_reason.
-                "owner_user_id": self._resolve_interaction_owner(
-                    session_key, chat_id, metadata,
-                ),
-                "expires_at": self._callback_clock() + self._callback_ttl,
             }
         return result
 
@@ -2403,7 +2111,7 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             buttons.append([{
                 "type": "callback",
                 "text": label,
-                "payload": f"model:pick:{_picker_encode(m)}:{_picker_encode(provider_slug)}",
+                "payload": f"model:pick:{m}:{provider_slug}",
             }])
 
         # Pagination buttons
@@ -2413,13 +2121,13 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
                 nav_row.append({
                     "type": "callback",
                     "text": "⬅ Prev",
-                    "payload": f"model:page:{_picker_encode(provider_slug)}:{page - 1}",
+                    "payload": f"model:page:{provider_slug}:{page - 1}",
                 })
             if page < total_pages - 1:
                 nav_row.append({
                     "type": "callback",
                     "text": "Next ➡",
-                    "payload": f"model:page:{_picker_encode(provider_slug)}:{page + 1}",
+                    "payload": f"model:page:{provider_slug}:{page + 1}",
                 })
             if nav_row:
                 buttons.append(nav_row)
@@ -2538,7 +2246,7 @@ class MaxAdapter(CallbackAuthMixin, MediaUploadMixin, TableRendererMixin, Button
             row.append({
                 "type": "callback",
                 "text": f"{name}{tag}"[:40],
-                "payload": f"model:provider:{_picker_encode(slug)}",
+                "payload": f"model:provider:{slug}",
             })
             if len(row) >= 2:
                 buttons.append(row)
@@ -2644,6 +2352,12 @@ def _env_enablement() -> dict | None:
     if allowed:
         extra["allowed_users"] = [part.strip() for part in allowed.split(",") if part.strip()]
 
+    download_hosts = os.getenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "").strip()
+    if download_hosts:
+        extra["download_allowed_hosts"] = [
+            part.strip() for part in download_hosts.split(",") if part.strip()
+        ]
+
     allow_all = os.getenv("MAX_ALLOW_ALL_USERS", "").strip()
     if allow_all:
         extra["allow_all_users"] = _coerce_bool(allow_all, True)
@@ -2677,6 +2391,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "port": "MAX_WEBHOOK_PORT",
         "path": "MAX_WEBHOOK_PATH",
         "allowed_users": "MAX_ALLOWED_USERS",
+        "download_allowed_hosts": "MAX_DOWNLOAD_ALLOWED_HOSTS",
         "allow_all_users": "MAX_ALLOW_ALL_USERS",
         "home_channel": "MAX_HOME_CHANNEL",
         "group_policy": "MAX_GROUP_POLICY",
@@ -2689,7 +2404,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         value = platform_cfg.get(key)
         if value is None:
             continue
-        if key == "allowed_users" and isinstance(value, list):
+        if key in ("allowed_users", "download_allowed_hosts") and isinstance(value, list):
             extra[key] = [str(v) for v in value]
             env_value = ",".join(str(v) for v in value)
         elif key == "home_channel" and isinstance(value, dict):
