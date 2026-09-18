@@ -25,6 +25,19 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-mock>=3.14",
     "ruff>=0.6",
+    # The suite imports the Hermes core (`gateway.config`,
+    # `gateway.platforms.base`): the adapter subclasses `BasePlatformAdapter`
+    # and tests/test_lifecycle.py asserts the inherited lifecycle contract it
+    # owns (`_running`, `_mark_connected`, `_mark_disconnected`, the
+    # `_expected_cancelled_tasks` bookkeeping). Without it, a clean
+    # `pytest` collection fails with `ModuleNotFoundError: gateway`.
+    #
+    # Pin policy: the contract above exists in the published 0.19.0 and is
+    # verified against 0.21.3 (the version the development checkout runs).
+    # `TestCoreContract` fails loudly if the installed core is older or has
+    # changed the contract, so the floor below is load-bearing — raise it when
+    # a newer core is verified, don't drop it.
+    "hermes-agent>=0.19",
 ]
 
 [build-system]
