@@ -12,7 +12,7 @@ cd ~/.hermes/plugins/max-platform
 # Basic diagnostics (without sending message)
 ./scripts/diagnose.sh
 
-# Full diagnostics with E2E test
+# Diagnostics with outbound API smoke test (not full E2E)
 ./scripts/diagnose.sh --send
 ```
 
@@ -237,12 +237,25 @@ sudo systemctl restart hermes-gateway
 
 ## Logs
 
+Before checking, confirm the environment and mode:
+
+```bash
+printf 'HERMES_HOME=%s\n' "${HERMES_HOME:-$HOME/.hermes}"
+printf 'MAX_WEBHOOK_PORT=%s\n' "${MAX_WEBHOOK_PORT:-8646}"
+command -v python
+python -c 'import sys; print(sys.executable)'
+```
+
+`/health` exists only in webhook mode and checks the local HTTP endpoint. `GET /me` checks only the API smoke path. Full E2E requires a real inbound MAX message, Hermes core processing, and an outbound reply; confirm all three in logs and in MAX.
+
 ### Where to find
 
-**Journald:**
+**Linux systemd:**
 ```bash
 journalctl -u hermes-gateway -f
 ```
+
+For a user service use `journalctl --user -u hermes-gateway -f`. macOS has no `journalctl` or `systemctl`; inspect the file configured by launchd/your process manager or run the gateway in the foreground.
 
 **File:**
 ```bash
