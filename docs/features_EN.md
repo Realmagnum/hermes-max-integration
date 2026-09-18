@@ -204,6 +204,9 @@ Interactive model selection with pagination (15 per page).
 
 **Callback format:** `model:pick:{model}:{provider}`
 
+`{model}`/`{provider}` are percent-encoded, so IDs containing a colon
+(`llama3:8b`, `...:free`) round-trip unambiguously.
+
 **Pagination callbacks:** `model:page:{provider}:{page}`
 
 ### Confirm/Clarify

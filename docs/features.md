@@ -203,6 +203,9 @@ await adapter.send_buttons(
 
 **Callback format:** `model:pick:{model}:{provider}`
 
+`{model}`/`{provider}` percent-кодируются, поэтому ID с двоеточием
+(`llama3:8b`, `...:free`) разбираются однозначно.
+
 **Pagination callbacks:** `model:page:{provider}:{page}`
 
 ### Confirm/Clarify
