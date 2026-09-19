@@ -42,6 +42,7 @@ from gateway.platforms.base import (
     cache_image_from_bytes,
 )
 
+from .mixins.base import _http_body_snippet, _is_retryable_http_status
 from .mixins.buttons import ButtonsMixin
 from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
     _ALLOWED_UPLOAD_HOSTS,
@@ -79,6 +80,15 @@ TASK_SHUTDOWN_TIMEOUT = 5.0
 DEFAULT_WEBHOOK_HOST = "0.0.0.0"  # nosec B104 — вебхук за Caddy reverse proxy; порт защищён host firewall
 DEFAULT_WEBHOOK_PORT = 8646
 DEFAULT_WEBHOOK_PATH = "/max/webhook"
+
+# Hard bounds for ingress, worker concurrency and duplicate tracking (CODE-08).
+DEFAULT_QUEUE_MAXSIZE = 1000
+DEFAULT_MAX_CONCURRENCY = 8
+DEFAULT_DEDUP_MAX = 5000
+DEFAULT_DEDUP_TTL = 300.0
+OVERLOAD_DROP_OLDEST = "drop_oldest"
+OVERLOAD_DROP_NEWEST = "drop_newest"
+OVERLOAD_POLICIES = (OVERLOAD_DROP_OLDEST, OVERLOAD_DROP_NEWEST)
 
 # Audio cache anchor (also parent of table_images dir)
 AUDIO_CACHE_DIR = Path(
@@ -261,14 +271,31 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or str(extra.get("group_allow_chats", ""))
         )
 
+        # Bounded ingress and bounded handler concurrency (CODE-08).
+        def _bounded_int(env_name: str, config_name: str, default: int) -> int:
+            try:
+                return max(1, int(os.getenv(env_name) or extra.get(config_name, default)))
+            except (TypeError, ValueError):
+                return default
+
+        self._queue_maxsize = _bounded_int("MAX_QUEUE_MAXSIZE", "queue_maxsize", DEFAULT_QUEUE_MAXSIZE)
+        self._max_concurrency = _bounded_int("MAX_MAX_CONCURRENCY", "max_concurrency", DEFAULT_MAX_CONCURRENCY)
+        self._overload_policy = str(
+            os.getenv("MAX_OVERLOAD_POLICY") or extra.get("overload_policy", OVERLOAD_DROP_OLDEST)
+        ).strip().lower()
+        if self._overload_policy not in OVERLOAD_POLICIES:
+            logger.warning("MAX: unknown overload policy %r; using %s", self._overload_policy, OVERLOAD_DROP_OLDEST)
+            self._overload_policy = OVERLOAD_DROP_OLDEST
+
         # Runtime state
         self._http_client: httpx.AsyncClient | None = None
         self._webhook_runner: Any = None  # aiohttp.web.AppRunner
         self._webhook_site: Any = None
         self._webhook_app: Any = None
-        self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue()
+        self._message_queue: asyncio.Queue[MessageEvent] = asyncio.Queue(maxsize=self._queue_maxsize)
         self._poll_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
+        self._handler_tasks: set[asyncio.Task] = set()
         self._stop: asyncio.Event = asyncio.Event()
 
         # `_running` and the `_mark_connected`/`_mark_disconnected` pair are
@@ -288,9 +315,21 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         # adapter reuse in tests) while the previous session is still up.
         self._connect_lock: asyncio.Lock = asyncio.Lock()
 
-        # Dedup: mid → timestamp (max 5000 entries to prevent memory exhaustion)
+        # Dedup: a TTL window with a hard cap even under a sustained fresh burst.
         self._seen_msgs: dict[str, float] = {}
-        self._SEEN_MSGS_MAX = 5000
+        self._SEEN_MSGS_MAX = _bounded_int("MAX_DEDUP_MAX", "dedup_max", DEFAULT_DEDUP_MAX)
+        try:
+            self._DEDUP_TTL = max(1.0, float(
+                os.getenv("MAX_DEDUP_TTL") or extra.get("dedup_ttl", DEFAULT_DEDUP_TTL)
+            ))
+        except (TypeError, ValueError):
+            self._DEDUP_TTL = DEFAULT_DEDUP_TTL
+        self._stats: dict[str, int] = {
+            "enqueued": 0, "dispatched": 0, "dropped_oldest": 0,
+            "dropped_newest": 0, "duplicate_suppressed": 0,
+            "queue_peak": 0, "handlers_peak": 0,
+        }
+        self._drop_log_interval = 50
         # DM routing: chat_id → user_id
         self._dm_user_ids: dict[str, str] = {}
 
@@ -415,6 +454,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 runner, self._webhook_runner = self._webhook_runner, None
                 self._webhook_app = None
                 self._webhook_site = None
+                self._webhook_ready = False
+                self._webhook_ready_reason = "stopped"
                 try:
                     await runner.cleanup()
                 except Exception as exc:  # noqa: BLE001 — teardown must not raise
@@ -470,16 +511,25 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             if resp.status_code == 401:
                 self._set_fatal_error("invalid_token", "MAX bot token is invalid", retryable=False)
                 return False
-            if resp.status_code == 200:
+            if resp.status_code != 200:
+                detail = f"MAX /me returned HTTP {resp.status_code}{_http_body_snippet(resp)}"
+                self._set_fatal_error("me_failed", detail, retryable=_is_retryable_http_status(resp.status_code))
+                return False
+            try:
                 d = resp.json()
-                logger.info("MAX: connected as @%s (id=%s)", d.get("username", "?"), d.get("user_id"))
-                # Register slash commands via PATCH /me/commands
-                try:
-                    await self._set_bot_commands()
-                except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                    logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
-            else:
-                logger.warning("MAX: /me returned %s", resp.status_code)
+            except ValueError:
+                self._set_fatal_error("me_invalid_response", "MAX /me returned non-JSON", retryable=False)
+                return False
+            if not isinstance(d, dict) or d.get("success") is False:
+                detail = d.get("message") if isinstance(d, dict) else None
+                self._set_fatal_error("me_rejected", f"MAX /me rejected: {detail or 'success=false'}", retryable=False)
+                return False
+            logger.info("MAX: connected as @%s (id=%s)", d.get("username", "?"), d.get("user_id"))
+            # Register slash commands via PATCH /me/commands
+            try:
+                await self._set_bot_commands()
+            except Exception as cmd_err:  # noqa: BLE001 — adapter must not crash on transport/API errors
+                logger.warning("MAX: failed to register commands (non-fatal): %s", cmd_err)
         except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
             self._set_fatal_error("conn_fail", str(e), retryable=True)
             return False
@@ -498,6 +548,68 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             # teardown was interrupted.
             self._mark_disconnected()
         logger.info("MAX: disconnected")
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Backpressure, ingress queue and dedup (CODE-08)
+    # ═════════════════════════════════════════════════════════════════════
+
+    def _note_overload(self, policy: str) -> None:
+        key = "dropped_oldest" if policy == OVERLOAD_DROP_OLDEST else "dropped_newest"
+        self._stats[key] += 1
+        dropped = self._stats["dropped_oldest"] + self._stats["dropped_newest"]
+        if dropped == 1 or dropped % self._drop_log_interval == 0:
+            logger.warning("MAX: ingress queue full (maxsize=%d, policy=%s)", self._queue_maxsize, policy)
+
+    def _enqueue_event(self, event: MessageEvent) -> bool:
+        """Non-blocking enqueue governed by the explicit overload policy."""
+        try:
+            self._message_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            if self._overload_policy == OVERLOAD_DROP_NEWEST:
+                self._note_overload(OVERLOAD_DROP_NEWEST)
+                return False
+            try:
+                self._message_queue.get_nowait()
+                self._message_queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+            self._note_overload(OVERLOAD_DROP_OLDEST)
+            self._message_queue.put_nowait(event)
+        self._stats["enqueued"] += 1
+        self._stats["queue_peak"] = max(self._stats["queue_peak"], self._message_queue.qsize())
+        return True
+
+    def _remember_mid(self, mid: str, now: float) -> None:
+        if len(self._seen_msgs) >= self._SEEN_MSGS_MAX:
+            cutoff = now - self._DEDUP_TTL
+            self._seen_msgs = {key: ts for key, ts in self._seen_msgs.items() if ts >= cutoff}
+            while len(self._seen_msgs) >= self._SEEN_MSGS_MAX:
+                self._seen_msgs.pop(next(iter(self._seen_msgs)))
+        self._seen_msgs[mid] = now
+
+    def _is_duplicate(self, mid: str, now: float) -> bool:
+        seen_at = self._seen_msgs.get(mid)
+        return seen_at is not None and now - seen_at < self._DEDUP_TTL
+
+    def backpressure_stats(self) -> dict[str, Any]:
+        return {
+            **self._stats,
+            "queue_depth": self._message_queue.qsize(),
+            "queue_maxsize": self._queue_maxsize,
+            "active_handlers": len(self._handler_tasks),
+            "max_concurrency": self._max_concurrency,
+            "dedup_entries": len(self._seen_msgs),
+            "dedup_max": self._SEEN_MSGS_MAX,
+            "overload_policy": self._overload_policy,
+        }
+
+    async def _wait_for_handler_slot(self) -> None:
+        while self._running and len(self._handler_tasks) >= self._max_concurrency:
+            done, _ = await asyncio.wait(
+                self._handler_tasks, timeout=1.0, return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                self._handler_tasks.discard(task)
 
     # ═════════════════════════════════════════════════════════════════════
     # Long polling
@@ -583,7 +695,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     for u in data.get("updates", []):
                         event = await self._build_event(u)
                         if event is not None:
-                            await self._message_queue.put(event)
+                            self._enqueue_event(event)
                     marker = data.get("marker", 0)
                     if marker:
                         last_marker = marker
@@ -603,7 +715,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
     # ═════════════════════════════════════════════════════════════════════
 
     async def _queue_poll_loop(self) -> None:
-        """Drain the message queue and dispatch to the gateway runner."""
+        """Drain ingress with bounded concurrent message handlers."""
         while self._running:
             try:
                 event = await asyncio.wait_for(self._message_queue.get(), timeout=1.0)
@@ -613,12 +725,23 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                 break
             if not self._running:
                 break
+            await self._wait_for_handler_slot()
+            if not self._running:
+                break
             try:
+                self._stats["dispatched"] += 1
                 task = asyncio.create_task(self.handle_message(event))
                 self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
+                self._handler_tasks.add(task)
+                self._stats["handlers_peak"] = max(self._stats["handlers_peak"], len(self._handler_tasks))
+
+                def _forget(completed: asyncio.Task) -> None:
+                    self._background_tasks.discard(completed)
+                    self._handler_tasks.discard(completed)
+
+                task.add_done_callback(_forget)
             except Exception:
-                logger.exception("MAX: failed to enqueue event")
+                logger.exception("MAX: failed to dispatch queued event")
 
     # ═════════════════════════════════════════════════════════════════════
     # Update processing
@@ -725,16 +848,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         # Store DM mapping
         self._dm_user_ids[str(chat_id_str or user_id)] = user_id
 
-        # Dedup
+        # Dedup: suppress only messages inside the configurable TTL and keep
+        # the table under its advertised hard cap even during a fresh burst.
         mid = str(body.get("mid") or message.get("mid") or message.get("message_id") or "")
         if mid:
             now = time.time()
-            if mid in self._seen_msgs and now - self._seen_msgs[mid] < 300:
+            if self._is_duplicate(mid, now):
+                self._stats["duplicate_suppressed"] += 1
                 return None
-            self._seen_msgs[mid] = now
-            # Prune old entries + hard limit
-            if len(self._seen_msgs) > self._SEEN_MSGS_MAX or len(self._seen_msgs) > 100:
-                self._seen_msgs = {k: v for k, v in self._seen_msgs.items() if now - v < 300}
+            self._remember_mid(mid, now)
 
         # Access control
         if (not self._allow_all_users and self._allowed_users_set

@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 WEBHOOK_MAX_BODY_BYTES = 1_048_576  # 1 MB
+WEBHOOK_SECRET_HEADER = "X-Max-Bot-Api-Secret"
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "[::1]"})
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    """Return whether *host* is an explicit loopback bind address."""
+    return bool(host and str(host).strip().lower() in LOOPBACK_HOSTS)
 
 
 def _verify_raw_secret(body: bytes, secret: str, secret_header: str | None) -> bool:
@@ -27,9 +34,7 @@ def _verify_raw_secret(body: bytes, secret: str, secret_header: str | None) -> b
     """
     import secrets
     del body  # kept for API compatibility
-    if not secret:
-        return True
-    if not secret_header:
+    if not secret or not secret_header:
         return False
     return secrets.compare_digest(str(secret), str(secret_header))
 
@@ -62,18 +67,19 @@ class WebhookMixin(MaxBaseMixin):
         secret = self._webhook_secret
         path = self._webhook_path
 
-        if not secret:
-            logger.warning(
-                "MAX: webhook started WITHOUT a secret (MAX_WEBHOOK_SECRET empty) — "
-                "anyone can POST events to %s. Set MAX_WEBHOOK_SECRET in production.",
-                self._webhook_url or f"{self._webhook_host}:{self._webhook_port}{path}",
-            )
+        # An Internet-facing webhook must have a shared secret. The sole safe
+        # exception is an explicitly loopback-only listener, useful for local
+        # reverse-proxy integration tests; it cannot receive remote traffic.
+        if not secret and not _is_loopback_host(self._webhook_host):
+            self._webhook_ready_reason = "webhook secret required for non-loopback bind"
+            self._set_fatal_error("webhook_secret_required", self._webhook_ready_reason, retryable=False)
+            return False
 
         app = web.Application()
 
         async def health_handler(req: web.Request) -> web.Response:
-            """Liveness only: the HTTP server is up. Says nothing about MAX."""
-            return web.json_response({"status": "ok"})
+            """Liveness plus bounded-ingress telemetry; not MAX readiness."""
+            return web.json_response({"status": "ok", "backpressure": self.backpressure_stats()})
 
         async def readiness_handler(req: web.Request) -> web.Response:
             """Readiness: MAX actually routes updates to this server.
@@ -110,26 +116,26 @@ class WebhookMixin(MaxBaseMixin):
                 _webhook_hits = {k: v for k, v in _webhook_hits.items()
                                  if any(now - t < _WEBHOOK_WINDOW for t in v)}
 
-            # Verify secret
-            if secret:
+            # Read once with aiohttp's configured body limit, then authenticate
+            # before JSON parsing. A body that arrives in several TCP packets is
+            # handled by aiohttp's complete `read()`, not a one-shot stream read.
+            try:
                 body = await req.read()
-                sig = req.headers.get("X-Max-Bot-Api-Secret", "")
-                if not _verify_raw_secret(body, secret, sig):
-                    logger.warning("MAX: webhook secret verification failed")
-                    return web.Response(status=403)
-                try:
-                    payload = json.loads(body)
-                except json.JSONDecodeError:
-                    return web.Response(status=400, text="invalid json")
-            else:
-                try:
-                    payload = await req.json()
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    return web.Response(status=400, text="invalid json")
+            except ValueError:
+                return web.Response(status=413)
+            if len(body) > WEBHOOK_MAX_BODY_BYTES:
+                return web.Response(status=413)
+            if secret and not _verify_raw_secret(body, secret, req.headers.get(WEBHOOK_SECRET_HEADER)):
+                logger.warning("MAX: webhook secret verification failed")
+                return web.Response(status=403)
+            try:
+                payload = json.loads(body)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return web.Response(status=400, text="invalid json")
 
             event = await self._build_event(payload)
             if event is not None:
-                await self._message_queue.put(event)
+                self._enqueue_event(event)
             return web.Response(text="ok")
 
         app.router.add_get("/health", health_handler)
