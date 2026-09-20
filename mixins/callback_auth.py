@@ -208,6 +208,8 @@ class CallbackAuthMixin(MaxBaseMixin):
         if bound_chat and chat_id and bound_chat != str(chat_id):
             return f"chat {chat_id} does not match bound chat {bound_chat}"
         bound_mid = str(record.get("message_id") or "")
+        # Some transports/tests do not echo the outbound message id. In that
+        # case owner+scope remain enforceable; an echoed id must match.
         if bound_mid and message_id and bound_mid != str(message_id):
             return "stale button (message id mismatch)"
         return ""

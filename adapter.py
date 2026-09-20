@@ -44,6 +44,7 @@ from gateway.platforms.base import (
 
 from .mixins.base import _http_body_snippet, _is_retryable_http_status
 from .mixins.buttons import ButtonsMixin
+from .mixins.callback_auth import CallbackAuthMixin
 from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapter._ALLOWED_UPLOAD_HOSTS)
     _ALLOWED_UPLOAD_HOSTS,
     MediaUploadMixin,
@@ -65,6 +66,7 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api.max.ru"
 MAX_MESSAGE_LENGTH = 4000
+MODEL_PICKER_TTL_SECONDS = 900.0
 POLL_TIMEOUT = 5  # seconds
 POLL_ERROR_DELAY = 5.0
 UPLOAD_DELAY = 2.0
@@ -176,7 +178,7 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 
 # ── MaxAdapter ───────────────────────────────────────────────────────────
 
-class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
+class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAuthMixin, WebhookMixin, SessionsMixin, BasePlatformAdapter):
     """MAX messenger platform adapter (voice transcription via Hermes core STT)."""
 
     def __init__(self, config: PlatformConfig):
@@ -213,13 +215,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         self._table_image_dir: Path = AUDIO_CACHE_DIR.parent / "table_images"
         if self._table_as_image:
             self._table_image_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-
-        # Cross-platform session commands (/sessions, /resume across all platforms)
-        self._cross_session: bool = _coerce_bool(
-            os.getenv("MAX_CROSS_SESSION")
-            or extra.get("cross_session", True),  # enabled by default
-            True,
-        )
 
         # Webhook settings
         self._webhook_host: str = (
@@ -259,6 +254,18 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or extra.get("allow_all_users", False),
             False,
         )
+
+        # Cross-platform session commands expose sessions from other
+        # platforms, so they are an explicit opt-in and owner-only (SEC-05).
+        self._cross_session = _coerce_bool(
+            os.getenv("MAX_CROSS_SESSION") or extra.get("cross_session", False), False
+        )
+        raw_cross_users = os.getenv("MAX_CROSS_SESSION_USERS") or extra.get("cross_session_users", "")
+        if isinstance(raw_cross_users, (list, tuple, set)):
+            raw_cross_users = ",".join(str(value) for value in raw_cross_users)
+        self._cross_session_users = set(_parse_list(str(raw_cross_users or "")))
+        if not self._cross_session_users and not self._allow_all_users:
+            self._cross_session_users = set(self._allowed_users_set)
 
         # Group access control
         self._group_policy: str = extra.get("group_policy", "allowlist")
@@ -333,11 +340,31 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         # DM routing: chat_id → user_id
         self._dm_user_ids: dict[str, str] = {}
 
-        # Interactive button state tracking
-        self._exec_approval_state: dict[str, str] = {}   # approval_id → session_key
-        self._slash_confirm_state: dict[str, str] = {}   # confirm_id → session_key
-        self._clarify_state: dict[str, str] = {}          # clarify_id → session_key
+        # Callback state is bound to owner/chat/message and expires (SEC-01).
+        self._init_callback_auth()
         self._model_picker_state: dict[str, dict] = {}    # chat_id → picker state
+
+    def _cross_session_allowed(self, user_id: str | None) -> bool:
+        """Authorize the cross-platform session view, fail closed."""
+        if not self._cross_session or not str(user_id or ""):
+            return False
+        return str(user_id) in self._cross_session_users
+
+    @staticmethod
+    def _callback_message_id(payload: dict[str, Any]) -> str:
+        message = payload.get("message") or {}
+        body = message.get("body") or {}
+        callback = payload.get("callback") or payload.get("message_callback") or {}
+        return str(body.get("mid") or message.get("mid") or callback.get("mid") or callback.get("message_id") or "")
+
+    @staticmethod
+    def _model_picker_owner(scoped_chat: str, metadata: dict | None) -> str:
+        meta = metadata or {}
+        explicit = meta.get("owner_user_id") or meta.get("user_id")
+        if explicit is not None and str(explicit):
+            return str(explicit)
+        scope, _, value = str(scoped_chat or "").partition(":")
+        return value if scope == "user" else ""
 
     # ═════════════════════════════════════════════════════════════════════
     # Bot commands (PATCH /me/commands)
@@ -838,7 +865,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or ""
         )
 
-        if chat_id_str:
+        # MAX dialogs carry a service chat_id too. `chat_type=dialog` is the
+        # authoritative discriminator; only non-dialog recipients are groups.
+        is_dialog = str(recipient.get("chat_type") or "").lower() == "dialog"
+        if chat_id_str and not is_dialog:
             chat_type = "group"
             scoped_chat_id = f"chat:{chat_id_str}"
         else:
@@ -932,22 +962,22 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
                     text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else "[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
-        if text and self._cross_session:
+        if text and self._cross_session and self._cross_session_allowed(user_id):
             if text.startswith('/sessions'):
                 args = text[len('/sessions'):].strip()
-                if args and not args.lower().startswith('search '):
+                if args and args.lower() != 'search' and not args.lower().startswith('search '):
                     # Has a target ID → let core handle with --all override
                     text = f"/resume --all {args}"
                 else:
                     # Plain /sessions or /sessions search → our handler (all platforms)
-                    await self._handle_cross_sessions(text, scoped_chat_id)
+                    await self._handle_cross_sessions(text, scoped_chat_id, user_id)
                     return None
             elif text.startswith('/resume'):
                 if '--all' not in text and '--cross-room' not in text:
                     parts = text.split(maxsplit=1)
                     if len(parts) == 1:
                         # /resume with no args → our handler (all platforms)
-                        await self._handle_cross_sessions('/sessions', scoped_chat_id)
+                        await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
                         return None
                     else:
                         # /resume <target> → rewrite with --all for core
@@ -964,6 +994,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             chat_type=chat_type,
             user_id=user_id,
             user_name=user_name,
+        )
+        try:
+            session_key = self._source_session_key(source)
+        except Exception as exc:  # owner binding must fail closed, not crash ingress
+            logger.debug("MAX: cannot derive interaction owner: %s", exc)
+            session_key = ""
+        self._remember_interaction_owner(
+            session_key=session_key, chat_id=scoped_chat_id, user_id=user_id,
         )
 
         return MessageEvent(
@@ -1773,32 +1811,32 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
             or ""
         )
         chat_id = str(raw_chat_id)
+        is_dialog = str(recipient.get("chat_type") or "").lower() == "dialog"
+        scoped_chat_id = f"user:{user_id}" if is_dialog or not chat_id else f"chat:{chat_id}"
+        message_id = str((msg.get("body") or {}).get("mid") or msg.get("mid") or "")
 
         logger.info("MAX: callback received: data=%s from user=%s chat_id=%s",
-                     data, user_id, chat_id)
+                     data, user_id, scoped_chat_id)
 
         # Dispatch based on prefix
         parts = data.split(":", 2)
         prefix = parts[0] if parts else ""
 
         if prefix == "exec":
-            # Dangerous command approval buttons
-            return await self._handle_exec_callback(data, user_id, payload)
+            return await self._handle_exec_callback(data, user_id, payload, scoped_chat_id, message_id)
         elif prefix == "sc":
-            # Slash-command confirmation buttons
-            return await self._handle_slash_confirm_callback(data, user_id, payload)
+            return await self._handle_slash_confirm_callback(data, user_id, payload, scoped_chat_id, message_id)
         elif prefix == "clarify":
-            # Clarify choice buttons
-            return await self._handle_clarify_callback(data, user_id, payload)
+            return await self._handle_clarify_callback(data, user_id, payload, scoped_chat_id, message_id)
         elif prefix == "model":
-            # Model picker buttons
-            return await self._handle_model_callback(data, user_id, payload, chat_id)
+            return await self._handle_model_callback(data, user_id, payload, scoped_chat_id, message_id)
         else:
             logger.warning("MAX: unknown callback prefix: %s", prefix)
             return None
 
     async def _handle_exec_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any],
+        chat_id: str = "", message_id: str = "",
     ) -> MessageEvent | None:
         """Route exec approval button to resolve_gateway_approval."""
         # Format: exec:{choice}:{approval_id}
@@ -1808,10 +1846,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         choice = parts[1]   # once / session / always / deny
         approval_id = parts[2]
 
-        session_key = self._exec_approval_state.pop(approval_id, None)
+        record, reason = self._consume_interaction(
+            "exec", approval_id, user_id=user_id, chat_id=chat_id, message_id=message_id,
+        )
+        if record is None:
+            if reason == "unknown":
+                await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
+            return None
+        session_key = str(record.get("session_key") or "")
         if not session_key:
-            logger.warning("MAX: unknown approval_id in callback: %s", approval_id)
-            await self.send(f"user:{user_id}", "❌ This approval has already been resolved.")
             return None
 
         from tools.approval import has_blocking_approval, resolve_gateway_approval
@@ -1842,7 +1885,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_slash_confirm_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any],
+        chat_id: str = "", message_id: str = "",
     ) -> MessageEvent | None:
         """Route slash-confirm button to tools.slash_confirm.resolve."""
         # Format: sc:{choice}:{confirm_id}
@@ -1852,9 +1896,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         choice = parts[1]     # once / always / cancel
         confirm_id = parts[2]
 
-        session_key = self._slash_confirm_state.pop(confirm_id, None)
+        record, _reason = self._consume_interaction(
+            "sc", confirm_id, user_id=user_id, chat_id=chat_id, message_id=message_id,
+        )
+        if record is None:
+            return None
+        session_key = str(record.get("session_key") or "")
         if not session_key:
-            logger.warning("MAX: unknown confirm_id in callback: %s", confirm_id)
             return None
 
         from tools import slash_confirm as _sc
@@ -1868,7 +1916,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_clarify_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any]
+        self, data: str, user_id: str, raw_payload: dict[str, Any],
+        chat_id: str = "", message_id: str = "",
     ) -> MessageEvent | None:
         """Route clarify button to tools.clarify_gateway.resolve_gateway_clarify."""
         # Format: clarify:{clarify_id}:{choice_index}
@@ -1878,9 +1927,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         clarify_id = parts[1]
         choice_idx = parts[2]
 
-        session_key = self._clarify_state.pop(clarify_id, None)
-        if not session_key:
-            logger.warning("MAX: unknown clarify_id in callback: %s", clarify_id)
+        record, _reason = self._consume_interaction(
+            "clarify", clarify_id, user_id=user_id, chat_id=chat_id, message_id=message_id,
+        )
+        if record is None:
             return None
 
         try:
@@ -1929,23 +1979,44 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         return None
 
     async def _handle_model_callback(
-        self, data: str, user_id: str, raw_payload: dict[str, Any], chat_id: str,
+        self,
+        data: str,
+        user_id: str,
+        raw_payload: dict[str, Any],
+        scoped_chat: str,
+        message_id: str = "",
     ) -> MessageEvent | None:
-        """Route model picker button callbacks.
+        """Route a model-picker callback within its already-derived scope.
 
-        Formats:
-          model:provider:{slug}  — provider selected, show models
-          model:pick:{model}:{provider} — model selected, switch
-          model:page:{provider}:{page} — page navigation
-          model:back — back to provider list
+        ``scoped_chat`` is calculated by ``_on_callback`` from the recipient's
+        explicit ``chat_type``. Do not infer DM/group from the presence of a
+        service ``chat_id``: MAX dialogs also carry one.
         """
-        # Build the correct scoped_chat matching how send_model_picker stores state.
-        # If chat_id (raw numeric) is present, the message was in a group → "chat:{id}".
-        # Otherwise it's a DM → "user:{user_id}".
-        if chat_id:
-            scoped_chat = f"chat:{chat_id}"
-        else:
-            scoped_chat = f"user:{user_id}"
+        if not scoped_chat:
+            return None
+
+        state = self._model_picker_state.get(scoped_chat)
+        if not state:
+            return None
+        now = time.monotonic()
+        expires_at = state.get("expires_at")
+        if expires_at is not None and now >= float(expires_at):
+            self._model_picker_state.pop(scoped_chat, None)
+            return None
+        updated = float(state.get("updated_at", state.get("created_at", now)))
+        if now - updated > MODEL_PICKER_TTL_SECONDS:
+            self._model_picker_state.pop(scoped_chat, None)
+            return None
+        owner = str(state.get("owner_user_id") or "")
+        if owner and owner != str(user_id):
+            return None
+        expected_message = str(state.get("model_msg_id") or state.get("provider_msg_id") or "")
+        if message_id and expected_message and message_id != expected_message:
+            return None
+        if not owner:
+            owner = str(user_id)
+            state["owner_user_id"] = owner
+        state["updated_at"] = now
 
         parts = data.split(":", 3)
 
@@ -2045,13 +2116,18 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, WebhookMixi
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
-            self._model_picker_state[str(chat_id)] = {
+            picker_scope = str(chat_id)
+            self._model_picker_state[picker_scope] = {
                 "provider_msg_id": result.message_id,  # ID сообщения с провайдерами (текст+кнопки)
                 "providers": providers,
                 "session_key": session_key,
                 "on_model_selected": on_model_selected,
                 "current_model": current_model,
                 "current_provider": current_provider,
+                "owner_user_id": self._model_picker_owner(picker_scope, metadata),
+                "created_at": (created_at := time.monotonic()),
+                "updated_at": created_at,
+                "expires_at": created_at + MODEL_PICKER_TTL_SECONDS,
             }
         return result
 
