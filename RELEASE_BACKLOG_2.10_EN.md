@@ -1,87 +1,71 @@
 # Hermes MAX Integration 2.10 — Release Backlog (Pending Tasks)
 
-[Русский](RELEASE_BACKLOG_2.10.md)
+[Russian](RELEASE_BACKLOG_2.10.md)
 
 ## Current Status
 
 - **Branch:** `RC-2.10`
-- **Progress:** ~85–90% complete (650+ tests passing out of ~700).
-- **Completed and stabilized in codebase:**
-  - R1: Polling backoff with `Retry-After`, lossless chunking, streaming isolation per `(chat_id, message_id)` with flush timer, lifecycle connect/disconnect.
-  - R3: Callback auth with chat/message/TTL binding, cross-session owner-only access, group allowlists (users & chats), backpressure queue & telemetry.
-  - R4: Fail-closed webhook with extracted `_build_webhook_app`, secret check prior to JSON parsing, body size cap.
-  - R2: Inbound media limits, download concurrency semaphore, streaming timeouts, partial file cleanup (`contextlib`).
+- **Backlog Progress:** ~96% completed (693+ tests passing out of ~718).
+- **Completed and Stabilized in Codebase:**
+  - **R1:** Polling backoff with `Retry-After`, lossless message chunking, streaming isolation per `(chat_id, message_id)` with flush timer, leak-free connect/disconnect lifecycle.
+  - **R3:** Callback auth bound to chat/message/TTL, cross-session owner-only access, group allowlists (users & chats), backpressure queue & telemetry.
+  - **R4:** Fail-closed webhook with extracted `_build_webhook_app`, secret validation before JSON parsing, payload limit, strict `/health` contract (`{"status": "ok"}`), telemetry extracted to `/metrics`.
+  - **R5:** 100% RU/EN documentation parity, all link/claim/API example tests passing, `scripts/check-ru-en-parity.py` clean.
 
 ---
 
-## Open Tasks for Next Iteration (RC-2.10-it2)
+## Unresolved Issues (Active Backlog)
 
-### 1. R2 · SEC-02 & SEC-03 (Media Download & Token Separation)
+### 1. R2 · SEC-02 & SEC-03: Media Download & SSRF Protection Alignment
 
 **Priority:** P1  
-**Target files:** `adapter.py`, `tests/test_ssrf_download.py`, `tests/test_download_token_leak.py`
+**Affected files:** `adapter.py`
 
-**Issue:**
-1. `_download_url_allowed` rejects non-whitelisted origins (`attacker.example.com`, `partner.example`), causing tests in `test_download_token_leak.py` to fail with `download was not attempted`.
-2. In `test_ssrf_download.py::test_private_dns_answer_is_never_fetched`, fallback download occurs when `prepared` is None instead of immediate abort.
+**Problem Description:**
+In `adapter.py`, `_download_inbound_media` and `_prepare_download` currently gate downloads on `self._download_url_allowed(url)`, which by default restricts hosts to `DOWNLOAD_ALLOWED_HOST_SUFFIXES` (`.max.ru`, `.oneme.ru`).
+Consequently, `tests/test_download_token_leak.py` (which tests that fetching attachments from third-party public HTTPS hosts like `https://attacker.example.com/attachment.bin` does NOT leak the `Authorization` header) fails because requests are never attempted (`AssertionError: download was not attempted`).
+Furthermore, in `test_ssrf_download.py`, when a host resolves to a private IP (`test_private_dns_answer_is_never_fetched`), the download must fail-closed immediately without fallback.
 
-**Solution:**
-- Separate concerns:
-  - `_is_trusted_download_origin(url)`: decides whether to attach the bot token / authorization header.
-  - `_validate_download_url(url)` / SSRF filter: validates HTTPS scheme and public IP addresses (blocks loopback, private, link-local, cloud metadata).
-- Allow downloading from public untrusted origins without attaching credentials.
-- Abort immediately on private DNS resolution without fallback.
+**Required Solution:**
+1. Allow downloading public HTTPS URLs when `MAX_DOWNLOAD_ALLOWED_HOSTS` is not explicitly configured.
+2. Ensure `_is_trusted_download_origin(url)` is the single authority deciding whether to attach `Authorization: <token>`.
+3. If `_prepare_download` returns `None` (e.g. private/loopback IP), abort download without fallback requests.
 
-**Acceptance:**
-- All tests in `tests/test_download_token_leak.py` and `tests/test_ssrf_download.py` pass.
-
----
-
-### 2. R4 · CODE-05 (Webhook Health Endpoint Contract) [COMPLETED]
-
-**Priority:** P1  
-**Target files:** `mixins/webhook.py`, `tests/test_wire_regressions.py`, `tests/test_backpressure.py`, `tests/test_webhook_health_contract.py`
-
-**Issue:**
-- `tests/test_wire_regressions.py:1022` expects strict `health.json() == {"status": "ok"}`. Previously `/health` returned extended telemetry and backpressure details.
-
-**Solution:**
-- Matched base contract: `/health` strictly returns `{"status": "ok"}` (liveness).
-- Extended backpressure telemetry moved to dedicated `GET /metrics` endpoint, and remains accessible via `GET /ready` and query parameters `?backpressure=1` / `?metrics=1`.
-- Added isolated test suite `tests/test_webhook_health_contract.py`.
-
-**Acceptance:**
-- All tests in `tests/test_webhook_health_contract.py`, `tests/test_wire_regressions.py`, `tests/test_webhook_readiness.py`, and `tests/test_webhook_security.py` pass.
+**Acceptance Criteria:**
+```powershell
+pytest -q tests/test_ssrf_download.py tests/test_download_token_leak.py tests/test_inbound_media_limits.py
+```
+100% PASS (all 169 tests).
 
 ---
 
-### 3. R5 · DOC-01..10 (Documentation Parity & Validation Scripts)
+### 2. REG · Legacy Wire Regressions Compatibility in `tests/test_wire_regressions.py`
 
-**Priority:** P1  
-**Target files:** `README.md`, `README_EN.md`, `docs/api.md`, `docs/api_EN.md`
+**Priority:** P2  
+**Affected files:** `tests/test_wire_regressions.py`, `tests/conftest.py`, `mixins/callback_auth.py`
 
-**Issue:**
-- Documentation tests fail due to discrepancies after mixins refactoring and terminology changes.
+**Problem Description:**
+In `test_wire_regressions.py` (14 failed out of 56), older tests diverge from release 2.10 contracts:
+1. `TestInboundRouting::test_group_update_routes_to_group` fails because `make_adapter` does not specify `group_policy="open"`, and the new default `allowlist` policy rejects groups when user/chat allowlists are empty.
+2. Command approval tests assign a raw string `session_key` (`a._exec_approval_state["grp123"] = "sess-1"`), whereas `CallbackAuthMixin` expects a structured interaction dictionary.
+3. In `test_http_error_does_not_kill_the_loop`, the backoff sleep for HTTP 500 is ~5s, triggering the 2s `asyncio.wait_for` timeout.
 
-**Solution:**
-- `test_docs_links.py`: add `mixins/` directory to repository layout in `README.md` and `README_EN.md`.
-- `test_doc_external_claims.py`: update claims about external platforms.
-- `test_docs_api_examples.py` & `test_ru_en_parity.py`: synchronize payload examples and parameter tables between RU and EN versions.
+**Required Solution:**
+1. Support backwards compatibility in `CallbackAuthMixin._consume_interaction` for string values, or adjust test state setup.
+2. Set `group_policy="open"` in `make_adapter` or in group routing test cases.
+3. Patch/mock `_poll_sleep` in polling retry tests.
 
-**Acceptance:**
-- `pytest -q tests/test_docs_links.py tests/test_doc_external_claims.py tests/test_docs_api_examples.py tests/test_ru_en_parity.py` passes.
+**Acceptance Criteria:**
+```powershell
+pytest -q tests/test_wire_regressions.py
+```
+100% PASS (52 passed, 4 xfailed).
 
 ---
 
-## Verification Commands for Pending Tasks
+## Full Verification Command
 
 ```powershell
-# R2: Download & SSRF
-pytest -q tests/test_ssrf_download.py tests/test_download_token_leak.py tests/test_inbound_media_limits.py
-
-# R4: Webhook health
-pytest -q tests/test_webhook_security.py tests/test_webhook_readiness.py tests/test_wire_regressions.py
-
-# R5: Docs
-pytest -q tests/test_docs_links.py tests/test_doc_external_claims.py tests/test_docs_api_examples.py tests/test_ru_en_parity.py
+pytest -q
 ```
+Expected result: 100% PASS across all ~718 tests.
