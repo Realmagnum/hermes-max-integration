@@ -46,8 +46,14 @@ _BODY = {
 
 @pytest.fixture(autouse=True)
 def _clean_trust_env(monkeypatch):
-    """The env var wins over extra config — keep the host env out of the way."""
+    """Keep origin policy deterministic; network is always mocked."""
     monkeypatch.delenv("MAX_TRUSTED_DOWNLOAD_HOSTS", raising=False)
+    monkeypatch.delenv("MAX_DOWNLOAD_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setattr(
+        adapter.MaxAdapter,
+        "_resolve_public_addresses",
+        staticmethod(lambda _host, _port: ["93.184.216.34"]),
+    )
 
 
 def make_adapter(**extra) -> adapter.MaxAdapter:
@@ -73,7 +79,9 @@ def attach_transport(a, requests, body, content_type, redirect_from=None):
     """
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        if redirect_from is not None and str(request.url) == redirect_from:
+        # The production code pins the connection to a validated IP, so the
+        # request URL no longer contains the original hostname.
+        if redirect_from is not None:
             return httpx.Response(
                 302, headers={"location": "https://attacker.example.com/steal"}
             )
