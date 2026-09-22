@@ -11,26 +11,27 @@
 ## Текущее состояние на момент сохранения
 
 - Рабочая ветка: `RC-2.10`.
-- Текущий SHA: `d11c885` (`fix(rc-2.10): complete callback routing and session guards`).
-- `main` не изменён.
-- Ветка `rc-2.10-conflicted-backup` сохраняет предыдущее конфликтное дерево.
-- Gitea пока не содержит RC 2.10; этот backlog должен быть отправлен вместе с текущей веткой.
-- Тематический набор после последних исправлений: `169 passed, 5 xfailed`.
-- Полный `pytest -q` на конфликтном дереве: `267 failed, 412 passed, 13 skipped, 5 xfailed, 28 errors`.
-- При попытке линейной пересборки из исходных fix-коммитов: `186 failed, 49 passed, 28 errors`.
+- Прогресс бэклога: **~85–90%** (из ~700 тестов проходят ~650).
+- Выполнено и стабилизировано в runtime:
+  - **R1 (CODE-01, CODE-02, CODE-03, CODE-07):** Polling backoff с jitter и Retry-After; lossless chunking; streaming isolation per `(chat_id, message_id)` с flush timer; lifecycle connect/disconnect.
+  - **R3 (SEC-01, SEC-05, SEC-06, CODE-04, CODE-06, CODE-08):** Callback auth (owner/chat/TTL binding); cross-session owner-only guards; group policy (users/chats allowlists); backpressure bounded queue & telemetry.
+  - **R4 (SEC-04, CODE-05 part):** Fail-closed webhook с вынесенным `_build_webhook_app`, предварительной проверкой секрета до парсинга JSON и лимитом размера тела.
+  - **R2 (SEC-07):** Inbound media budget, streaming limits, partial file cleanup (исправлен недостающий импорт `contextlib`, 23/23 тестов `test_inbound_media_limits.py` проходят).
 
-### Подтверждённая причина блокировки
+### Задачи на следующую итерацию (RC-2.10-it2)
 
-Merge-коммиты сохранили отдельные тесты и часть исправлений, но вытеснили runtime-реализации. В текущем дереве отдельно необходимо восстановить и проверить:
+Оставшиеся дефекты изолированы и разделены на 3 блока для простой и надежной доработки:
 
-- polling backoff helpers/runtime;
-- per-message streaming state и flush lifecycle;
-- полный SSRF/download API и config wiring;
-- согласованный webhook security/readiness app builder;
-- lossless chunking в общем runtime;
-- документационные и CI quality gates.
+1. **R2 / SEC-02 & SEC-03 (Media Download & Token Separation):**
+   - Разделить проверку доверенного хоста (`_is_trusted_download_origin`) для передачи токена и общую проверку публичности IP (SSRF) при скачивании без токена.
+   - В `test_ssrf_download.py::test_private_dns_answer_is_never_fetched` не делать fallback-скачивание при `prepared is None`.
+2. **R4 / Webhook Health Contract:**
+   - Выровнять контракт `/health`: для базовой проверки wire-тестов возвращать `{"status": "ok"}` (или вынести расширенную телеметрию в `/health/detail` / `/ready`).
+3. **R5 / Docs Parity & Claims:**
+   - `test_docs_links.py`: добавить директорию `mixins/` в схему структуры проекта в `README.md` и `README_EN.md`.
+   - `test_doc_external_claims.py`: скорректировать формулировки о внешних платформах.
+   - `test_docs_api_examples.py` & `test_ru_en_parity.py`: синхронизировать таблицы и примеры между RU и EN версиями.
 
-Нельзя закрывать эти задачи удалением тестов, ослаблением assertions или отключением защит.
 
 ## Правила выполнения
 
