@@ -92,7 +92,7 @@ class TestInboundRouting:
         assert event.source.chat_id == f"user:{DIALOG_USER_ID}"
 
     async def test_group_update_routes_to_group(self, make_adapter):
-        a = make_adapter()
+        a = make_adapter(extra={"group_policy": "open"})
         event = await a._build_event(group_message_created())
 
         assert event is not None
@@ -200,7 +200,9 @@ class TestCallbackRouting:
         )[0].split(":")[2]
         max_api.requests.clear()
 
-        await a._on_callback(message_callback(f"exec:once:{approval_id}"))
+        await a._on_callback(
+            message_callback(f"exec:once:{approval_id}", mid="mid.bot.1")
+        )
 
         ack = max_api.calls("POST", "/messages")[-1]
         assert max_api.params(ack) == {"user_id": str(DIALOG_USER_ID)}
@@ -219,9 +221,19 @@ class TestCallbackRouting:
         )
 
         a = make_adapter()
-        a._exec_approval_state["grp123"] = "sess-1"
+        a._remember_interaction_owner("sess-1", str(DIALOG_USER_ID))
+        result = await a.send_exec_approval(
+            f"chat:{GROUP_CHAT_ID}", command="rm -rf /", session_key="sess-1"
+        )
+        assert result.success is True
+        approval_id = _flat_button_payloads(
+            max_api.json_body(max_api.calls("POST", "/messages")[0])
+        )[0].split(":")[2]
+        max_api.requests.clear()
 
-        await a._on_callback(_group_callback("exec:once:grp123"))
+        await a._on_callback(
+            _group_callback(f"exec:once:{approval_id}", mid="mid.bot.1")
+        )
 
         ack = max_api.calls("POST", "/messages")[-1]
         assert max_api.params(ack) == {"chat_id": str(GROUP_CHAT_ID)}
@@ -544,7 +556,11 @@ class TestExecApproval:
         approval_id = payloads[0].split(":")[2]
         assert {p.split(":")[1] for p in payloads} == {"once", "session", "always", "deny"}
         assert all(p.split(":")[2] == approval_id for p in payloads)
-        assert a._exec_approval_state[approval_id] == "sess-1"
+        record = a._exec_approval_state[approval_id]
+        assert record["session_key"] == "sess-1"
+        assert record["owner_user_id"] == str(DIALOG_USER_ID)
+        assert record["chat_id"] == f"user:{DIALOG_USER_ID}"
+        assert record["message_id"] == "mid.bot.1"
 
     async def test_owner_press_resolves_and_acks_on_the_wire(
         self, make_adapter, max_api, monkeypatch
@@ -569,7 +585,9 @@ class TestExecApproval:
         max_api.requests.clear()
 
         event = await a._on_callback(
-            message_callback(f"exec:once:{approval_id}", user_id=DIALOG_USER_ID)
+            message_callback(
+                f"exec:once:{approval_id}", user_id=DIALOG_USER_ID, mid="mid.bot.1"
+            )
         )
 
         assert event is None  # ack must not be injected into the AI context
@@ -611,7 +629,11 @@ class TestExecApproval:
         monkeypatch.setattr(approval_mod, "has_blocking_approval", lambda key: False)
 
         a = make_adapter()
-        a._exec_approval_state["abc123"] = "sess-1"
+        a._register_interaction(
+            "exec", "abc123", session_key="sess-1",
+            owner_user_id=str(DIALOG_USER_ID),
+            chat_id=f"user:{DIALOG_USER_ID}", message_id="mid.dm.1",
+        )
 
         await a._on_callback(
             message_callback("exec:once:abc123", user_id=DIALOG_USER_ID)
@@ -621,15 +643,6 @@ class TestExecApproval:
             max_api.calls("POST", "/messages")[0]
         )["text"]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "SEC-01: `_exec_approval_state` stores only the session_key, so any "
-            "user who can press the button (e.g. another member of the same "
-            "group chat) resolves the owner's approval. Fix in the SEC-01 task, "
-            "then drop this marker."
-        ),
-    )
     async def test_foreign_user_cannot_resolve_someone_elses_approval(
         self, make_adapter, max_api, monkeypatch
     ):
@@ -652,10 +665,12 @@ class TestExecApproval:
         )[0].split(":")[2]
         max_api.requests.clear()
 
-        await a._on_callback(message_callback(f"exec:once:{approval_id}", user_id=99999))
+        await a._on_callback(
+            message_callback(f"exec:once:{approval_id}", user_id=99999, mid="mid.bot.1")
+        )
 
         assert resolved == []
-        assert a._exec_approval_state.get(approval_id) == "sess-1"
+        assert a._exec_approval_state[approval_id]["session_key"] == "sess-1"
         assert max_api.calls("POST", "/messages") == []
 
 
@@ -945,7 +960,13 @@ class TestPolling:
         assert len(max_api.calls("GET", "/updates")) >= 2
         assert max_api.params(max_api.calls("GET", "/updates")[1])["marker"] == "777"
 
-    async def test_http_error_does_not_kill_the_loop(self, make_adapter, max_api):
+    async def test_http_error_does_not_kill_the_loop(self, make_adapter, max_api, monkeypatch):
+        import adapter
+
+        async def no_sleep(_delay):
+            return None
+
+        monkeypatch.setattr(adapter, "_poll_sleep", no_sleep)
         calls = {"n": 0}
 
         def flaky(request):
@@ -1066,14 +1087,6 @@ class TestWebhook:
         finally:
             await a.disconnect()
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "SEC-04: without MAX_WEBHOOK_SECRET the server only logs a warning "
-            "and accepts any POST, trusting the sender from the JSON body. Fix "
-            "in the SEC-04 task, then drop this marker."
-        ),
-    )
     async def test_missing_secret_fails_closed(self, webhook_adapter):
         a, port = webhook_adapter(secret=None)
         assert await a._start_webhook() is True
