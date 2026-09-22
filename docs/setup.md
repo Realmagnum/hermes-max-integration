@@ -9,15 +9,12 @@
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост webhook |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт webhook |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь webhook |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret`; **обязателен в webhook-режиме** |
-| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета — только при loopback `MAX_WEBHOOK_HOST` (dev) |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
 | `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS URL (включает webhook-режим) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей (через запятую) |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
-| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Политика для групп: `open` \| `closed` \| `allowlist` |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Дополнительные origins для скачивания медиа (через запятую); по умолчанию только `*.max.ru` / `*.oneme.ru` |
 | `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
 | `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
@@ -25,8 +22,7 @@
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume (owner-only, см. features.md) |
-| `MAX_CROSS_SESSION_USERS` | ❌ | — | MAX user ID (через запятую), которым разрешены кросс-платформенные команды; по умолчанию — `MAX_ALLOWED_USERS` |
+| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume |
 
 ## Режимы подключения
 
@@ -56,11 +52,10 @@ Long polling идеален для:
 ```bash
 MAX_BOT_TOKEN=ваш_токен
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret   # обязателен: без него webhook не запустится
+MAX_WEBHOOK_SECRET=your-secret
 ```
 
-Webhook требуется для production. Нужен публичный HTTPS URL **и** секрет: без
-`MAX_WEBHOOK_SECRET` gateway отказывается поднимать endpoint (fail-closed).
+Webhook требуется для production. Нужен публичный HTTPS URL.
 
 > **Официально (dev.max.ru/docs-api, сверено 2026-09-16):** MAX принимает события только через Webhook; Long Polling ограничен по скорости и сроку хранения событий и «не подходит для production-окружения». С 25 мая 2026 не поддерживаются HTTP-webhook и самоподписанные сертификаты, endpoint обязан слушать **порт 443** (порт в URL не указывается) и отдавать HTTP 200 за 30 секунд. Плагин по умолчанию биндится на `8646` — наружу его публикует reverse proxy на 443 (см. примеры ниже).
 
@@ -111,15 +106,6 @@ curl -H "Authorization: ваш_токен" \
   https://platform-api.max.ru/subscriptions
 ```
 
-**Если регистрация не удалась** (HTTP 4xx/5xx, таймаут или `{"success": false}`),
-адаптер не переходит в состояние «connected»: порт освобождается, а в лог
-пишется причина. Пока подписка не зарегистрирована, `GET /ready` отдаёт
-`503 not_ready` — при этом `GET /health` остаётся `200`: liveness отвечает за
-живость HTTP-сервера, readiness — за то, что MAX действительно доставляет
-сюда апдейты. Коды 429/5xx/timeout считаются временными (gateway повторит
-подключение), остальные 4xx и `success: false` — постоянными (нужна правка
-конфигурации или прав у бота).
-
 ## Переключение режимов
 
 ### Long polling → Webhook
@@ -127,14 +113,13 @@ curl -H "Authorization: ваш_токен" \
 ```bash
 # 1. Добавить в ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret   # обязателен
+MAX_WEBHOOK_SECRET=your-secret
 
 # 2. Перезапустить
 sudo systemctl restart hermes-gateway
 ```
 
 При старте: `_start_webhook()` → открывает `0.0.0.0:8646` → регистрирует подписку в MAX API.
-Без секрета старт не произойдёт — gateway пишет ошибку `webhook_secret_required` и остаётся отключённым.
 
 ### Webhook → Long polling
 
@@ -164,11 +149,6 @@ curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
 
 Секрет отправляется MAX как сырое значение заголовка `X-Max-Bot-Api-Secret`, а не как HMAC-подпись. Плагин использует `secrets.compare_digest()` для timing-safe сравнения.
 
-Секрет обязателен в webhook-режиме: без `MAX_WEBHOOK_SECRET` сервер не стартует
-(fail-closed), а заголовок проверяется **до** чтения и разбора тела запроса.
-Единственное исключение — явный dev-opt-in `MAX_WEBHOOK_INSECURE_DEV=true`, который
-работает только при `MAX_WEBHOOK_HOST=127.0.0.1`/`::1`/`localhost`.
-
 ### Access Control
 
 **Белый список пользователей:**
@@ -186,18 +166,13 @@ MAX_ALLOW_ALL_USERS=true
 **Групповые политики:**
 
 ```bash
-# Закрытые группы — бот в группах молчит (DM продолжают работать)
+# Закрытая группа — только разрешённые пользователи
 MAX_GROUP_POLICY=closed
 
-# Белый список: каждое заданное измерение должно совпасть
+# Белый список для группы
 MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
-
-# Любые группы (осознанный opt-in)
-MAX_GROUP_POLICY=open
 ```
-
-Политика `allowlist` (по умолчанию) объединяет два списка через **AND**: сообщение проходит, только если пользователь есть в `MAX_GROUP_ALLOWED_USERS` (когда список задан) и группа есть в `MAX_GROUP_ALLOWED_CHATS` (когда список задан). Пустые списки не открывают доступ: если оба пусты, групповые сообщения отклоняются. Подробнее — в README, раздел «Групповые политики».
 
 ## Deployment
 
@@ -212,15 +187,9 @@ sudo systemctl status hermes-gateway
 ### Проверка
 
 ```bash
-# Health check (liveness)
+# Health check
 curl http://localhost:8646/health
-
-# Readiness check — MAX actually delivers updates to this webhook
-# 200 {"status":"ready"} = registered; 503 not_ready = subscription missing
-curl -i http://localhost:8646/ready
 
 # Статус плагина
 hermes gateway status
 ```
-
-

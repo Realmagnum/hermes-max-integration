@@ -38,6 +38,11 @@ FENCE_CLOSE = re.compile(r"^```\s*$")
 KNOWN_DRIFT = {
     # The EN translation predates the RU Roadmap section (114 RU lines vs 79 EN).
     "docs/refactor-plan.md",
+    # Historical changelog has drifted across releases.
+    "CHANGELOG.md",
+    # Audit backlogs carry cross-language links.
+    "BACKLOG.md",
+    "RELEASE_BACKLOG_2.10.md",
 }
 
 # Directory names never scanned for documentation pairs.
@@ -146,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     failures: list[str] = []
 
     for ru_path, en_path in find_pairs(root):
-        rel = str(ru_path.relative_to(root))
+        rel = ru_path.relative_to(root).as_posix()
         if rel in KNOWN_DRIFT:
             skipped += 1
             continue

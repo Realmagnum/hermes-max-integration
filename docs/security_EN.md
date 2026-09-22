@@ -1,7 +1,5 @@
 # Honest security model
 
-[Русский](security.md)
-
 This document describes **what the plugin actually protects and what it does not**. It is
 written from audit results and deliberately makes no promises of absolute security.
 

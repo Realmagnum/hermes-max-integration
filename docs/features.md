@@ -1,87 +1,49 @@
 # Возможности
 
-## STT (транскрипция голоса)
+## STT (Voice Transcription)
 
-### Как это работает
+### Как работает
 
-Голосовые сообщения приходят из MAX как аудиовложение с `payload.url`. Плагин только
-скачивает и кэширует аудио — **транскрибирует ядро Hermes** (≥ 0.20.0):
+Голосовые сообщения от MAX приходят как аудиовложения с `payload.url` для прямой загрузки. Адаптер автоматически:
 
-1. Адаптер скачивает аудио в кэш аудио ядра: `$HERMES_HOME/cache/audio/`
-   (по умолчанию `~/.hermes/cache/audio/`). Если в легаси-каталоге
-   `~/.hermes/audio_cache/` уже есть файлы, используется он.
-2. Ядро транскрибирует файл по секции `stt` из `config.yaml` (провайдер, язык, модель).
-3. Распознанный текст подставляется в сообщение, которое получает агент.
-4. При `stt.echo_transcripts: true` (дефолт ядра) ядро дополнительно присылает в чат
-   эхо-транскрипт отдельным сообщением в формате `🎙️ "<текст>"`.
-
-Плагин сам голос не транскрибирует и не содержит настроек STT: отдельный stt-venv,
-`scripts/transcribe_audio.py`, `MAX_STT_ENABLED` и `MAX_STT_VENV` удалены (STT вынесен
-в ядро). Всё управление STT — на стороне ядра Hermes.
+1. Загружает аудиофайл в `~/.hermes/audio_cache/max_audio_{message_id}.ogg`
+2. Транскрибирует через faster-whisper
+3. Добавляет текст к сообщению
 
 ### Настройка
 
 ```bash
-# Интерактивно: категория 🎙️ Speech-to-Text
-hermes tools
+# Создать venv для faster-whisper
+python3 -m venv ~/.hermes/stt-venv
+~/.hermes/stt-venv/bin/pip install faster-whisper
+
+# Скопировать скрипт
+cp scripts/transcribe_audio.py ~/.hermes/scripts/
 ```
 
-Либо вручную в `~/.hermes/config.yaml`:
-
-```yaml
-stt:
-  enabled: true
-  language: ru        # дефолт ядра — "en"; "" = автоопределение
-  provider: local     # local | groq | openai | mistral | xai | elevenlabs | deepinfra
-  echo_transcripts: true
-  local:
-    model: base       # tiny | base | small | medium | large-v3
-```
-
-Если `provider` не задан, ядро подбирает провайдера автоматически по доступным ключам
-(`local` — первый в цепочке). Для провайдера `local` пакет faster-whisper и модель
-(`base` ≈ 150 МБ) ставятся и скачиваются при первом использовании.
-
-### Параметры (дефолты ядра)
+### Параметры
 
 | Параметр | По умолчанию | Описание |
 |----------|--------------|----------|
-| `stt.enabled` | `true` | Автотранскрипция входящих голосовых |
-| `stt.language` | `"en"` | Глобальный язык; `""` = автоопределение |
-| `stt.provider` | не задан | Провайдер; не задан = автоподбор по доступным ключам |
-| `stt.echo_transcripts` | `true` | Эхо-транскрипт `🎙️ "..."` в чат |
-| `stt.local.model` | `base` | Модель faster-whisper |
-| `stt.local.vad` | `true` | VAD-фильтр (антигаллюцинации на тишине) |
-| `stt.groq.model` | `whisper-large-v3-turbo` | Модель Groq |
-| `stt.openai.model` | `whisper-1` | Модель OpenAI (`gpt-4o-transcribe`, `gpt-transcribe`, …) |
-| `stt.mistral.model` | `voxtral-mini-latest` | Модель Mistral (в `hermes tools` не показывается) |
-| `stt.elevenlabs.model_id` | `scribe_v2` | Модель ElevenLabs Scribe |
+| `MAX_STT_ENABLED` | `true` | Включить/выключить STT |
+| `MAX_STT_VENV` | `~/.hermes/stt-venv` | Путь к venv |
+| Модель | `base` | faster-whisper модель |
 
-У каждого провайдера есть и свой `language` (`language_code` у ElevenLabs): он
-переопределяет глобальный `stt.language`.
-
-### Диагностика
+### Скрипт транскрипции
 
 ```bash
-# 1. Что реально настроено в ядре
-grep -A8 "^stt:" ~/.hermes/config.yaml
-
-# 2. Кэш скачанного аудио (пусто → вложение не скачалось)
-ls -la ~/.hermes/cache/audio/
-
-# 3. Что говорит ядро
-grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
+~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
 ```
 
-Характерные записи в логе:
+### Troubleshooting
 
-- `Voice transcription failed for <path>: <error>` — провайдер вернул ошибку
-  (нет ключа, сеть, лимит, неподдерживаемый формат).
-- `Configured STT failed for <path>; recovered with local STT` — сработал фоллбэк
-  на локальный faster-whisper.
-- `[voice message could not be transcribed automatically; the audio is available at: …]` —
-  транскрипт не получен, агент видит путь к файлу вместо текста.
-- Пустой транскрипт = тишина или слишком короткий клип (VAD отсекает тишину).
+**STT возвращает пустоту:**
+- Проверить модель: `ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/assets/`
+- Убедиться что файл загружен: `ls -la ~/.hermes/audio_cache/max_audio_*.ogg`
+
+**Медленная транскрипция:**
+- Использовать модель `tiny` вместо `base`
+- Включить GPU: `export WHISPER_DEVICE=cuda:0`
 
 ## Таблицы-картинки
 
@@ -127,10 +89,8 @@ Markdown-таблицы (`| A | B |\n|---|---|`) рендерятся как PNG
 
 **Pillow/Playwright не установлены:**
 ```bash
-cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"   # каталог плагина
-HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"  # Python окружения шлюза
-"$HERMES_PY" scripts/setup-playwright.py    # ставит playwright + Chromium
-"$HERMES_PY" -m pip install Pillow          # фоллбэк-рендер
+python scripts/setup-playwright.py          # ставит playwright + Chromium
+python -m pip install Pillow                # фоллбэк-рендер
 ```
 
 **Текст обрезается:**
@@ -203,9 +163,6 @@ await adapter.send_buttons(
 
 **Callback format:** `model:pick:{model}:{provider}`
 
-`{model}`/`{provider}` percent-кодируются, поэтому ID с двоеточием
-(`llama3:8b`, `...:free`) разбираются однозначно.
-
 **Pagination callbacks:** `model:page:{provider}:{page}`
 
 ### Confirm/Clarify
@@ -274,10 +231,7 @@ _ALLOWED_UPLOAD_HOSTS = {
 
 ### Как работает
 
-При явном включении адаптер перехватывает `/sessions` и `/resume` до ядра и запрашивает `SessionDB` без
-фильтра платформы. Команда выключена по умолчанию и доступна только явно указанным владельцам: она
-выдаёт заголовки, превью и ID сессий **всех** платформ, поэтому `allow_all_users` сам по себе такого
-доступа не даёт.
+Адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы.
 
 ### Команды
 
@@ -294,17 +248,11 @@ _ALLOWED_UPLOAD_HOSTS = {
 platforms:
   max:
     extra:
-      cross_session: true
-      cross_session_users:            # owner-only; по умолчанию — MAX_ALLOWED_USERS
-        - "95825064"                  # ваш MAX user_id
-      allow_admin_from:               # требуется ядру для /resume --all
-        - "95825064"
+      allow_admin_from:
+        - "95825064"  # ваш MAX user_id
 ```
 
-Или в `.env`: `MAX_CROSS_SESSION=true` и `MAX_CROSS_SESSION_USERS=95825064`.
-
-Отключение (значение по умолчанию): `MAX_CROSS_SESSION=false` в `.env` или `cross_session: false`
-в `extra` — возвращает стандартное поведение ядра (только MAX-сессии).
+Отключение: `MAX_CROSS_SESSION=false` в `.env`.
 
 ## Standalone отправитель
 

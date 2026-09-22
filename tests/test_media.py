@@ -134,7 +134,7 @@ class TestValidateDownloadUrl:
         assert not adapter.MaxAdapter._validate_download_url("file:///etc/passwd")
 
     def test_unknown_origin(self):
-        assert not adapter.MaxAdapter._validate_download_url("https://evil.example/file.ogg")
+        assert not adapter.MaxAdapter._validate_download_url("https://evil.example/file.ogg", adapter.DOWNLOAD_ALLOWED_HOST_SUFFIXES)
 
     def test_metadata_ip(self):
         assert not adapter.MaxAdapter._validate_download_url("https://169.254.169.254/latest/meta-data/")

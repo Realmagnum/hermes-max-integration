@@ -74,7 +74,10 @@ class TestCheckFile:
 
 class TestRepositoryLinks:
     def test_no_broken_relative_links(self):
-        md_files = sorted(REPO_ROOT.rglob("*.md"))
+        md_files = sorted(
+            p for p in REPO_ROOT.rglob("*.md")
+            if not any(part.startswith(".") for part in p.relative_to(REPO_ROOT).parts)
+        )
         assert md_files, "expected markdown files in the repository"
         problems: list[str] = []
         for md in md_files:

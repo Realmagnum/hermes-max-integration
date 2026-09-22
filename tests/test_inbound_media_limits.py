@@ -12,11 +12,22 @@ import contextlib
 import httpx
 import pytest
 
+import socket
+
 import adapter
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 OGG_BYTES = b"OggS" + b"\x00" * 64
 PDF_BYTES = b"%PDF-1.7\n" + b"\x00" * 64
+
+
+@pytest.fixture(autouse=True)
+def _mock_dns_for_limits(monkeypatch):
+    """Mock DNS so streaming tests don't fail when resolving cdn.max.ru offline."""
+    def fake_getaddrinfo(host, port, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port, 0, 0))]
+
+    monkeypatch.setattr(adapter.socket, "getaddrinfo", fake_getaddrinfo)
 
 
 class _Failure(Exception):

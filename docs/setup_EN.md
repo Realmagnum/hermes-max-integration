@@ -9,12 +9,10 @@
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for `X-Max-Bot-Api-Secret`; **required in webhook mode** |
-| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook — loopback `MAX_WEBHOOK_HOST` only (dev) |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for `X-Max-Bot-Api-Secret` |
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
 | `MAX_ALLOWED_USERS` | ❌ | — | User whitelist (comma-separated) |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
-| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `open` \| `closed` \| `allowlist` |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | Users allowed in groups |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Groups allowed for bot |
 | `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
@@ -24,8 +22,7 @@
 | `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (for testing) |
-| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume (owner-only, see features_EN.md) |
-| `MAX_CROSS_SESSION_USERS` | ❌ | — | MAX user IDs (comma-separated) allowed to use the cross-platform commands; defaults to `MAX_ALLOWED_USERS` |
+| `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform /sessions and /resume |
 
 ## Connection Modes
 
@@ -55,11 +52,12 @@ Long polling is ideal for:
 ```bash
 MAX_BOT_TOKEN=your_token
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret   # required: without it the webhook won't start
+MAX_WEBHOOK_SECRET=your-secret
 ```
 
-Webhook required for production. Needs a public HTTPS URL **and** a secret: without
-`MAX_WEBHOOK_SECRET` the gateway refuses to bring up the endpoint (fail closed).
+Webhook is required for production. A public HTTPS URL is needed.
+
+> **Official (dev.max.ru/docs-api, checked 2026-09-16):** MAX delivers events via Webhook only; Long Polling is rate-limited and retention-bound and "is not suitable for a production environment". Since May 25, 2026 HTTP webhooks and self-signed certificates are unsupported, the endpoint must listen on **port 443** (the port must not appear in the URL) and return HTTP 200 within 30 seconds. The plugin binds to `8646` by default, so a reverse proxy must publish it on 443 (see examples below).
 
 ## Webhook Setup
 
@@ -115,14 +113,13 @@ curl -H "Authorization: your_token" \
 ```bash
 # 1. Add to ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=your-secret   # required
+MAX_WEBHOOK_SECRET=your-secret
 
 # 2. Restart
 sudo systemctl restart hermes-gateway
 ```
 
 On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers subscription in MAX API.
-Without a secret the start never happens — the gateway logs `webhook_secret_required` and stays disconnected.
 
 ### Webhook → Long polling
 
@@ -152,12 +149,6 @@ curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
 
 Secret is sent by MAX as raw value in `X-Max-Bot-Api-Secret` header, not as HMAC signature. Plugin uses `secrets.compare_digest()` for timing-safe comparison.
 
-The secret is mandatory in webhook mode: without `MAX_WEBHOOK_SECRET` the server does
-not start (fail closed), and the header is verified **before** the request body is
-read or parsed. The only exception is the explicit dev opt-in
-`MAX_WEBHOOK_INSECURE_DEV=true`, which works only with
-`MAX_WEBHOOK_HOST=127.0.0.1`/`::1`/`localhost`.
-
 ### Access Control
 
 **User whitelist:**
@@ -175,18 +166,13 @@ MAX_ALLOW_ALL_USERS=true
 **Group policies:**
 
 ```bash
-# Closed groups — the bot stays silent in groups (DMs keep working)
+# Closed group — only allowed users
 MAX_GROUP_POLICY=closed
 
-# Allowlist: every configured dimension must match
+# Whitelist for group
 MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
-
-# Any group (deliberate opt-in)
-MAX_GROUP_POLICY=open
 ```
-
-The `allowlist` policy (default) combines the two lists with **AND**: a message passes only when the user is in `MAX_GROUP_ALLOWED_USERS` (if that list is configured) and the group is in `MAX_GROUP_ALLOWED_CHATS` (if that list is configured). Empty lists do not open access: when both are empty, group messages are rejected. See the README "Group policies" section for details.
 
 ## Deployment
 
@@ -201,17 +187,9 @@ sudo systemctl status hermes-gateway
 ### Check
 
 ```bash
-# Health check (liveness)
+# Health check
 curl http://localhost:8646/health
-
-# Readiness check — MAX actually delivers updates to this webhook
-# 200 {"status":"ready"} = registered; 503 not_ready = subscription missing
-curl -i http://localhost:8646/ready
 
 # Plugin status
 hermes gateway status
 ```
-
-### Docker
-
-See [docs/docker.md](docs/docker.md) (in development).

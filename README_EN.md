@@ -17,9 +17,11 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🟣 **Max Messenger** | Full gateway integration with max.ru |
 | 📡 **Dual Mode** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
 | 🎤 **STT Voice** | Auto-download voice → transcription by the Hermes core (core STT) |
-| 🖼️ **Tables as Images** | Render markdown tables as PNGs via Playwright (primary) or Pillow (fallback), with colored status icons |
+| 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
 | 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
+| 🔗 **Link Buttons** | Link buttons in messages (`send_buttons()` with type `link`) |
+| 👁️ **send_action** | Extended statuses: typing, sending_photo/video/audio/file, read, typing_off |
 | ✂️ **Auto-chunking** | Smart 4000-char message splitting preserving paragraphs |
 | ⬆️ **File Upload** | Two-step upload: `POST /uploads` → PUT → token → send |
 | 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
@@ -27,7 +29,8 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
-| 🧪 **Tested** | pytest + pytest-asyncio, **167 tests** (`pytest --collect-only`) |
+| 🌐 **Cross-Platform Sessions** | `/sessions` shows sessions across ALL platforms, `/resume <id>` switches to any. Enabled by default (`MAX_CROSS_SESSION=true`) |
+| 🧪 **Tested** | pytest + pytest-asyncio, **126 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
 
@@ -138,7 +141,7 @@ We tried several approaches before settling on PNG:
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 167 tests |
+| Tests | ✅ Basic | ✅ 94 tests |
 | Interactive setup | ✅ | ✅ + tables |
 
 ## Architecture
@@ -152,7 +155,7 @@ We tried several approaches before settling on PNG:
                                             │  │ send()    │  │
                                             │  │  ↓        │  │
                                             │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
-                                            │  │  ↓   ↓    │  │    → Playwright(HTML→PNG) or Pillow → PNG
+                                            │  │  ↓   ↓    │  │    → Pillow → PNG
                                             │  │ text PNG  │  │    → POST /uploads
                                             │  │       │   │  │    → PUT → token
                                             │  └───────────┘  │    → POST /messages
@@ -241,26 +244,13 @@ The choice happens in `connect()` with one line: `self._use_webhook = bool(self.
 ```bash
 # 1. Add to ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=my-secret      # REQUIRED in webhook mode
+MAX_WEBHOOK_SECRET=my-secret
 
 # 2. Restart
 sudo systemctl restart hermes-gateway
 ```
 
 On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers a subscription in MAX API → messages arrive via webhook.
-
-### 🔒 Webhook secret is mandatory (fail closed)
-
-Webhook mode **will not start without `MAX_WEBHOOK_SECRET`**. The gateway logs the
-`webhook_secret_required` error and stays disconnected — a public endpoint that
-accepts events without verification would let anyone forge an allowed `user_id`.
-The `X-Max-Bot-Api-Secret` header is verified **before** the request body is read
-or parsed.
-
-For local debugging without a secret there is an explicit opt-in:
-`MAX_WEBHOOK_INSECURE_DEV=true` works **only** with `MAX_WEBHOOK_HOST=127.0.0.1`
-(or `::1`/`localhost`). Any other host (including `0.0.0.0`) is rejected. The
-simplest development setup remains long polling — no secret and no HTTPS needed.
 
 ### Switching Webhook → Long polling
 
@@ -324,13 +314,10 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret; **required in webhook mode** |
-| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook — loopback `MAX_WEBHOOK_HOST` only (dev) |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret |
 | `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
 | `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
-| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Extra media-download origins (comma-separated); `*.max.ru` / `*.oneme.ru` are allowed by default |
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
-| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `open` \| `closed` \| `allowlist` (see "Group policies") |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG images (HTML→PNG via Playwright, Pillow fallback) |
@@ -338,77 +325,91 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
-| `MAX_QUEUE_MAXSIZE` | ❌ | `1000` | Hard cap on inbound updates waiting to be processed (backpressure) |
-| `MAX_MAX_CONCURRENCY` | ❌ | `8` | Maximum number of messages processed concurrently |
-| `MAX_OVERLOAD_POLICY` | ❌ | `drop_oldest` | Behaviour when the queue is full: `drop_oldest` evicts the oldest update, `drop_newest` rejects the new one |
-| `MAX_DEDUP_MAX` | ❌ | `5000` | Hard cap on the duplicate-suppression table (message IDs) |
-| `MAX_DEDUP_TTL` | ❌ | `300` | Seconds a message ID counts as a duplicate |
+| `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform /sessions and /resume (see below) |
 
 ---
 
-## 🚦 Backpressure and deduplication
+## 🌐 Cross-Platform Sessions
 
-The poller (or webhook) never blocks: inbound updates go into a **bounded queue**
-(`MAX_QUEUE_MAXSIZE`, default 1000) and handlers run with bounded concurrency
-(`MAX_MAX_CONCURRENCY`, default 8). When the queue is full an explicit overload policy
-(`MAX_OVERLOAD_POLICY`) applies:
+**Why:** by default, Hermes core only exposes sessions within the same platform — MAX sees only MAX sessions. This makes sense for multi-tenant setups, but is inconvenient when a single user works across multiple platforms.
 
-| Policy | Behaviour | Trade-off |
-|--------|-----------|-----------|
-| `drop_oldest` (default) | The oldest update is evicted, the freshest is kept | Sustained overload loses older messages |
-| `drop_newest` | The incoming update is rejected, the backlog is kept | Processing falls behind the message stream |
+**How it works:** the adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` without platform filtering, and formats the response.
 
-Deduplication is hard-capped: the message-ID table never exceeds `MAX_DEDUP_MAX` entries even
-under a continuous burst (expired entries are pruned by `MAX_DEDUP_TTL`, then the oldest are evicted).
+| Command | Action | Example Output |
+|---------|--------|----------------|
+| `/sessions` | Last 15 sessions across all platforms | `1. 💻 cli — Zabbix deploy...` |
+| `/sessions search <q>` | Search across all sessions | `🔍 Sessions matching "traefik"` |
+| `/resume <id>` | Switch to any session | (switches without error) |
 
-Metrics are exposed by `/health` (webhook mode): queue depth and peak, evicted/rejected updates,
-active handlers and concurrency peak, dedup table size:
-
-```bash
-curl -s http://localhost:8646/health
-# {"status":"ok","backpressure":{"enqueued":42,"dispatched":41,"dropped_oldest":1,"queue_depth":0,
-#  "queue_maxsize":1000,"active_handlers":0,"max_concurrency":8,"overload_policy":"drop_oldest", ...}}
+**Requirement:** for `/resume --all`, add `max` to `platforms:` in config.yaml:
+```yaml
+platforms:
+  max:
+    extra:
+      allow_admin_from:
+        - "95825064"  # your MAX user_id
 ```
 
+**Disabling:** `MAX_CROSS_SESSION=false` in `.env` — reverts to core standard behavior (MAX sessions only).
+
 ---
 
-## 🔐 Group policies
+## 👁️ send_action — Extended Statuses
 
-Group messages (updates that carry a `chat_id`) are checked against `MAX_GROUP_POLICY`. Direct dialogs are out of scope for this policy: even `closed` does not block direct messages or commands in DMs.
+`send_typing()` now delegates to `send_action()`, which supports all MAX API statuses:
 
-| Policy | Behaviour |
-|--------|-----------|
-| `open` | Every group message is accepted (explicit opt-in) |
-| `closed` | No group message is accepted at all |
-| `allowlist` (default) | A message is accepted only when it matches **every configured** list |
+| Method | action | MAX API | Description |
+|--------|--------|---------|-------------|
+| `send_typing()` | `typing` | `typing_on` | Typing (default) |
+| `send_action(cid, "typing_off")` | `typing_off` | `typing_off` | Hide typing indicator |
+| `send_action(cid, "sending_photo")` | `sending_photo` | `sending_photo` | Sending photo |
+| `send_action(cid, "sending_video")` | `sending_video` | `sending_video` | Sending video |
+| `send_action(cid, "sending_audio")` | `sending_audio` | `sending_audio` | Sending audio |
+| `send_action(cid, "sending_file")` | `sending_file` | `sending_file` | Sending file |
+| `send_action(cid, "read")` | `read` | `read` | Mark as read |
 
-**Allowlist semantics are AND, not OR.** There are two independent dimensions:
-
-- `MAX_GROUP_ALLOWED_USERS` — users;
-- `MAX_GROUP_ALLOWED_CHATS` — groups.
-
-A message passes when the user is in the user list (if that list is configured) **and** the group is in the group list (if that list is configured). An empty list imposes no restriction, but it is not a grant either: when both lists are empty every group message is rejected (fail closed). An unrecognized `MAX_GROUP_POLICY` value is normalized to `closed`, so a typo cannot open access.
-
-```bash
-# Only user 123456789, in any group
-MAX_GROUP_ALLOWED_USERS=123456789
-
-# Only group -1001234567890, any member
-MAX_GROUP_ALLOWED_CHATS=-1001234567890
-
-# User 123456789 and only in group -1001234567890
-MAX_GROUP_ALLOWED_USERS=123456789
-MAX_GROUP_ALLOWED_CHATS=-1001234567890
-
-# Any group (deliberate decision)
-MAX_GROUP_POLICY=open
+```python
+await adapter.send_action("chat:123", "sending_file")
 ```
 
-> ⚠️ Previously empty lists meant "allow everyone" and the two lists were combined with OR: a user from the user list was admitted into any group. If you relied on that behaviour, set `MAX_GROUP_POLICY=open`.
+## 🔗 Link Buttons and send_buttons()
 
----
+New public method `send_buttons()` — send messages with inline buttons of any type:
 
-## Table Image Symbol Reference
+```python
+await adapter.send_buttons(
+    chat_id="chat:123",
+    text="Choose action:",
+    buttons=[
+        {"type": "link", "text": "🌐 Open website", "url": "https://example.com"},
+        {"type": "callback", "text": "✅ Confirm", "payload": "confirm:123"},
+        {"type": "request_contact", "text": "📞 Share contact"},
+    ],
+)
+```
+
+Supported button types:
+
+| type | Parameters | Description |
+|------|------------|-------------|
+| `callback` | `text`, `payload` (+ opt. `label`) | Inline callback with payload |
+| `link` | `text`, `url` (+ opt. `label`) | Opens URL |
+| `message` | `text`, `payload` (+ opt. `label`) | Sends pre-filled message |
+| `request_contact` | `text` (+ opt. `label`) | Request contact |
+| `request_geo_location` | `text` (+ opt. `label`) | Request geolocation |
+
+Each button takes a separate row (full width). Standard MAX limit — up to 10 buttons per message.
+
+With 3+ buttons, they are automatically numbered (`1.`, `2.`, `3.`...) both in the message body and on the buttons themselves.
+
+Optional `label` field contains **full description text** for fallback in the message body — unlike `text` (which goes onto the button and may be truncated by MAX on mobile devices). If `label` is omitted, `text` is used.
+
+```python
+# text — short (for button), label — full (for description)
+{"type": "callback", "text": "Basic", "label": "Basic — $5/mo, 10GB", "payload": "basic"}
+```
+
+If you need multiple buttons in a single row — use `_post_interactive()` directly with prepared row structure.
 
 | Input Emoji | Rendered As | Meaning | Color |
 |------------|-------------|---------|-------|
@@ -416,7 +417,7 @@ MAX_GROUP_POLICY=open
 | ❌ | ✗ | Failed / Error | `#dc2626` |
 | ⚠️ | ⚠ | In review / Warning | `#ea580c` |
 | ⏳ / ⌛ | ◷ | Pending | `#ca8a04` |
-| ⏳ + "scheduled" | ▶ | Scheduled | `#3b82f6` |
+| ⏳ + schedule | ▶ | Scheduled | `#3b82f6` |
 | 🔴 | ● | Critical (red) | `#dc2626` |
 | 🟢 | ● | Good (green) | `#16a34a` |
 | 🟡 | ● | Mid (yellow) | `#ca8a04` |
@@ -479,10 +480,10 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 
 ## Documentation
 
-- [Setup](docs/setup.md) — .env, webhook, security, deployment
-- [Features](docs/features.md) — STT, tables, streaming, buttons, files
-- [API](docs/api.md) — MAX API formats, callbacks, file upload
-- [Troubleshooting](docs/troubleshooting.md) — errors, diagnose.sh, logs
+- [Setup](docs/setup_EN.md) — .env, webhook, security, deployment
+- [Features](docs/features_EN.md) — STT, tables, streaming, buttons, files
+- [API](docs/api_EN.md) — MAX API formats, callbacks, file upload
+- [Troubleshooting](docs/troubleshooting_EN.md) — errors, diagnose.sh, logs
 - [External claims verification](docs/external-claims_EN.md) — MAX/Telegram doc check, sources and date
 
 ## Troubleshooting
@@ -492,8 +493,7 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 ```bash
 hermes gateway status
 curl -H "Authorization: ***" https://platform-api.max.ru/me
-curl http://localhost:8646/health          # liveness
-curl -i http://localhost:8646/ready        # readiness: 200 = MAX delivers here, 503 = not registered
+curl http://localhost:8646/health
 ```
 
 ### Tables not rendering as images
@@ -549,19 +549,16 @@ hermes-max-integration/
 ├── __init__.py              # register() entry point
 ├── pyproject.toml           # Python package config
 ├── adapter.py               # MaxAdapter (~2600 lines)
-├── scripts/
-│   └── apply-core-fix.py      # Optional core patch for MEDIA-only
-├── skills/
-│   └── max-gateway/
-│       └── SKILL.md         # Agent skill
-├── tests/                   # pytest: 167 tests
+├── mixins/                  # Adapter layers: buttons, sessions, webhook, media, tables
+├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
+│                            #   release.sh, setup-playwright.py
+├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
+├── tests/                   # pytest: 126 tests
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)
 ├── cliff-ru.toml            # git-cliff config (RU)
 ├── README.md                # Russian version
-├── docs/
-│   └── webhook.md           # Webhook architecture (Russian)
 └── .github/workflows/ci.yml # CI/CD
 ```
 
@@ -573,7 +570,7 @@ serves stale images.
 
 | Measure | Detail |
 |---------|--------|
-| 🛡️ **SSRF Protection** | Uploads validated against `*.max.ru` / `*.oneme.ru` whitelist; downloads use the same whitelist, HTTPS only, all A/AAAA records checked and the connection pinned to the validated IP (anti-rebinding), redirects never followed. Extra origins via `download_allowed_hosts` / `MAX_DOWNLOAD_ALLOWED_HOSTS` |
+| 🛡️ **SSRF Protection** | Upload URLs validated against `*.max.ru` / `*.oneme.ru` whitelist |
 | 🔐 **Token Safety** | `Authorization` header never forwarded on HTTP redirects |
 | 🔑 **Webhook Secret** | Constant-time comparison via `secrets.compare_digest` |
 | 🔊 **Voice Privacy** | Audio cache stored with `0700` permissions |

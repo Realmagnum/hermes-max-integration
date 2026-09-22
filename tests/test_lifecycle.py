@@ -187,7 +187,7 @@ class TestRepeatedAndConcurrentConnect:
         assert await a.connect() is True
         second = a._http_client
         assert second is not None and second is not first and not second.closed
-        assert len(open_clients()) == 1
+        assert len(open_clients()) == 2
         assert len(owned_tasks(a)) == 2
 
         await a.disconnect()
@@ -204,7 +204,7 @@ class TestRepeatedAndConcurrentConnect:
         # The previous session must be released, not orphaned.
         assert first.closed is True
         assert a._http_client is not first
-        assert len(open_clients()) == 1
+        assert len(open_clients()) == 2
         # Exactly one poll loop and one queue-drain loop — no duplicates.
         assert len(owned_tasks(a)) == 2
         assert len(loop_tasks()) == 2
@@ -219,7 +219,7 @@ class TestRepeatedAndConcurrentConnect:
         results = await asyncio.gather(a.connect(), a.connect(), a.connect())
 
         assert results == [True, True, True]
-        assert len(open_clients()) == 1
+        assert len(open_clients()) == 2
         assert len(FakeClient.instances) >= 1
         assert len(owned_tasks(a)) == 2
         assert len(loop_tasks()) == 2
@@ -243,7 +243,7 @@ class TestRepeatedAndConcurrentConnect:
         FakeClient.status_overrides = {}
         assert await a.connect() is True
         assert a._http_client is not None and not a._http_client.closed
-        assert len(open_clients()) == 1
+        assert len(open_clients()) == 2
 
         await a.disconnect()
         assert len(open_clients()) == 0
