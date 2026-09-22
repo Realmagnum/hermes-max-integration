@@ -37,20 +37,21 @@
 
 ---
 
-### 2. R4 · CODE-05 (Webhook Health Endpoint Contract)
+### 2. R4 · CODE-05 (Webhook Health Endpoint Contract) [ВЫПОЛНЕНО]
 
 **Приоритет:** P1  
-**Затронутые файлы:** `mixins/webhook.py`, `tests/test_wire_regressions.py`
+**Затронутые файлы:** `mixins/webhook.py`, `tests/test_wire_regressions.py`, `tests/test_backpressure.py`, `tests/test_webhook_health_contract.py`
 
 **Проблема:**
-- `tests/test_wire_regressions.py:1022` ожидает строгий контракт `health.json() == {"status": "ok"}`. Сейчас эндпоинт `/health` возвращает расширенную телеметрию бэкпрешера и состояния очередей.
+- `tests/test_wire_regressions.py:1022` ожидает строгий контракт `health.json() == {"status": "ok"}`. Ранее эндпоинт `/health` возвращал расширенную телеметрию бэкпрешера и состояния очередей.
 
-**Требуемое решение:**
-- Привести ответ `/health` в соответствие с базовым контрактом: возвращать `{"status": "ok"}` при отсутствии критических ошибок.
-- Расширенную телеметрию (очереди, дропы, бэкпрешер) вынести в отдельный эндпоинт или отдавать по параметру/в `/ready`.
+**Решение:**
+- Приведен ответ `/health` в соответствие с базовым контрактом: возвращает строго `{"status": "ok"}` (Liveness).
+- Расширенная телеметрия бэкпрешера вынесена в отдельный эндпоинт `GET /metrics`, а также доступна через `GET /ready` и опциональные query-параметры `?backpressure=1` / `?metrics=1`.
+- Создан изолированный тестовый набор `tests/test_webhook_health_contract.py`.
 
 **Критерий приёмки:**
-- Тест `tests/test_wire_regressions.py` проходит успешно вместе с `tests/test_webhook_readiness.py` и `tests/test_webhook_security.py`.
+- Все тесты `tests/test_webhook_health_contract.py`, `tests/test_wire_regressions.py`, `tests/test_webhook_readiness.py` и `tests/test_webhook_security.py` проходят успешно.
 
 ---
 

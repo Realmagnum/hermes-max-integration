@@ -365,16 +365,26 @@ class TestMetrics:
         try:
             assert await a._start_webhook() is True
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"http://127.0.0.1:{port}/health")
-            assert resp.status_code == 200
-            body = resp.json()
-            assert body["status"] == "ok"
-            bp = body["backpressure"]
-            assert bp["queue_maxsize"] == 42
-            assert bp["queue_depth"] == 0
-            assert bp["max_concurrency"] == adapter.DEFAULT_MAX_CONCURRENCY
-            assert bp["overload_policy"] == adapter.OVERLOAD_DROP_OLDEST
-            assert bp["dedup_max"] == adapter.DEFAULT_DEDUP_MAX
+                # Base health contract is strictly {"status": "ok"}
+                health = await client.get(f"http://127.0.0.1:{port}/health")
+                assert health.status_code == 200
+                assert health.json() == {"status": "ok"}
+
+                # Telemetry exposed via query param or dedicated /metrics endpoint
+                resp = await client.get(f"http://127.0.0.1:{port}/health?backpressure=1")
+                assert resp.status_code == 200
+                body = resp.json()
+                assert body["status"] == "ok"
+                bp = body["backpressure"]
+                assert bp["queue_maxsize"] == 42
+                assert bp["queue_depth"] == 0
+                assert bp["max_concurrency"] == adapter.DEFAULT_MAX_CONCURRENCY
+                assert bp["overload_policy"] == adapter.OVERLOAD_DROP_OLDEST
+                assert bp["dedup_max"] == adapter.DEFAULT_DEDUP_MAX
+
+                metrics = await client.get(f"http://127.0.0.1:{port}/metrics")
+                assert metrics.status_code == 200
+                assert metrics.json()["backpressure"]["queue_maxsize"] == 42
         finally:
             a._running = False
             if a._poll_task is not None:

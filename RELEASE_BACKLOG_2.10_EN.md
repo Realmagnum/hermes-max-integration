@@ -37,20 +37,21 @@
 
 ---
 
-### 2. R4 · CODE-05 (Webhook Health Endpoint Contract)
+### 2. R4 · CODE-05 (Webhook Health Endpoint Contract) [COMPLETED]
 
 **Priority:** P1  
-**Target files:** `mixins/webhook.py`, `tests/test_wire_regressions.py`
+**Target files:** `mixins/webhook.py`, `tests/test_wire_regressions.py`, `tests/test_backpressure.py`, `tests/test_webhook_health_contract.py`
 
 **Issue:**
-- `tests/test_wire_regressions.py:1022` expects strict `health.json() == {"status": "ok"}`. Currently `/health` returns extended telemetry and backpressure details.
+- `tests/test_wire_regressions.py:1022` expects strict `health.json() == {"status": "ok"}`. Previously `/health` returned extended telemetry and backpressure details.
 
 **Solution:**
-- Match base contract: return `{"status": "ok"}` on healthy state.
-- Keep detailed telemetry in a separate endpoint or `/ready`.
+- Matched base contract: `/health` strictly returns `{"status": "ok"}` (liveness).
+- Extended backpressure telemetry moved to dedicated `GET /metrics` endpoint, and remains accessible via `GET /ready` and query parameters `?backpressure=1` / `?metrics=1`.
+- Added isolated test suite `tests/test_webhook_health_contract.py`.
 
 **Acceptance:**
-- `tests/test_wire_regressions.py` passes alongside `tests/test_webhook_readiness.py` and `tests/test_webhook_security.py`.
+- All tests in `tests/test_webhook_health_contract.py`, `tests/test_wire_regressions.py`, `tests/test_webhook_readiness.py`, and `tests/test_webhook_security.py` pass.
 
 ---
 

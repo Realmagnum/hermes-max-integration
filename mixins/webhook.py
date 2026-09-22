@@ -55,20 +55,29 @@ class WebhookMixin(MaxBaseMixin):
 
         app = web.Application()
 
-        async def health_handler(req: web.Request) -> web.Response:
-            """Liveness plus bounded-ingress telemetry; not MAX readiness."""
+        async def metrics_handler(req: web.Request) -> web.Response:
+            """Expose backpressure and ingress telemetry."""
             return web.json_response({"status": "ok", "backpressure": self.backpressure_stats()})
+
+        async def health_handler(req: web.Request) -> web.Response:
+            """Liveness probe. Strict base contract returns {"status": "ok"}.
+            Extended backpressure telemetry is available via query (?backpressure=1 or ?metrics=1) or /metrics.
+            """
+            if req.query.get("backpressure") == "1" or req.query.get("metrics") == "1":
+                return web.json_response({"status": "ok", "backpressure": self.backpressure_stats()})
+            return web.json_response({"status": "ok"})
 
         async def readiness_handler(req: web.Request) -> web.Response:
             """Readiness: MAX actually routes updates to this server.
 
             Answers 503 while the subscription is unregistered/rejected, so a
             probe can never read "healthy" from a bot that receives nothing.
+            Includes backpressure telemetry.
             """
             if self._webhook_ready:
-                return web.json_response({"status": "ready"})
+                return web.json_response({"status": "ready", "backpressure": self.backpressure_stats()})
             return web.json_response(
-                {"status": "not_ready", "reason": self._webhook_ready_reason or "registering"},
+                {"status": "not_ready", "reason": self._webhook_ready_reason or "registering", "backpressure": self.backpressure_stats()},
                 status=503,
             )
 
@@ -130,6 +139,7 @@ class WebhookMixin(MaxBaseMixin):
 
         app.router.add_get("/health", health_handler)
         app.router.add_get("/ready", readiness_handler)
+        app.router.add_get("/metrics", metrics_handler)
         app.router.add_post(self._webhook_path, webhook_handler)
         return app
 
