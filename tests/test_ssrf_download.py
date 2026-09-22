@@ -242,12 +242,20 @@ class TestValidateDownloadUrl:
     def test_normalize_host_suffixes(self, value, expected):
         assert adapter._normalize_host_suffixes(value) == expected
 
-    def test_adapter_config_extends_download_allowlist(self):
+    def test_adapter_config_is_strict_download_allowlist(self):
         a = _max_adapter({"download_allowed_hosts": "media.example.net, *.cdn.example.org"})
         assert a._download_url_allowed("https://media.example.net/f.ogg") is True
         assert a._download_url_allowed("https://x.cdn.example.org/f.ogg") is True
-        assert a._download_url_allowed("https://cdn.max.ru/f.ogg") is True
+        assert a._download_url_allowed("https://cdn.max.ru/f.ogg") is False
         assert a._download_url_allowed("https://other.example.org/f.ogg") is False
+
+    def test_adapter_without_operator_allowlist_accepts_public_https(self):
+        a = _max_adapter()
+        assert a._download_url_allowed("https://attacker.example.com/a.png") is True
+
+    def test_explicit_empty_operator_allowlist_blocks_all_hosts(self):
+        a = _max_adapter({"download_allowed_hosts": []})
+        assert a._download_url_allowed("https://cdn.max.ru/a.png") is False
 
 
 # ── Layer 2: DNS answers ─────────────────────────────────────────────────
@@ -511,5 +519,10 @@ class TestDownloadAllowlistWiring:
         monkeypatch.setenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "media.example.net")
         a = _max_adapter()
         assert a._download_url_allowed("https://media.example.net/f.ogg") is True
-        assert a._download_url_allowed("https://cdn.max.ru/f.ogg") is True
+        assert a._download_url_allowed("https://cdn.max.ru/f.ogg") is False
         assert a._download_url_allowed("https://evil.example/f.ogg") is False
+
+    def test_explicit_empty_env_allowlist_blocks_all_hosts(self, monkeypatch):
+        monkeypatch.setenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "")
+        a = _max_adapter()
+        assert a._download_url_allowed("https://cdn.max.ru/f.ogg") is False
