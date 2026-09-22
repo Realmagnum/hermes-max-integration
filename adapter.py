@@ -803,13 +803,16 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         )
         self._edit_states: dict[str, _StreamEditState] = {}
 
-        # Media download security and limits (SEC-02, SEC-03, SEC-07)
-        self._download_allowed_suffixes: tuple[str, ...] = (
-            DOWNLOAD_ALLOWED_HOST_SUFFIXES
-            + _normalize_host_suffixes(
-                os.getenv("MAX_DOWNLOAD_ALLOWED_HOSTS", "")
-                or extra.get("download_allowed_hosts", "")
-            )
+        # Media download security and limits (SEC-02, SEC-03, SEC-07).
+        # An operator-supplied allowlist is deliberately strict.  Without one,
+        # arbitrary public HTTPS origins are admitted only after DNS validation
+        # and pinning; trust for credentials is a separate decision below.
+        raw_download_hosts = os.getenv("MAX_DOWNLOAD_ALLOWED_HOSTS")
+        if raw_download_hosts is None:
+            raw_download_hosts = extra.get("download_allowed_hosts")
+        self._download_host_allowlist_configured = raw_download_hosts is not None
+        self._download_allowed_suffixes: tuple[str, ...] = _normalize_host_suffixes(
+            raw_download_hosts
         )
         self._trusted_download_hosts: set[str] = _parse_trusted_download_hosts(
             os.getenv("MAX_TRUSTED_DOWNLOAD_HOSTS")
@@ -1759,15 +1762,17 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
     def _validate_download_url(
         url: str,
         allowed_suffixes: tuple[str, ...] = DOWNLOAD_ALLOWED_HOST_SUFFIXES,
+        *,
+        require_host_allowlist: bool = True,
     ) -> bool:
-        """SSRF guard for media downloads: allow only public https CDN origins.
+        """SSRF guard for media downloads before DNS validation.
 
         Layered, cheapest check first:
         * scheme must be https;
         * credentials in URL (user:pass@host) are rejected;
         * bare localhost/*.local names are rejected;
         * literal IPs (including legacy inet_aton spellings) must be public;
-        * every other host must match the CDN suffix allowlist.
+        * an operator-configured allowlist, when required, must match the host.
         """
         parsed = urlparse(url)
         if parsed.scheme.lower() not in DOWNLOAD_ALLOWED_SCHEMES:
@@ -1782,7 +1787,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             return False
         if host_l == "localhost" or host_l.endswith(".local"):
             return False
-        if not _host_allowed_by_suffixes(host_l, allowed_suffixes):
+        if require_host_allowlist and not _host_allowed_by_suffixes(host_l, allowed_suffixes):
             return False
         ip = _parse_host_ip(host_l)
         if ip is not None:
@@ -1790,8 +1795,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         return True
 
     def _download_url_allowed(self, url: str) -> bool:
-        """Instance-level guard: class default suffixes plus configured ones."""
-        return self._validate_download_url(url, self._download_allowed_suffixes)
+        """Validate syntax and apply an operator allowlist when one was supplied."""
+        return self._validate_download_url(
+            url,
+            self._download_allowed_suffixes,
+            require_host_allowlist=self._download_host_allowlist_configured,
+        )
 
     @staticmethod
     def _resolve_public_addresses(host: str, port: int) -> list[str] | None:
@@ -1984,22 +1993,16 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if not client:
             return None
 
-        # Check trust list to allow tests like test_download_token_leak to test arbitrary domains
-        if not self._download_url_allowed(url) and not self._is_trusted_download_origin(url):
+        prepared = await self._prepare_download(url)
+        if prepared is None:
+            # A rejected origin, DNS answer, or malformed port must never reach a
+            # direct fallback request.  One attachment is attempted at most once.
             logger.warning(
-                "MAX: refusing to download %s from blocked host: %s",
+                "MAX: refusing to download %s from blocked origin: %s",
                 media_type, self._safe_url_for_log(url),
             )
             return None
-
-        prepared = await self._prepare_download(url)
-        if prepared is not None:
-            request_url, pin_headers, extensions = prepared
-        else:
-            # Fallback for URLs allowed by trust list or direct literals
-            request_url = url
-            pin_headers = {}
-            extensions = {}
+        request_url, pin_headers, extensions = prepared
 
         headers = {
             **self._attachment_download_headers(url, _INBOUND_MEDIA_ACCEPT.get(media_type, "*/*")),
