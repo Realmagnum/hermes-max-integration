@@ -13,6 +13,7 @@ name: CI
 # act_runner (instance/org/repo level); see BACKLOG BUILD-03 notes.
 on:
   push:
+  workflow_dispatch:
   pull_request:
     branches: [main]
 
