@@ -37,6 +37,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+          # Hermes Core 0.19 pins Pillow 12.2, while this plugin's supported
+          # table renderer requires the audited 12.3+ release. Exercise that
+          # compatible runtime combination in every release-gate test job.
+          pip install --upgrade --no-deps "pillow>=12.3"
 
       - name: Lint with ruff (all production modules)
         run: |
@@ -81,6 +85,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
           pip install -e ".[dev]"
+          # See the matching test-job note: Core's stale exact Pillow pin must
+          # not mask the security floor used by this plugin.
+          pip install --upgrade --no-deps "pillow>=12.3"
 
       - name: Audit runtime + dev dependencies
         run: |
