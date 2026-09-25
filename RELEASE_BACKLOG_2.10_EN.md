@@ -45,6 +45,10 @@
 
 ---
 
+## Historical planning notes (superseded by the CI baseline above)
+
+The following items are retained as context for the original change. Items 0 and 0.1 are the authoritative priorities and acceptance criteria for the next iteration.
+
 ### 1. R2 · SEC-02 & SEC-03: Media Download & SSRF Protection Alignment
 
 **Priority:** P1  
@@ -97,4 +101,4 @@ pytest -q tests/test_wire_regressions.py
 ```powershell
 pytest -q
 ```
-Expected result: 100% PASS across all ~718 tests.
+Expected result: 100% PASS across all repository tests.
