@@ -4,17 +4,46 @@
 
 ## Текущий статус
 
-- **Ветка:** `RC-2.10`
-- **Прогресс бэклога:** ~96% выполнен (693+ тестов проходят из ~718).
+- **Ветка:** `fix/rc-2.10-final-gates` → PR #1 → `RC-2.10`.
+- **Фактический baseline:** Gitea Actions [run #107](https://gitea.rmg7.com/agent/hermes-max-integration/actions/runs/107), SHA `cff3b75` (25.09.2026): **691 passed, 11 failed, 13 skipped, 2 xfailed**.
+- **Инфраструктура CI:** runner `hermes-max-release-runner` на `a1.rmg7.com` работает; ruff и Bandit (high severity) проходят. Dependency audit и оба матричных тестовых job пока красные.
 - **Выполнено и стабилизировано в кодовой базе:**
   - **R1:** Polling backoff с `Retry-After`, lossless chunking сообщений, streaming isolation per `(chat_id, message_id)` с flush-таймером, корректный lifecycle connect/disconnect без утечек клиентов и задач.
   - **R3:** Callback auth с привязкой chat/message/TTL, cross-session owner-only доступ, group allowlists (users & chats), backpressure queue & telemetry.
   - **R4:** Fail-closed webhook с вынесенным `_build_webhook_app`, проверкой секрета до парсинга JSON, лимитом тела, строгим контрактом `/health` (`{"status": "ok"}`) и выносом телеметрии в `/metrics`.
-  - **R5:** 100% синхронизация документации RU/EN, прохождение всех тестов ссылок, внешних клеймов, примеров API и скрипта `scripts/check-ru-en-parity.py`.
+  - **R5:** RU/EN-бэклог ведётся синхронно; после каждого изменения обязательно запускать проверку паритета, ссылок, внешних клеймов и примеров API.
 
 ---
 
 ## Нерешённые проблемы на текущий момент (Active Backlog)
+
+### 0. RELEASE · Закрыть фактические CI-регрессии из run #107
+
+**Приоритет:** P0
+**Затронутые файлы:** `tests/test_download_token_leak.py`, `tests/test_ssrf_download.py`, `tests/test_wire_regressions.py`, `tests/test_webhook.py`, фикстуры и callback/streaming-код — только если тест докажет регрессию реализации.
+
+**Результат запуска:** 11 падений в Python 3.11 и 3.12. Это не основание ослаблять SSRF, привязку callback к owner/chat/message/TTL или fail-closed webhook.
+
+**Работы следующей итерации:**
+1. Сверить ожидания media-тестов с контрактом: public HTTPS без явного allowlist допустим после SSRF-проверки; plain HTTP не получает `Authorization`; приватный DNS/IP всегда останавливает запрос.
+2. Актуализировать wire-регрессии: keyword-only вызов `_remember_interaction_owner`, group/dialog callback с owner-binding, streaming state через `_edit_states`, а также cross-session сценарии с явной авторизацией.
+3. Принять и закрепить HTTP-контракт webhook при отсутствующем секрете: текущая реализация возвращает `503`, а устаревший тест ожидает `403`.
+4. Удалить либо исправить stale strict `xfail` только после того, как сценарий станет обычным passing-тестом.
+
+**Критерий приёмки:** `python -m pytest -q` без failed/xpassed; оба job `test (3.11)` и `test (3.12)` зелёные в одном запуске CI.
+
+---
+
+### 0.1. RELEASE · Закрыть dependency audit
+
+**Приоритет:** P1
+**Результат запуска:** `pip-audit` помечает `cryptography 46.0.7` (исправленные версии начинаются с `48.0.1`/`49.0.0`) и транзитивную зависимость `hermes-agent 0.19.0`.
+
+**Работы следующей итерации:** обновить и зафиксировать безопасные версии в совместимых dependency groups; отдельно проверить происхождение и допустимость advisories для `hermes-agent`, не подавляя их глобальным ignore.
+
+**Критерий приёмки:** job `dependency-audit` зелёный без общего подавления найденных advisory.
+
+---
 
 ### 1. R2 · SEC-02 & SEC-03: Согласование скачивания сторонних медиа и SSRF-защиты
 
