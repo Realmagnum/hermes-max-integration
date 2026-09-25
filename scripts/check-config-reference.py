@@ -104,9 +104,13 @@ def code_env_vars(root: Path) -> dict[str, list[str]]:
                     if key.startswith("MAX_"):
                         found.setdefault(key, []).append(f"{rel}:{node.lineno}")
             # string literals that look like env names (maps used with os.getenv(name))
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if node.value.startswith("MAX_") and ENV_TOKEN.fullmatch(node.value):
-                    found.setdefault(node.value, []).append(f"{rel}:{getattr(node, 'lineno', '?')}")
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.startswith("MAX_")
+                and ENV_TOKEN.fullmatch(node.value)
+            ):
+                found.setdefault(node.value, []).append(f"{rel}:{getattr(node, 'lineno', '?')}")
     return found
 
 

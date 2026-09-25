@@ -1559,7 +1559,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         )
         try:
             session_key = self._source_session_key(source)
-        except Exception as exc:  # owner binding must fail closed, not crash ingress
+        except Exception as exc:  # noqa: BLE001 — owner binding must fail closed, not crash ingress
             logger.debug("MAX: cannot derive interaction owner: %s", exc)
             session_key = ""
         self._remember_interaction_owner(
@@ -2012,7 +2012,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         deadline = time.monotonic() + timeout
 
         # If client supports stream() and stream is not an AsyncMock (e.g. FakeClient in limits test)
-        if hasattr(client, "stream") and not hasattr(getattr(client, "stream"), "assert_called"):
+        if hasattr(client, "stream") and not hasattr(client.stream, "assert_called"):
             try:
                 async with self._inbound_download_slot(), client.stream(
                     "GET", request_url, headers=headers, timeout=httpx.Timeout(timeout), extensions=extensions
@@ -2044,9 +2044,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                 body = resp.content
                 if self._inbound_attachment_max_bytes and len(body) > self._inbound_attachment_max_bytes:
                     return None
-                if budget is not None:
-                    if not await budget.charge(len(body)):
-                        return None
+                if budget is not None and not await budget.charge(len(body)):
+                    return None
                 return body, content_type
             except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 logger.warning("MAX: failed to download %s from %s: %s", media_type, self._safe_url_for_log(url), self._redact_secrets(str(exc)))

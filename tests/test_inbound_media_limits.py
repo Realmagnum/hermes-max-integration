@@ -8,11 +8,10 @@ fake httpx stream (no sockets) and assert both the refusals and the cleanup.
 
 import asyncio
 import contextlib
+import socket
 
 import httpx
 import pytest
-
-import socket
 
 import adapter
 

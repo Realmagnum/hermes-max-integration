@@ -63,6 +63,7 @@ def collected_test_count() -> int:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     match = re.search(r"(\d+)\s+tests? collected", proc.stdout)
     if not match:

@@ -8,10 +8,12 @@ Pins the exact contracts:
 """
 
 import socket
-import pytest
+
 import httpx
+import pytest
 from gateway.config import PlatformConfig
-from adapter import MaxAdapter, DEFAULT_MAX_CONCURRENCY, DEFAULT_DEDUP_MAX
+
+from adapter import DEFAULT_DEDUP_MAX, DEFAULT_MAX_CONCURRENCY, MaxAdapter
 
 
 def _free_port() -> int:
