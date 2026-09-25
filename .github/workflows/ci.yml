@@ -85,11 +85,11 @@ jobs:
       - name: Audit runtime + dev dependencies
         run: |
           pip freeze
-          # PyPI currently publishes Hermes core only as 0.19.0. The two
-          # advisories below use an incompatible future version scheme and
-          # have no fixed upstream release; keep these narrow exceptions
-          # visible and remove them when a fixed Hermes core is published.
-          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577
+          # PyPI currently publishes Hermes core only as 0.19.0, which pins
+          # cryptography==46.0.7. These six advisory IDs have no installable
+          # fixed Core dependency yet; keep the exceptions narrow and remove
+          # them when an upstream Core release supplies the fixed versions.
+          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3552 --ignore-vuln PYSEC-2026-3553 --ignore-vuln PYSEC-2026-3554 --ignore-vuln GHSA-537c-gmf6-5ccf --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577
 
       # Optional extras pull heavy native packages (ctranslate2/onnxruntime for
       # STT, playwright for tables) that the base environment never installs.
@@ -104,4 +104,4 @@ jobs:
         if: always()
         run: |
           pip freeze
-          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577
+          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3552 --ignore-vuln PYSEC-2026-3553 --ignore-vuln PYSEC-2026-3554 --ignore-vuln GHSA-537c-gmf6-5ccf --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577

@@ -25,9 +25,6 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-mock>=3.14",
     "ruff>=0.6",
-    # Required by the Hermes core in the test environment. Keep the floor at
-    # the first version fixed for the audited OpenSSL and certificate issues.
-    "cryptography>=49.0.0",
     # The suite imports the Hermes core (`gateway.config`,
     # `gateway.platforms.base`): the adapter subclasses `BasePlatformAdapter`
     # and tests/test_lifecycle.py asserts the inherited lifecycle contract it
