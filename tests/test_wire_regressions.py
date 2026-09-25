@@ -131,6 +131,7 @@ def _group_callback(
     *,
     chat_id: int = GROUP_CHAT_ID,
     user_id: int = DIALOG_USER_ID,
+    mid: str = "mid.group.1",
 ) -> dict:
     """Captured `message_callback` shape, rewritten for a group chat.
 
@@ -138,7 +139,7 @@ def _group_callback(
     chat/channel carries `chat_id` in `message.recipient` and no
     `chat_type: "dialog"`.
     """
-    update = message_callback(payload, user_id=user_id)
+    update = message_callback(payload, mid=mid, user_id=user_id)
     update["message"]["recipient"] = {
         "chat_id": chat_id,
         "type": "chat",
@@ -221,7 +222,11 @@ class TestCallbackRouting:
         )
 
         a = make_adapter()
-        a._remember_interaction_owner("sess-1", str(DIALOG_USER_ID))
+        a._remember_interaction_owner(
+            session_key="sess-1",
+            chat_id=f"chat:{GROUP_CHAT_ID}",
+            user_id=str(DIALOG_USER_ID),
+        )
         result = await a.send_exec_approval(
             f"chat:{GROUP_CHAT_ID}", command="rm -rf /", session_key="sess-1"
         )
@@ -249,6 +254,7 @@ class TestCallbackRouting:
 
         a._model_picker_state[f"user:{DIALOG_USER_ID}"] = {
             "provider_msg_id": "mid-provider",
+            "owner_user_id": str(DIALOG_USER_ID),
             "models": ["deepseek-v3"],
             "providers": [
                 {"slug": "deepseek", "name": "DeepSeek", "models": ["deepseek-v3"]},
@@ -259,7 +265,9 @@ class TestCallbackRouting:
             "current_provider": "openrouter",
         }
 
-        await a._on_callback(message_callback("model:provider:deepseek"))
+        await a._on_callback(
+            message_callback("model:provider:deepseek", mid="mid-provider")
+        )
 
         posts = max_api.calls("POST", "/messages")
         assert posts, "a dialog callback must reach the picker"
@@ -276,6 +284,7 @@ class TestCallbackRouting:
 
         a._model_picker_state[f"chat:{GROUP_CHAT_ID}"] = {
             "provider_msg_id": "mid-provider",
+            "owner_user_id": str(DIALOG_USER_ID),
             "models": ["deepseek-v3"],
             "providers": [
                 {"slug": "deepseek", "name": "DeepSeek", "models": ["deepseek-v3"]},
@@ -286,7 +295,9 @@ class TestCallbackRouting:
             "current_provider": "openrouter",
         }
 
-        await a._on_callback(_group_callback("model:provider:deepseek"))
+        await a._on_callback(
+            _group_callback("model:provider:deepseek", mid="mid-provider")
+        )
 
         posts = max_api.calls("POST", "/messages")
         assert posts, "the group callback must reach the picker"
@@ -474,7 +485,8 @@ class TestStreamingThrottleWire:
 
         assert result.success is True
         assert len(max_api.calls("PUT", "/messages")) == 1
-        assert a._pending_edit == "second"
+        state = a._edit_states[a._edit_state_key(f"user:{DIALOG_USER_ID}", "mid-1")]
+        assert state.pending_text == "second"
 
     async def test_finalize_always_reaches_the_wire(self, make_adapter, max_api):
         a = make_adapter()
@@ -489,16 +501,8 @@ class TestStreamingThrottleWire:
         puts = max_api.calls("PUT", "/messages")
         assert len(puts) == 2
         assert max_api.json_body(puts[-1])["text"] == "final"
-        assert a._pending_edit is None
+        assert a._edit_state_key(f"user:{DIALOG_USER_ID}", "mid-1") not in a._edit_states
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "CODE-03: a throttled edit is stored in `_pending_edit` but never "
-            "flushed — nothing sends it once the throttle window elapses. Fix "
-            "in the CODE-03 task, then drop this marker."
-        ),
-    )
     async def test_throttled_edit_is_flushed_after_window(self, make_adapter, max_api):
         a = make_adapter()
 
@@ -755,7 +759,7 @@ class TestCrossSessionCommands:
         return payload
 
     async def test_allowlisted_user_gets_session_listing(self, make_adapter, max_api):
-        a = make_adapter(extra={"allowed_users": [DIALOG_USER_ID]})
+        a = make_adapter(extra={"allowed_users": [DIALOG_USER_ID], "cross_session": True})
 
         event = await a._build_event(self._dialog_without_chat_id("/sessions"))
 
@@ -770,7 +774,7 @@ class TestCrossSessionCommands:
         assert max_api.params(reqs[0]) == {"user_id": str(DIALOG_USER_ID)}
 
     async def test_resume_without_args_lists_sessions(self, make_adapter, max_api):
-        a = make_adapter(extra={"allowed_users": [DIALOG_USER_ID]})
+        a = make_adapter(extra={"allowed_users": [DIALOG_USER_ID], "cross_session": True})
 
         event = await a._build_event(self._dialog_without_chat_id("/resume"))
 
@@ -1096,7 +1100,9 @@ class TestWebhook:
                     f"http://127.0.0.1:{port}/max/webhook",
                     json=dm_message_created(),
                 )
-                assert resp.status_code == 403
+                # A secretless loopback endpoint is development-only and must
+                # fail closed for every request; 503 signals misconfiguration.
+                assert resp.status_code == 503
             assert a._message_queue.empty()
         finally:
             await a.disconnect()

@@ -85,7 +85,11 @@ jobs:
       - name: Audit runtime + dev dependencies
         run: |
           pip freeze
-          pip-audit --desc --skip-editable
+          # PyPI currently publishes Hermes core only as 0.19.0. The two
+          # advisories below use an incompatible future version scheme and
+          # have no fixed upstream release; keep these narrow exceptions
+          # visible and remove them when a fixed Hermes core is published.
+          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577
 
       # Optional extras pull heavy native packages (ctranslate2/onnxruntime for
       # STT, playwright for tables) that the base environment never installs.
@@ -100,4 +104,4 @@ jobs:
         if: always()
         run: |
           pip freeze
-          pip-audit --desc --skip-editable
+          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577

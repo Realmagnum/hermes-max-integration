@@ -157,7 +157,9 @@ class TestTokenNotForwardedToUntrustedOrigins:
     async def test_trusted_host_over_plain_http_gets_no_authorization(self):
         a = make_adapter(trusted_download_hosts="files.partner.example")
         requests = await run_download(a, "http://files.partner.example/a.png", "image", [])
-        assert_token_absent(requests)
+        # Credential trust is HTTPS-only, and media downloads themselves reject
+        # plaintext HTTP before the download client can issue a request.
+        assert requests == []
 
     async def test_download_client_built_by_connect_has_no_default_credentials(self, monkeypatch):
         """connect() must build a separate, credential-free download client."""

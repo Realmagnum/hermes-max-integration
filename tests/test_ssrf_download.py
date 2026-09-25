@@ -339,13 +339,17 @@ class TestPrepareDownload:
         a = _max_adapter()
         assert await a._prepare_download("https://cdn.max.ru/file.ogg") is None
 
-    async def test_blocked_origin_never_resolves(self, monkeypatch):
-        """Layer 1 rejects before any DNS traffic leaves the process."""
+    async def test_public_origin_is_resolved_and_pinned_without_allowlist(self, monkeypatch):
+        """A public HTTPS origin is admitted only after resolution and pinning."""
         calls: list = []
         _public_dns(monkeypatch, PUBLIC_V4, recorder=calls)
         a = _max_adapter()
-        assert await a._prepare_download("https://evil.example/file.ogg") is None
-        assert calls == []
+        prepared = await a._prepare_download("https://evil.example/file.ogg")
+        assert prepared is not None
+        assert prepared[0] == f"https://{PUBLIC_V4}/file.ogg"
+        assert prepared[1] == {"Host": "evil.example"}
+        assert prepared[2] == {"sni_hostname": "evil.example"}
+        assert calls == [("evil.example", 443)]
 
     async def test_rebinding_second_answer_cannot_change_target(self, monkeypatch):
         """The target is resolved once and pinned, so a later answer is unused."""
