@@ -2787,7 +2787,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             "deny": "❌ Denied",
         }
         label = labels.get(choice, f"Resolved: {choice}")
-        await self.send(f"user:{user_id}", label)
+        # A valid callback is bound to the original scoped chat.  Acknowledge
+        # it there, rather than moving a group approval into the owner's DM.
+        target_chat = str(record.get("chat_id") or chat_id or f"user:{user_id}")
+        await self.send(target_chat, label)
         return None
 
     async def _handle_slash_confirm_callback(
