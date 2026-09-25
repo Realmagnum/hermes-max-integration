@@ -1,1 +1,2 @@
-"""Mixins for MaxAdapter."""  # ruff: noqa: N999
+# ruff: noqa: N999
+"""Mixins for MaxAdapter."""

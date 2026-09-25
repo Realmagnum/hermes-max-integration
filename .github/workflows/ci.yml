@@ -64,7 +64,7 @@ jobs:
       - name: SAST scan with bandit (all production modules)
         run: |
           pip install bandit
-          bandit -r adapter.py mixins/ scripts/ -f txt
+          bandit -r adapter.py mixins/ scripts/ -f txt -lll
 
   dependency-audit:
     runs-on: ubuntu-latest
@@ -85,7 +85,7 @@ jobs:
       - name: Audit runtime + dev dependencies
         run: |
           pip freeze
-          pip-audit --desc
+          pip-audit --desc --skip-editable
 
       # Optional extras pull heavy native packages (ctranslate2/onnxruntime for
       # STT, playwright for tables) that the base environment never installs.
@@ -100,4 +100,4 @@ jobs:
         if: always()
         run: |
           pip freeze
-          pip-audit --desc
+          pip-audit --desc --skip-editable

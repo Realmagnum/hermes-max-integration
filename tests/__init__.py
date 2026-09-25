@@ -1,1 +1,2 @@
-"""Test package."""  # ruff: noqa: N999
+# ruff: noqa: N999
+"""Test package."""
