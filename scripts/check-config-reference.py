@@ -143,6 +143,19 @@ def doc_env_vars(root: Path, rel: str) -> tuple[dict[str, int], dict[str, int]]:
     return env, const
 
 
+def has_constants_table(root: Path, rel: str) -> bool:
+    """Whether the document declares an internal-constants table.
+
+    Such a table deliberately contains literals rather than ``MAX_*`` names,
+    so its presence cannot be inferred from :func:`doc_env_vars`.
+    """
+    path = root / rel
+    return path.is_file() and any(
+        CONST_TABLE_HEADER.match(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+    )
+
+
 def doc_core_keys(root: Path, rel: str) -> dict[str, int]:
     """Documented ``platforms.max`` config keys -> first line number.
 
@@ -233,7 +246,7 @@ def main() -> int:
     if ru != en:
         problems.append(f"RU/EN mismatch: only RU {sorted(ru - en)}; only EN {sorted(en - ru)}")
     for rel in ("docs/setup.md", "docs/setup_EN.md"):
-        if not constants.get(rel):
+        if not has_constants_table(root, rel):
             problems.append(f"{rel}: no internal-constants table found")
 
     # 6. platforms.max config table vs. what the adapter/core actually read

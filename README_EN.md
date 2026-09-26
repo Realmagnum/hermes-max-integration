@@ -310,7 +310,6 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | Env Variable | Required | Default | Description |
 |-------------|----------|---------|-------------|
 | `MAX_BOT_TOKEN` | ✅ | — | Bot token from Max Platform |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | API base URL (docs now recommend `https://platform-api2.max.ru`) |
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
@@ -324,8 +323,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first table render (needs network, 1–2 min) |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform /sessions and /resume (see below) |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; explicit opt-in required (see below) |
 
 ---
 
@@ -517,7 +515,7 @@ grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
 
 ### SSL errors with Max API
 
-Max uses Russian MinCifry CA certificates. For testing: `MAX_INSECURE_SSL=true`
+The plugin never disables TLS verification. Install the trusted MAX certificate chain in the system trust store or runtime image.
 
 ### Voice not transcribing
 

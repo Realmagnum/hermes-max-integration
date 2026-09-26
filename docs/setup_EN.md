@@ -5,7 +5,6 @@
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `MAX_BOT_TOKEN` | ✅ | — | MAX bot token |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | Base API URL (docs recommend `https://platform-api2.max.ru`) |
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook path |
@@ -15,13 +14,10 @@
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | Users allowed in groups |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Groups allowed for bot |
-| `MAX_STT_ENABLED` | ❌ | `true` | Auto-download voice for STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Path to venv for faster-whisper |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG (HTML→PNG via Playwright, Pillow fallback) |
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first render |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (for testing) |
 | `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; requires explicit opt-in |
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Owners allowed to use cross-platform sessions |
 | `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `allowlist` or `open` |

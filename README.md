@@ -310,7 +310,6 @@ cd ~/.hermes/plugins/max-platform
 | Переменная | Обязат. | По умолч. | Описание |
 |------------|---------|-----------|----------|
 | `MAX_BOT_TOKEN` | ✅ | — | Токен бота |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | Базовый URL API (документация рекомендует `https://platform-api2.max.ru`) |
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт вебхука |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь вебхука |
@@ -324,8 +323,7 @@ cd ~/.hermes/plugins/max-platform
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере таблицы (нужен доступ в сеть, 1–2 мин) |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume (см. ниже) |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume; требуется явное включение (см. ниже) |
 
 ---
 
@@ -517,7 +515,7 @@ grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
 
 ### SSL ошибки с MAX API
 
-MAX использует сертификаты Минцифры РФ. Для тестирования: `MAX_INSECURE_SSL=true`
+Плагин не отключает проверку TLS. Установите доверенную цепочку сертификатов MAX в системное хранилище или образ выполнения.
 
 ### Голос не транскрибируется
 

@@ -5,7 +5,6 @@
 | Переменная | Обязательная | По умолчанию | Описание |
 |------------|--------------|--------------|----------|
 | `MAX_BOT_TOKEN` | ✅ | — | Токен бота MAX |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | Базовый URL API (документация рекомендует `https://platform-api2.max.ru`) |
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост webhook |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт webhook |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь webhook |
@@ -15,13 +14,10 @@
 | `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
 | `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
 | `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_STT_ENABLED` | ❌ | `true` | Автозагрузка голоса для STT |
-| `MAX_STT_VENV` | ❌ | `~/.hermes/stt-venv` | Путь к venv для faster-whisper |
 | `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
 | `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume; требуется явный opt-in |
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Владельцы, которым доступны межплатформенные сессии |
 | `MAX_GROUP_POLICY` | ❌ | `allowlist` | Политика групп: `allowlist` или `open` |
