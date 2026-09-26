@@ -22,7 +22,40 @@
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Кросс-платформенные /sessions и /resume |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume; требуется явный opt-in |
+
+## Ключи в блоке `platforms.max`
+
+Ключи YAML передаются в адаптер как `extra`; значения окружения имеют приоритет.
+
+| Ключ в блоке `platforms.max` | Эквивалент окружения | Назначение |
+|---|---|---|
+| `token` | `MAX_BOT_TOKEN` | Токен бота |
+| `host` | `MAX_WEBHOOK_HOST` | Хост webhook |
+| `port` | `MAX_WEBHOOK_PORT` | Порт webhook |
+| `path` | `MAX_WEBHOOK_PATH` | Путь webhook |
+| `webhook_secret` | `MAX_WEBHOOK_SECRET` | Секрет webhook |
+| `webhook_url` | `MAX_WEBHOOK_URL` | Публичный URL webhook |
+| `webhook_insecure_dev` | `MAX_WEBHOOK_INSECURE_DEV` | Разрешить secretless webhook только на loopback для разработки |
+| `allowed_users` | `MAX_ALLOWED_USERS` | Пользовательский allowlist |
+| `allow_all_users` | `MAX_ALLOW_ALL_USERS` | Явно разрешить всех пользователей |
+| `group_policy` | `MAX_GROUP_POLICY` | Политика групп: `allowlist` или `open` |
+| `group_allow_from` | `MAX_GROUP_ALLOWED_USERS` | Разрешённые пользователи в группах |
+| `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Разрешённые группы |
+| `cross_session` | `MAX_CROSS_SESSION` | Включить межплатформенные сессии |
+| `cross_session_users` | `MAX_CROSS_SESSION_USERS` | Владельцы, допущенные к межплатформенным сессиям |
+| `home_channel` | `MAX_HOME_CHANNEL` | Адресат cron/send_message |
+| `table_as_image` | `MAX_TABLE_AS_IMAGE` | Рендерить markdown-таблицы как PNG |
+| `edit_throttle` | `MAX_EDIT_THROTTLE` | Минимальный интервал streaming-edit |
+| `dedup_ttl` | `MAX_DEDUP_TTL` | TTL дедупликации входящих событий |
+| `overload_policy` | `MAX_OVERLOAD_POLICY` | Поведение очереди при перегрузке |
+| `download_allowed_hosts` | `MAX_DOWNLOAD_ALLOWED_HOSTS` | Строгий операторский allowlist download-hosts |
+| `trusted_download_hosts` | `MAX_TRUSTED_DOWNLOAD_HOSTS` | HTTPS-хосты, которым допустим `Authorization` |
+| `inbound_media_max_bytes` | `MAX_INBOUND_MEDIA_MAX_BYTES` | Лимит одного входящего вложения |
+| `inbound_media_total_bytes` | `MAX_INBOUND_MEDIA_TOTAL_BYTES` | Суммарный лимит вложений update |
+| `inbound_media_max_attachments` | `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | Лимит числа вложений update |
+| `inbound_media_timeout` | `MAX_INBOUND_MEDIA_TIMEOUT` | Таймаут download входящего медиа |
+| `inbound_media_concurrency` | `MAX_INBOUND_MEDIA_CONCURRENCY` | Параллелизм download входящего медиа |
 
 ## Режимы подключения
 

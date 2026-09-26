@@ -22,7 +22,40 @@
 | `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (for testing) |
-| `MAX_CROSS_SESSION` | ❌ | `true` | Cross-platform /sessions and /resume |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; requires explicit opt-in |
+
+## Keys in the `platforms.max` block
+
+YAML keys are promoted to adapter `extra`; environment values take precedence.
+
+| Key in the `platforms.max` block | Environment equivalent | Purpose |
+|---|---|---|
+| `token` | `MAX_BOT_TOKEN` | Bot token |
+| `host` | `MAX_WEBHOOK_HOST` | Webhook host |
+| `port` | `MAX_WEBHOOK_PORT` | Webhook port |
+| `path` | `MAX_WEBHOOK_PATH` | Webhook path |
+| `webhook_secret` | `MAX_WEBHOOK_SECRET` | Webhook secret |
+| `webhook_url` | `MAX_WEBHOOK_URL` | Public webhook URL |
+| `webhook_insecure_dev` | `MAX_WEBHOOK_INSECURE_DEV` | Allow secretless webhook only on loopback for development |
+| `allowed_users` | `MAX_ALLOWED_USERS` | User allowlist |
+| `allow_all_users` | `MAX_ALLOW_ALL_USERS` | Explicitly allow all users |
+| `group_policy` | `MAX_GROUP_POLICY` | Group policy: `allowlist` or `open` |
+| `group_allow_from` | `MAX_GROUP_ALLOWED_USERS` | Allowed group users |
+| `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Allowed groups |
+| `cross_session` | `MAX_CROSS_SESSION` | Enable cross-platform sessions |
+| `cross_session_users` | `MAX_CROSS_SESSION_USERS` | Owners allowed to use cross-platform sessions |
+| `home_channel` | `MAX_HOME_CHANNEL` | cron/send_message target |
+| `table_as_image` | `MAX_TABLE_AS_IMAGE` | Render markdown tables as PNG |
+| `edit_throttle` | `MAX_EDIT_THROTTLE` | Minimum streaming-edit interval |
+| `dedup_ttl` | `MAX_DEDUP_TTL` | Incoming-event deduplication TTL |
+| `overload_policy` | `MAX_OVERLOAD_POLICY` | Queue behavior under overload |
+| `download_allowed_hosts` | `MAX_DOWNLOAD_ALLOWED_HOSTS` | Strict operator download-host allowlist |
+| `trusted_download_hosts` | `MAX_TRUSTED_DOWNLOAD_HOSTS` | HTTPS hosts eligible for `Authorization` |
+| `inbound_media_max_bytes` | `MAX_INBOUND_MEDIA_MAX_BYTES` | Per-inbound-attachment limit |
+| `inbound_media_total_bytes` | `MAX_INBOUND_MEDIA_TOTAL_BYTES` | Per-update aggregate attachment limit |
+| `inbound_media_max_attachments` | `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | Per-update attachment count limit |
+| `inbound_media_timeout` | `MAX_INBOUND_MEDIA_TIMEOUT` | Inbound-media download timeout |
+| `inbound_media_concurrency` | `MAX_INBOUND_MEDIA_CONCURRENCY` | Inbound-media download concurrency |
 
 ## Connection Modes
 
