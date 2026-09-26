@@ -18,6 +18,7 @@ homepage: https://gitea.rmg7.com/agent/hermes-max-integration
 python_dependencies:
   - "playwright>=1.40"
   - "pillow>=12.3"
+  - "wcwidth>=0.2"
 
 requires_env:
   - name: MAX_BOT_TOKEN

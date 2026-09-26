@@ -395,6 +395,12 @@ class TestCoreContract:
 
     def test_installed_core_version_is_supported(self):
         version = importlib.metadata.version("hermes-agent")
+        # Upstream stopped publishing Core releases to PyPI after 0.19.
+        # A source checkout intentionally reports 0.0.0; its lifecycle API
+        # is verified by the contract tests below rather than this package
+        # metadata floor.
+        if version == "0.0.0":
+            return
         major, minor = (int(part) for part in version.split(".")[:2])
         assert (major, minor) >= _MIN_CORE, (
             f"hermes-agent {version} predates the lifecycle contract verified "

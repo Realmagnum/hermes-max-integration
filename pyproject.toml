@@ -17,9 +17,9 @@ dependencies = [
 
 [project.optional-dependencies]
 stt = ["faster-whisper>=1.0"]
-# Table-as-image: playwright is the primary HTML→PNG renderer, pillow the
-# fallback — both are declared in plugin.yaml `python_dependencies` too.
-tables = ["playwright>=1.40", "pillow>=12.3"]
+# Table-as-image: playwright is the primary HTML→PNG renderer; Pillow and
+# wcwidth form its fallback. All are declared in plugin.yaml too.
+tables = ["playwright>=1.40", "pillow>=12.3", "wcwidth>=0.2"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
