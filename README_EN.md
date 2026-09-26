@@ -29,8 +29,8 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
-| 🌐 **Cross-Platform Sessions** | `/sessions` shows sessions across ALL platforms, `/resume <id>` switches to any. Enabled by default (`MAX_CROSS_SESSION=true`) |
-| 🧪 **Tested** | pytest + pytest-asyncio, **126 tests** |
+| 🌐 **Cross-Platform Sessions** | `/sessions` shows sessions across ALL platforms, `/resume <id>` switches to any. Requires explicit opt-in (`MAX_CROSS_SESSION=true`) and a trusted owner |
+| 🧪 **Tested** | pytest + pytest-asyncio, **717 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
 
@@ -141,7 +141,7 @@ We tried several approaches before settling on PNG:
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 94 tests |
+| Tests | ✅ Basic | ✅ 717 tests |
 | Interactive setup | ✅ | ✅ + tables |
 
 ## Architecture
@@ -553,7 +553,7 @@ hermes-max-integration/
 ├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
 │                            #   release.sh, setup-playwright.py
 ├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
-├── tests/                   # pytest: 126 tests
+├── tests/                   # pytest: 717 tests
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)
