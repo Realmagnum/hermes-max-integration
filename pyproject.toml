@@ -3,7 +3,7 @@ name = "hermes-max-integration"
 # Mirror of plugin.yaml `version:` — plugin.yaml is the single source of truth
 # (what Hermes displays and what scripts/release.sh reads). Enforced by
 # scripts/check-doc-claims.py.
-version = "2.9.0"
+version = "2.10.0"
 description = "Hermes Agent MAX messenger adapter with STT voice transcription"
 requires-python = ">=3.11"
 license = {text = "MIT"}

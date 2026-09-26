@@ -4,6 +4,14 @@ All notable changes to the hermes-max-integration plugin.
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-09-26
+
+### Release verification
+
+- Closed media/SSRF, callback routing, streaming throttle, cross-session, and webhook regressions without weakening fail-closed policies.
+- Verified the Python 3.11/3.12 matrix, ruff, Bandit, and dependency audit. The audit retains only six explicitly listed temporary exceptions for Hermes Core 0.19.0's hard-pinned dependencies; remove them when fixed Core packages are published.
+- Synchronized `plugin.yaml`, `pyproject.toml`, and RU/EN changelogs at `2.10.0`.
+
 ### Security
 
 - **SEC-05: cross-platform sessions are off by default and owner-only.** `/sessions` and `/resume` were intercepted before core unconditionally (`cross_session` defaulted to `true`) and exposed titles/previews/IDs of sessions on every platform to anyone the general allowlist admitted — including the empty-`MAX_ALLOWED_USERS` + `allow_all_users=false` case. Access now requires an explicit opt-in (`MAX_CROSS_SESSION=true` / `cross_session: true`) **and** a caller from the owner list (`MAX_CROSS_SESSION_USERS` / `cross_session_users`, defaulting to a non-empty `MAX_ALLOWED_USERS`); `allow_all_users` alone never grants it. The check runs before any side effect (session-store query, outbound message, `/resume --all` rewrite) and is repeated inside the handler. A non-owner falls through to the core's normal per-platform scoping.

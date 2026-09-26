@@ -49,6 +49,9 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest -v --tb=short
+          python scripts/check-doc-claims.py
+          python scripts/check-config-reference.py
+          python scripts/check-ru-en-parity.py
 
   security:
     runs-on: ubuntu-latest

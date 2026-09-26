@@ -5,8 +5,8 @@
 ## Current Status
 
 - **Branch:** `fix/rc-2.10-final-gates` → PR #1 → `RC-2.10`.
-- **Measured baseline:** Gitea Actions [run #107](https://gitea.rmg7.com/agent/hermes-max-integration/actions/runs/107), SHA `cff3b75` (2026-09-25): **691 passed, 11 failed, 13 skipped, 2 xfailed**.
-- **CI infrastructure:** runner `hermes-max-release-runner` on `a1.rmg7.com` is operational; ruff and Bandit (high severity) pass. Dependency audit and both test-matrix jobs remain red.
+- **Final verification:** Gitea Actions [run #110](https://gitea.rmg7.com/agent/hermes-max-integration/actions/runs/110), SHA `de5502b` (2026-09-26): Python 3.11/3.12 matrix, ruff, Bandit, and dependency audit are green.
+- **CI infrastructure:** runner `hermes-max-release-runner` on `a1.rmg7.com` is operational and executes the release gate.
 - **Completed and Stabilized in Codebase:**
   - **R1:** Polling backoff with `Retry-After`, lossless message chunking, streaming isolation per `(chat_id, message_id)` with flush timer, leak-free connect/disconnect lifecycle.
   - **R3:** Callback auth bound to chat/message/TTL, cross-session owner-only access, group allowlists (users & chats), backpressure queue & telemetry.
@@ -15,33 +15,25 @@
 
 ---
 
-## Unresolved Issues (Active Backlog)
+## Closed release work
 
-### 0. RELEASE · Close the observed CI regressions from run #107
+### 0. RELEASE · Observed CI regressions from run #107 — closed
 
-**Priority:** P0
+**Priority:** P0 · closed 2026-09-26
 **Affected files:** `tests/test_download_token_leak.py`, `tests/test_ssrf_download.py`, `tests/test_wire_regressions.py`, `tests/test_webhook.py`, fixtures, and callback/streaming code — only where a test proves an implementation regression.
 
-**Run result:** 11 failures on both Python 3.11 and 3.12. This is not a reason to weaken SSRF safeguards, owner/chat/message/TTL callback binding, or the fail-closed webhook policy.
+**Result:** all 11 failures are closed. Media tests now cover HTTP blocking and DNS pinning; callback tests cover owner/chat/message binding; streaming covers per-message state and flush; cross-session requires explicit opt-in; a secretless webhook returns `503`.
 
-**Next-iteration work:**
-1. Reconcile media-test expectations with the contract: public HTTPS without an explicit allowlist is allowed after SSRF validation; plain HTTP receives no `Authorization`; private DNS/IP always prevents a request.
-2. Update wire regressions: keyword-only `_remember_interaction_owner`, owner-bound group/dialog callbacks, streaming state through `_edit_states`, and cross-session cases with explicit authorization.
-3. Decide and lock down the webhook HTTP contract for a missing secret: implementation currently returns `503`, while an obsolete test expects `403`.
-4. Remove or repair a stale strict `xfail` only after the scenario becomes a normal passing test.
-
-**Acceptance criteria:** `python -m pytest -q` has no failed/xpassed tests; both `test (3.11)` and `test (3.12)` jobs are green in one CI run.
+**Acceptance criteria:** achieved in run #110.
 
 ---
 
-### 0.1. RELEASE · Close dependency audit
+### 0.1. RELEASE · Dependency audit — closed with a constrained upstream exception
 
-**Priority:** P1
-**Run result:** `pip-audit` flags `cryptography 46.0.7` (fixed versions begin at `48.0.1`/`49.0.0`) and transitive dependency `hermes-agent 0.19.0`.
+**Priority:** P1 · closed 2026-09-26
+**Result:** audit is green. `Pillow` is upgraded to the plugin-supported `12.3+`; six advisory IDs for `cryptography==46.0.7` and `hermes-agent==0.19.0` are listed as temporary targeted CI exceptions because the available Hermes Core hard-pins those versions.
 
-**Next-iteration work:** upgrade and pin compatible safe versions in the dependency groups; separately validate the source and applicability of `hermes-agent` advisories without blanket ignores.
-
-**Acceptance criteria:** the `dependency-audit` job is green without broadly suppressing detected advisories.
+**Acceptance criteria:** achieved in run #110 without globally disabling audit.
 
 ---
 
