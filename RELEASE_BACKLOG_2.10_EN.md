@@ -5,7 +5,7 @@
 ## Current Status
 
 - **Branch:** `fix/rc-2.10-final-gates` → PR #1 → `RC-2.10`.
-- **Final verification:** Gitea Actions [run #110](https://gitea.rmg7.com/agent/hermes-max-integration/actions/runs/110), SHA `de5502b` (2026-09-26): Python 3.11/3.12 matrix, ruff, Bandit, and dependency audit are green.
+- **Final verification:** Gitea Actions [run #116](https://gitea.rmg7.com/agent/hermes-max-integration/actions/runs/116), SHA `fe58f91` (2026-09-26): Python 3.11/3.12 matrix, ruff, Bandit, the full pytest suite, and dependency audit are green.
 - **CI infrastructure:** runner `hermes-max-release-runner` on `a1.rmg7.com` is operational and executes the release gate.
 - **Completed and Stabilized in Codebase:**
   - **R1:** Polling backoff with `Retry-After`, lossless message chunking, streaming isolation per `(chat_id, message_id)` with flush timer, leak-free connect/disconnect lifecycle.
@@ -24,7 +24,7 @@
 
 **Result:** all 11 failures are closed. Media tests now cover HTTP blocking and DNS pinning; callback tests cover owner/chat/message binding; streaming covers per-message state and flush; cross-session requires explicit opt-in; a secretless webhook returns `503`.
 
-**Acceptance criteria:** achieved in run #110.
+**Acceptance criteria:** reconfirmed in run #116.
 
 ---
 
@@ -33,7 +33,25 @@
 **Priority:** P1 · closed 2026-09-26
 **Result:** audit is green. `Pillow` is upgraded to the plugin-supported `12.3+`; six advisory IDs for `cryptography==46.0.7` and `hermes-agent==0.19.0` are listed as temporary targeted CI exceptions because the available Hermes Core hard-pins those versions.
 
-**Acceptance criteria:** achieved in run #110 without globally disabling audit.
+**Acceptance criteria:** reconfirmed in run #116 without globally disabling audit.
+
+---
+
+## Next iteration — carry-over work
+
+### N1 · Remove temporary dependency-audit exceptions
+
+**Priority:** P1
+**Context:** six targeted exceptions for `cryptography==46.0.7` and `hermes-agent==0.19.0` remain in CI because of Hermes Core's pinned dependencies.
+**Outcome:** upgrade Hermes Core, remove all six exceptions, and verify the audit without `--ignore-vuln`.
+**Acceptance criteria:** both CI audit steps are green without exceptions.
+
+### N2 · Release E2E in an isolated MAX environment
+
+**Priority:** P2
+**Context:** unit/regression/SAST gates are complete; an operational check remains with a test bot and public HTTPS webhook.
+**Outcome:** validate webhook registration, secret and secretless-fail-closed paths, media with public and private DNS answers, and callback acknowledgement in a group chat.
+**Acceptance criteria:** an E2E log attached to the release ticket contains no token disclosure and shows the expected HTTP statuses.
 
 ---
 

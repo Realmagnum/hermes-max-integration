@@ -5,7 +5,7 @@
 ## Текущий статус
 
 - **Ветка:** `fix/rc-2.10-final-gates` → PR #1 → `RC-2.10`.
-- **Финальная верификация:** Gitea Actions [run #110](https://gitea.rmg7.com/agent/hermes-max-integration/actions/runs/110), SHA `de5502b` (26.09.2026): матрица Python 3.11/3.12, ruff, Bandit и dependency audit — зелёные.
+- **Финальная верификация:** Gitea Actions [run #116](https://gitea.rmg7.com/agent/hermes-max-integration/actions/runs/116), SHA `fe58f91` (26.09.2026): матрица Python 3.11/3.12, ruff, Bandit, полный pytest и dependency audit — зелёные.
 - **Инфраструктура CI:** runner `hermes-max-release-runner` на `a1.rmg7.com` работает и исполняет release gate.
 - **Выполнено и стабилизировано в кодовой базе:**
   - **R1:** Polling backoff с `Retry-After`, lossless chunking сообщений, streaming isolation per `(chat_id, message_id)` с flush-таймером, корректный lifecycle connect/disconnect без утечек клиентов и задач.
@@ -24,7 +24,7 @@
 
 **Результат:** 11 падений устранены. Media-тесты теперь проверяют HTTP-blocking и DNS pinning; callback-тесты — owner/chat/message binding; streaming — per-message state и flush; cross-session — явный opt-in; secretless webhook — `503`.
 
-**Критерий приёмки:** достигнут в run #110.
+**Критерий приёмки:** повторно подтверждён в run #116.
 
 ---
 
@@ -33,7 +33,25 @@
 **Приоритет:** P1 · закрыто 26.09.2026
 **Результат:** audit зелёный. `Pillow` обновляется до поддерживаемого плагином `12.3+`; шесть ID advisory для `cryptography==46.0.7` и `hermes-agent==0.19.0` перечислены в CI как временные точечные исключения, потому что доступный Hermes Core жёстко фиксирует эти версии.
 
-**Критерий приёмки:** достигнут в run #110 без глобального отключения аудита.
+**Критерий приёмки:** повторно подтверждён в run #116 без глобального отключения аудита.
+
+---
+
+## Следующая итерация — переносимые задачи
+
+### N1 · Устранить временные исключения dependency audit
+
+**Приоритет:** P1
+**Контекст:** шесть точечных исключений для `cryptography==46.0.7` и `hermes-agent==0.19.0` остаются в CI из-за жёстких зависимостей Hermes Core.
+**Результат:** обновить Hermes Core, снять все шесть исключений и подтвердить audit без `--ignore-vuln`.
+**Критерий приёмки:** оба audit-шагa CI зелёные без исключений.
+
+### N2 · Release E2E в изолированном MAX-окружении
+
+**Приоритет:** P2
+**Контекст:** unit/regression/SAST-gates завершены; для выпуска остаётся операторская проверка с тестовым ботом и публичным HTTPS webhook.
+**Результат:** проверить регистрацию webhook, секретный и secretless-fail-closed сценарии, медиа с публичным и приватным DNS-ответом, callback в групповом чате.
+**Критерий приёмки:** приложенный к релизному тикету журнал E2E без утечки токена и с ожидаемыми HTTP-кодами.
 
 ---
 
