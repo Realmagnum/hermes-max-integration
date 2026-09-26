@@ -43,6 +43,7 @@
 
 **Priority:** P1
 **Context:** six targeted exceptions for `cryptography==46.0.7` and `hermes-agent==0.19.0` remain in CI because of Hermes Core's pinned dependencies.
+**Status on 2026-09-26:** blocked by the external release: only `hermes-agent` 0.19.0 is available from the public index. No dependency upgrade or substitution is performed without a published compatible Core.
 **Outcome:** upgrade Hermes Core, remove all six exceptions, and verify the audit without `--ignore-vuln`.
 **Acceptance criteria:** both CI audit steps are green without exceptions.
 
@@ -50,6 +51,7 @@
 
 **Priority:** P2
 **Context:** unit/regression/SAST gates are complete; an operational check remains with a test bot and public HTTPS webhook.
+**Status on 2026-09-26:** blocked by infrastructure: `a1.rmg7.com` has no isolated MAX gateway/container and the repository has no E2E deployment manifest. Test-bot credentials and a public test HTTPS endpoint are not created automatically.
 **Outcome:** validate webhook registration, secret and secretless-fail-closed paths, media with public and private DNS answers, and callback acknowledgement in a group chat.
 **Acceptance criteria:** an E2E log attached to the release ticket contains no token disclosure and shows the expected HTTP statuses.
 
