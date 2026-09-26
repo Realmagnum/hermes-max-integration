@@ -390,7 +390,9 @@ class TestHappyPaths:
             _Stream([PNG_BYTES], headers={"content-type": "image/png"}),
             _Stream([PDF_BYTES], headers={"content-type": "application/pdf"}),
         ]
-        a = make_adapter(*streams)
+        # This test verifies returned-media order. Keep the fake client's FIFO
+        # streams deterministic; concurrency is covered by TestConcurrency.
+        a = make_adapter(*streams, _inbound_media_concurrency=1)
         update = _update(
             {"type": "voice", "payload": {"url": "https://cdn.max.ru/v.ogg"}},
             _image_attachment("https://cdn.max.ru/i.png"),
