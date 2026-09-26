@@ -53,6 +53,30 @@ jobs:
           python scripts/check-config-reference.py
           python scripts/check-ru-en-parity.py
 
+  test-current-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install pinned current Hermes Core and plugin
+        run: |
+          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-core
+          git -C /tmp/hermes-core checkout d0288be5b3330d2442e3907185b8e9d0958297bb
+          python -m pip install --upgrade pip
+          pip install -e /tmp/hermes-core
+          pip install -e . --no-deps
+          pip install "pytest>=8" "pytest-asyncio>=0.24" "pytest-mock>=3.14" "ruff>=0.6" "pillow>=12.3" "wcwidth>=0.2"
+
+      - name: Verify current Core compatibility
+        run: |
+          ruff check adapter.py mixins/ scripts/ tests/
+          python -m pytest -v --tb=short
+
   security:
     runs-on: ubuntu-latest
     steps:
@@ -81,25 +105,22 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
-      - name: Install dependencies and audit tooling
+      - name: Install pinned current Hermes Core and audit tooling
         run: |
+          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-core
+          git -C /tmp/hermes-core checkout d0288be5b3330d2442e3907185b8e9d0958297bb
           python -m pip install --upgrade pip
           pip install pip-audit
-          pip install -e ".[dev]"
-          # See the matching test-job note: Core's stale exact Pillow pin must
-          # not mask the security floor used by this plugin.
-          pip install --upgrade --no-deps "pillow>=12.3"
+          pip install -e /tmp/hermes-core
+          pip install -e . --no-deps
+          pip install "pillow>=12.3" "wcwidth>=0.2"
 
       - name: Audit runtime + dev dependencies
         run: |
           pip freeze
-          # PyPI currently publishes Hermes core only as 0.19.0, which pins
-          # cryptography==46.0.7. These six advisory IDs have no installable
-          # fixed Core dependency yet; keep the exceptions narrow and remove
-          # them when an upstream Core release supplies the fixed versions.
-          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3552 --ignore-vuln PYSEC-2026-3553 --ignore-vuln PYSEC-2026-3554 --ignore-vuln GHSA-537c-gmf6-5ccf --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577
+          pip-audit --desc --skip-editable
 
       # Optional extras pull heavy native packages (ctranslate2/onnxruntime for
       # STT, playwright for tables) that the base environment never installs.
@@ -114,4 +135,4 @@ jobs:
         if: always()
         run: |
           pip freeze
-          pip-audit --desc --skip-editable --ignore-vuln PYSEC-2026-3552 --ignore-vuln PYSEC-2026-3553 --ignore-vuln PYSEC-2026-3554 --ignore-vuln GHSA-537c-gmf6-5ccf --ignore-vuln PYSEC-2026-3576 --ignore-vuln PYSEC-2026-3577
+          pip-audit --desc --skip-editable
