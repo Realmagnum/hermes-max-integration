@@ -23,6 +23,34 @@
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Отключить проверку SSL (для тестов) |
 | `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume; требуется явный opt-in |
+| `MAX_CROSS_SESSION_USERS` | ❌ | — | Владельцы, которым доступны межплатформенные сессии |
+| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Политика групп: `allowlist` или `open` |
+| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета только на loopback для разработки |
+| `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Минимальный интервал streaming-edit одного сообщения |
+| `MAX_DEDUP_TTL` | ❌ | `300` | TTL дедупликации входящих событий, секунд |
+| `MAX_DEDUP_MAX` | ❌ | `4096` | Максимум ключей дедупликации |
+| `MAX_QUEUE_MAXSIZE` | ❌ | `100` | Максимальный размер очереди входящих событий |
+| `MAX_MAX_CONCURRENCY` | ❌ | `8` | Параллелизм обработки входящих событий |
+| `MAX_OVERLOAD_POLICY` | ❌ | `drop-oldest` | Политика очереди: `drop-oldest` или `drop-newest` |
+| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Строгий operator allowlist download-hosts |
+| `MAX_TRUSTED_DOWNLOAD_HOSTS` | ❌ | `.max.ru,.oneme.ru` | HTTPS-хосты, которым допустим `Authorization` |
+| `MAX_INBOUND_MEDIA_MAX_BYTES` | ❌ | `52428800` | Лимит одного входящего вложения, байт |
+| `MAX_INBOUND_MEDIA_TOTAL_BYTES` | ❌ | `104857600` | Суммарный лимит вложений update, байт |
+| `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | ❌ | `10` | Лимит числа вложений update |
+| `MAX_INBOUND_MEDIA_TIMEOUT` | ❌ | `30` | Таймаут download входящего медиа, секунд |
+| `MAX_INBOUND_MEDIA_CONCURRENCY` | ❌ | `4` | Параллелизм download входящего медиа |
+
+## Внутренние константы
+
+| Константа | Значение | Назначение |
+|---|---|---|
+| API base URL | `platform-api.max.ru` | Адрес MAX API; не является настройкой окружения |
+| Message length limit | `4000` | Максимальная длина одного текстового сообщения |
+| Outbound file limit | `50 * 1024 * 1024` | Лимит исходящего файла |
+| Webhook body limit | `1_048_576` | Максимальный размер тела webhook |
+| Poll timeout | `POLL_TIMEOUT` | Базовый timeout polling |
+| Table column cap | `38` | Лимит столбцов текстовой таблицы |
+| Table PNG width | `1200` | Ширина canvas PNG-таблицы |
 
 ## Ключи в блоке `platforms.max`
 

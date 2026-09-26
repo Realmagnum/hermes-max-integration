@@ -23,6 +23,34 @@
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (for testing) |
 | `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; requires explicit opt-in |
+| `MAX_CROSS_SESSION_USERS` | ❌ | — | Owners allowed to use cross-platform sessions |
+| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `allowlist` or `open` |
+| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook only on loopback for development |
+| `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Minimum interval between streaming edits of one message |
+| `MAX_DEDUP_TTL` | ❌ | `300` | Incoming-event deduplication TTL in seconds |
+| `MAX_DEDUP_MAX` | ❌ | `4096` | Maximum number of deduplication keys |
+| `MAX_QUEUE_MAXSIZE` | ❌ | `100` | Maximum incoming-event queue size |
+| `MAX_MAX_CONCURRENCY` | ❌ | `8` | Incoming-event handling concurrency |
+| `MAX_OVERLOAD_POLICY` | ❌ | `drop-oldest` | Queue policy: `drop-oldest` or `drop-newest` |
+| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Strict operator download-host allowlist |
+| `MAX_TRUSTED_DOWNLOAD_HOSTS` | ❌ | `.max.ru,.oneme.ru` | HTTPS hosts eligible for `Authorization` |
+| `MAX_INBOUND_MEDIA_MAX_BYTES` | ❌ | `52428800` | Per-inbound-attachment byte limit |
+| `MAX_INBOUND_MEDIA_TOTAL_BYTES` | ❌ | `104857600` | Per-update aggregate attachment byte limit |
+| `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | ❌ | `10` | Per-update attachment count limit |
+| `MAX_INBOUND_MEDIA_TIMEOUT` | ❌ | `30` | Inbound-media download timeout in seconds |
+| `MAX_INBOUND_MEDIA_CONCURRENCY` | ❌ | `4` | Inbound-media download concurrency |
+
+## Internal Constants
+
+| Constant | Value | Purpose |
+|---|---|---|
+| API base URL | `platform-api.max.ru` | MAX API address; not an environment setting |
+| Message length limit | `4000` | Maximum text length in one message |
+| Outbound file limit | `50 * 1024 * 1024` | Outbound file limit |
+| Webhook body limit | `1_048_576` | Maximum webhook request-body size |
+| Poll timeout | `POLL_TIMEOUT` | Base polling timeout |
+| Table column cap | `38` | Text-table column limit |
+| Table PNG width | `1200` | PNG-table canvas width |
 
 ## Keys in the `platforms.max` block
 
