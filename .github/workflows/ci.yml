@@ -69,7 +69,7 @@ jobs:
           git -C /tmp/hermes-core checkout d0288be5b3330d2442e3907185b8e9d0958297bb
           python -m pip install --upgrade pip
           pip install -e /tmp/hermes-core
-          pip install -e . --no-deps
+          pip install -e .
           pip install "pytest>=8" "pytest-asyncio>=0.24" "pytest-mock>=3.14" "ruff>=0.6" "pillow>=12.3" "wcwidth>=0.2"
 
       - name: Verify current Core compatibility
@@ -114,7 +114,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
           pip install -e /tmp/hermes-core
-          pip install -e . --no-deps
+          pip install -e .
           pip install "pillow>=12.3" "wcwidth>=0.2"
 
       - name: Audit runtime + dev dependencies
