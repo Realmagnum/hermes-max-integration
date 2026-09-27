@@ -142,6 +142,16 @@ class TestLosslessChunking:
         assert len(chunks) == 3
         assert [c.split(")", 1)[0] + ")" for c in chunks] == ["(1/3)", "(2/3)", "(3/3)"]
 
+    def test_prefix_width_growth_never_discards_chunk_tail(self):
+        """CODE-02: changing from 9 to 10 chunks reserves a wider prefix first."""
+        a = self._make_adapter()
+        content = "x" * (adapter.OUTBOUND_CHUNK_LIMIT * 9)
+        chunks = a._numbered_outbound_chunks(content)
+
+        assert len(chunks) == 10
+        assert "".join(chunk.split(")\n", 1)[1] for chunk in chunks) == content
+        assert all(len(chunk) <= adapter.MAX_MESSAGE_LENGTH for chunk in chunks)
+
     def test_paragraph_boundaries_are_preferred(self):
         a = self._make_adapter()
         msg = "\n\n".join(["x" * 1000] * 4)  # 4006 chars, needs 2 chunks
