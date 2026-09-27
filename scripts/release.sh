@@ -67,15 +67,16 @@ AUTH_HEADER="Authorization: token $GITEA_TOKEN"
 RUN_JSON="$(curl --fail --silent --show-error -H "$AUTH_HEADER" "$API_BASE/actions/runs/$CI_RUN_ID")"
 JOBS_JSON="$(curl --fail --silent --show-error -H "$AUTH_HEADER" "$API_BASE/actions/runs/$CI_RUN_ID/jobs?limit=100")"
 
-python - "$HEAD_SHA" "$CI_RUN_ID" <<'PY' <<<"$RUN_JSON"$'\n'"$JOBS_JSON"
+RUN_JSON="$RUN_JSON" JOBS_JSON="$JOBS_JSON" python - "$HEAD_SHA" "$CI_RUN_ID" <<'PY'
 import json
+import os
 import sys
 
 expected_sha, run_id = sys.argv[1:]
-run = json.loads(sys.stdin.readline())
-jobs_response = json.loads(sys.stdin.readline())
+run = json.loads(os.environ["RUN_JSON"])
+jobs_response = json.loads(os.environ["JOBS_JSON"])
 run_sha = run.get("head_sha") or run.get("head_commit", {}).get("id")
-if run.get("status") != "success" or run_sha != expected_sha:
+if (run.get("conclusion") or run.get("status")) != "success" or run_sha != expected_sha:
     raise SystemExit(
         f"CI run {run_id} is not successful for HEAD: status={run.get('status')!r}, "
         f"head_sha={run_sha!r}, expected={expected_sha!r}"
@@ -87,7 +88,7 @@ if not jobs:
 required = ("test", "test-current-core", "security", "dependency-audit")
 names = [job.get("name", "") for job in jobs]
 missing = [name for name in required if not any(job_name == name or job_name.startswith(name + " ") for job_name in names)]
-failed = [job.get("name", "<unnamed>") for job in jobs if job.get("status") != "success"]
+failed = [job.get("name", "<unnamed>") for job in jobs if (job.get("conclusion") or job.get("status")) != "success"]
 if missing or failed:
     raise SystemExit(
         f"CI run {run_id} is incomplete or unsuccessful: missing={missing}, failed={failed}"
