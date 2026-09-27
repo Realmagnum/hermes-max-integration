@@ -104,6 +104,17 @@ class TestCrossSessionAuthorization:
         a = make_adapter({"cross_session": True})
         assert a._cross_session_allowed("42") is False
 
+    @pytest.mark.asyncio
+    async def test_empty_allowlist_never_routes_sessions_to_cross_platform_store(self):
+        """SEC-05: an empty ordinary allowlist must keep /sessions scoped to core."""
+        a = make_adapter({"cross_session": True, "allow_all_users": False})
+        a._handle_cross_sessions = AsyncMock()
+
+        event = await a._on_message_created(dm_update("/sessions", user_id=7))
+
+        a._handle_cross_sessions.assert_not_called()
+        assert event is not None and event.text == "/sessions"
+
     def test_allowlist_acts_as_owner_set(self):
         a = make_adapter({"cross_session": True, "allowed_users": [42]})
         assert a._cross_session_allowed("42") is True
