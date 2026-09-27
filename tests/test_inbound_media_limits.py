@@ -58,7 +58,7 @@ class _Stream:
 
 
 class _EndlessStream(_Stream):
-    """Response that never finishes — a slow/infinite sender."""
+    """Response that never finishes â a slow/infinite sender."""
 
     def __init__(self, **kwargs):
         super().__init__([], **kwargs)
@@ -71,7 +71,7 @@ class _EndlessStream(_Stream):
 
 
 class _BrokenStream(_Stream):
-    """Response whose body raises part-way through — a dropped connection."""
+    """Response whose body raises part-way through â a dropped connection."""
 
     def __init__(self, chunks, *, fail_after, **kwargs):
         super().__init__(chunks, **kwargs)
@@ -89,7 +89,17 @@ class FakeClient:
     """Minimal ``httpx.AsyncClient`` stand-in exposing only ``stream()``."""
 
     def __init__(self, streams):
-        self._streams = list(streams)
+        # Most tests supply a FIFO because they issue one request. A multi-media
+        # update has independent async DNS preparation before the semaphore, so
+        # request arrival order is intentionally not a media-order contract.
+        # A URL mapping models the real HTTP client and prevents a fixture queue
+        # from assigning one attachment's bytes to another attachment.
+        if len(streams) == 1 and isinstance(streams[0], dict):
+            self._streams_by_url = dict(streams[0])
+            self._streams = []
+        else:
+            self._streams_by_url = {}
+            self._streams = list(streams)
         self.requests = []
         self.active = 0
         self.max_active = 0
@@ -105,7 +115,9 @@ class FakeClient:
 
     def stream(self, method, url, **kwargs):
         self.requests.append((method, url, kwargs))
-        response = self._streams.pop(0) if self._streams else _Stream([b"x"])
+        response = self._streams_by_url.get(url)
+        if response is None:
+            response = self._streams.pop(0) if self._streams else _Stream([b"x"])
         return self._stream_ctx(response)
 
 
@@ -385,14 +397,14 @@ class TestHappyPaths:
         assert path.startswith(str(cache_dirs["document"]))
 
     async def test_all_media_of_a_message_is_returned_in_order(self, make_adapter):
-        streams = [
-            _Stream([OGG_BYTES], headers={"content-type": "audio/ogg"}),
-            _Stream([PNG_BYTES], headers={"content-type": "image/png"}),
-            _Stream([PDF_BYTES], headers={"content-type": "application/pdf"}),
-        ]
-        # This test verifies returned-media order. Keep the fake client's FIFO
-        # streams deterministic; concurrency is covered by TestConcurrency.
-        a = make_adapter(*streams, _inbound_media_concurrency=1)
+        streams_by_url = {
+            "https://cdn.max.ru/v.ogg": _Stream([OGG_BYTES], headers={"content-type": "audio/ogg"}),
+            "https://cdn.max.ru/i.png": _Stream([PNG_BYTES], headers={"content-type": "image/png"}),
+            "https://cdn.max.ru/d.pdf": _Stream([PDF_BYTES], headers={"content-type": "application/pdf"}),
+        }
+        # Request scheduling after URL preparation is intentionally independent
+        # of attachment order. Bind fixtures to URLs, as a real HTTP client does.
+        a = make_adapter(streams_by_url, _inbound_media_concurrency=1)
         update = _update(
             {"type": "voice", "payload": {"url": "https://cdn.max.ru/v.ogg"}},
             _image_attachment("https://cdn.max.ru/i.png"),
