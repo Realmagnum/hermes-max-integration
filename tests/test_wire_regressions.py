@@ -422,9 +422,13 @@ class TestChunkingPreservation:
         await a.send(f"user:{DIALOG_USER_ID}", content)
 
         on_wire = [max_api.json_body(r)["text"] for r in max_api.calls("POST", "/messages")]
-        assert len(on_wire) == len(chunks)
+        assert len(on_wire) >= len(chunks)
+        assert all(len(text) <= 4000 for text in on_wire)
+        assert [ACCEPT_AFFIX.match(text).group() for text in on_wire] == [
+            f"({index}/{len(on_wire)})\n" for index in range(1, len(on_wire) + 1)
+        ]
         stripped = [ACCEPT_AFFIX.sub("", text) for text in on_wire]
-        assert "".join(stripped) == "".join(chunks)
+        assert "".join(stripped) == content
 
     async def test_chunk_count_and_limits(self, make_adapter, max_api):
         a = make_adapter()
