@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 CI = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(
     encoding="utf-8"
 )
