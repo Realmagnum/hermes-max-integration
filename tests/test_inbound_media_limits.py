@@ -115,8 +115,9 @@ class FakeClient:
 
     def stream(self, method, url, **kwargs):
         self.requests.append((method, url, kwargs))
-        response = self._streams_by_url.get(url)
-        if response is None:
+        if self._streams_by_url:
+            response = self._streams_by_url[url]
+        else:
             response = self._streams.pop(0) if self._streams else _Stream([b"x"])
         return self._stream_ctx(response)
 
@@ -398,12 +399,13 @@ class TestHappyPaths:
 
     async def test_all_media_of_a_message_is_returned_in_order(self, make_adapter):
         streams_by_url = {
-            "https://cdn.max.ru/v.ogg": _Stream([OGG_BYTES], headers={"content-type": "audio/ogg"}),
-            "https://cdn.max.ru/i.png": _Stream([PNG_BYTES], headers={"content-type": "image/png"}),
-            "https://cdn.max.ru/d.pdf": _Stream([PDF_BYTES], headers={"content-type": "application/pdf"}),
+            "https://93.184.216.34/v.ogg": _Stream([OGG_BYTES], headers={"content-type": "audio/ogg"}),
+            "https://93.184.216.34/i.png": _Stream([PNG_BYTES], headers={"content-type": "image/png"}),
+            "https://93.184.216.34/d.pdf": _Stream([PDF_BYTES], headers={"content-type": "application/pdf"}),
         }
         # Request scheduling after URL preparation is intentionally independent
-        # of attachment order. Bind fixtures to URLs, as a real HTTP client does.
+        # of attachment order. The adapter pins DNS to the public test IP,
+        # so bind fixtures to the actual request URLs rather than the Host header.
         a = make_adapter(streams_by_url, _inbound_media_concurrency=1)
         update = _update(
             {"type": "voice", "payload": {"url": "https://cdn.max.ru/v.ogg"}},
