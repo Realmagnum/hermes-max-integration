@@ -30,7 +30,7 @@
 | ⚡ **Индикатор ввода** | Отображение набора текста для всех типов чатов |
 | 🔧 **Standalone-отправитель** | Отправка сообщений из cron/send_message через `_standalone_send` с нативной доставкой файлов. `hermes send "текст MEDIA:/file"` — работает без модификации ядра |
 | 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. Требуется явный opt-in (`MAX_CROSS_SESSION=true`) и доверенный владелец |
-| 🧪 **Тесты** | pytest + pytest-asyncio, **717 тестов** |
+| 🧪 **Тесты** | pytest + pytest-asyncio, **720 тестов** |
 | 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
 | 📋 **Слеш-команды** | 20 команд (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) через MAX API `PATCH /me/commands` |
 
@@ -141,7 +141,7 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 | Разбивка сообщений | ✅ | ✅ Улучшена |
 | Извлечение медиа | ✅ | ✅ Расширено |
 | Дедупликация сообщений | ❌ | ✅ 300 сек |
-| Тесты | ✅ Базовые | ✅ 717 тестов |
+| Тесты | ✅ Базовые | ✅ 720 тестов |
 | Настройка | ✅ | ✅ + табл. |
 
 ## Как это работает (архитектура)
@@ -553,7 +553,7 @@ hermes-max-integration/
 ├── skills/
 │   └── max-gateway/
 │       └── SKILL.md         # Навык для AI-агента
-├── tests/                   # pytest: 717 тестов
+├── tests/                   # pytest: 720 тестов
 ├── AGENTS.md                # Инструкции для AI-агентов
 ├── after-install.md         # Пост-установка
 ├── cliff.toml               # git-cliff config (EN)
