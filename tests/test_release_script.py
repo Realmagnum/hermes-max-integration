@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-
 SCRIPT = (Path(__file__).resolve().parents[1] / "scripts" / "release.sh").read_text(
     encoding="utf-8"
 )
