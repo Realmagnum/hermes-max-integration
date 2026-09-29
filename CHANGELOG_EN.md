@@ -6,7 +6,7 @@ All notable changes to the hermes-max-integration plugin.
 
 ### Fixed
 - **Chat Action & Typing Status Indicators in DMs:** fixed a critical regression where status indicators ("typing...", "sending photo...", "recording audio...") were missing in 1-on-1 direct messages. Hermes Core addresses DMs via scoped `user:<user_id>`, while MAX Bot API strictly requires the integer dialog `chat_id` on `/chats/{chat_id}/actions` and `/chats/{chat_id}` endpoints.
-- **Bidirectional DM Routing Table:** implemented automatic resolution and caching of `user_id` <-> `chat_id` mappings across incoming updates (`message_created`, `bot_started`, `message_callback`) and outbound API responses, along with `_resolve_chat_id`.
+- **Bidirectional DM Routing Table:** implemented automatic resolution and caching of `user_id` ↔ `chat_id` mappings across incoming updates (`message_created`, `bot_started`, `message_callback`) and outbound API responses, along with `_resolve_chat_id`.
 - **Media Upload Action Indicators:** added immediate emission of appropriate chat actions (`sending_photo`, `sending_video`, `sending_audio`, `sending_file`) prior to and during CDN file uploads.
 - **Typing Indicator Clearing (`stop_typing`):** implemented `stop_typing` sending `typing_off` to cleanly clear the typing status once the agent finishes processing.
 

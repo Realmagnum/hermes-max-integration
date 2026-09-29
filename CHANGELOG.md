@@ -6,15 +6,15 @@
 
 ### Исправлено
 - **Индикаторы действий и статусов чата (typing/chat actions в ЛС):** исправлена критическая регрессия, из-за которой в прямых диалогах (1-на-1) не отображались статусные индикаторы («печатает...», «отправляет фото...», «записывает голосовое...»). Hermes Core адресует личные сообщения через `user:<user_id>`, в то время как Bot API платформы MAX строго требует целочисленный идентификатор диалога `chat_id` на эндпоинтах `/chats/{chat_id}/actions` и `/chats/{chat_id}`.
-- **Двусторонняя таблица маршрутизации DM:** реализовано сохранение соответствия `user_id` <-> `chat_id` при входящих событиях (`message_created`, `bot_started`, `message_callback`) и исходящих ответах API, а также метод разрешения `_resolve_chat_id`.
+- **Двусторонняя таблица маршрутизации DM:** реализовано сохранение соответствия `user_id` ↔ `chat_id` при входящих событиях (`message_created`, `bot_started`, `message_callback`) и исходящих ответах API, а также метод разрешения `_resolve_chat_id`.
 - **Индикаторы загрузки медиа:** добавлена отправка соответствующих действий чата (`sending_photo`, `sending_video`, `sending_audio`, `sending_file`) перед началом и во время выгрузки файлов на CDN MAX.
 - **Очистка статуса набора текста (`stop_typing`):** реализован метод `stop_typing` с отправкой `typing_off`, корректно гасящий индикатор «печатает» по окончании генерации ответа агентом.
 
 ## [2.10.0] — 2026-09-29
 
 ### Безопасность и контроль доступа
-- **SEC-01 (Callback Authorization):** универсальная авторизация callback query с жесткой привязкой владельца (owner_user_id), scoped chat, prompt message id и TTL. Полная защита от перехвата и replay в exec, slash confirm, clarify и model picker.
-- **SEC-02 / SEC-03 (SSRF & Download Origin Hardening):** двухконтурная защита скачивания входящих медиа: строгий fail-closed DNS-пиннинг (блокировка приватных/loopback/link-local IP и DNS rebinding), изолированный download-клиент без передачи `Authorization` чужим хостам, поддержка `MAX_DOWNLOAD_ALLOWED_HOSTS` и явных `MAX_TRUSTED_DOWNLOAD_HOSTS`.
+- **SEC-01 (Callback Authorization):** универсальная авторизация callback query с жесткой привязкой владельца (`owner_user_id`), scoped chat, prompt message id и TTL. Полная защита от перехвата и replay в exec, slash confirm, clarify и model picker.
+- **SEC-02 / SEC-03 (SSRF & Download Origin Hardening):** двухконтурная защита скачивания входящих медиа: строгий fail-closed DNS-пиннинг (блокировка приватных/loopback/link-local IP и защита от DNS rebinding), изолированный download-клиент без передачи `Authorization` чужим хостам, поддержка `MAX_DOWNLOAD_ALLOWED_HOSTS` и явных `MAX_TRUSTED_DOWNLOAD_HOSTS`.
 - **SEC-04 (Fail-closed Webhook):** вебхук запускается только с валидным секретом (или явным локальным `MAX_WEBHOOK_INSECURE_DEV=true` на loopback). Проверка заголовка `X-Max-Bot-Api-Secret` выполняется до чтения и парсинга тела запроса (`_build_webhook_app`). Защита от DoS по размеру тела (`WEBHOOK_MAX_BODY_BYTES` = 1 МиБ).
 - **SEC-05 (Cross-session Access):** кросс-платформенные сессии выключены по умолчанию (`MAX_CROSS_SESSION=false`) и доступны только доверенным владельцам (`MAX_CROSS_SESSION_USERS` / `cross_session_users`).
 - **SEC-06 (Group Policy):** строгая семантика белых списков (`MAX_GROUP_ALLOWED_USERS` и `MAX_GROUP_ALLOWED_CHATS`), объединение списков через AND, fail-closed блокировка при пустом allowlist; поддержка режимов `allowlist`, `closed`, `open`.
