@@ -522,6 +522,88 @@ class TestStreamingThrottleWire:
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# Chat Actions & Typing Wire Tests
+# ═════════════════════════════════════════════════════════════════════════
+
+class TestChatActionsWire:
+    """Chat actions (typing, media indicators) must route to MAX dialog chat_id."""
+
+    async def test_inbound_dm_maps_and_resolves_typing_to_dialog_chat_id(self, make_adapter, max_api):
+        """Hermes sends typing to event.source.chat_id (user:<id>).
+        The adapter must resolve it to the underlying dialog chat_id on the wire.
+        """
+        a = make_adapter()
+        event = await a._build_event(dm_message_created())
+        assert event is not None
+        assert event.source.chat_id == f"user:{DIALOG_USER_ID}"
+
+        await a.send_typing(event.source.chat_id)
+
+        assert ("POST", f"/chats/{DIALOG_CHAT_ID}/actions") in max_api.methods()
+        req = max_api.calls("POST", f"/chats/{DIALOG_CHAT_ID}/actions")[0]
+        assert max_api.json_body(req) == {"action": "typing_on"}
+
+    async def test_bot_started_maps_and_resolves_typing_to_dialog_chat_id(self, make_adapter, max_api):
+        a = make_adapter()
+        event = await a._build_event(bot_started_update())
+        assert event is not None
+        assert event.source.chat_id == f"user:{DIALOG_USER_ID}"
+
+        await a.send_typing(f"user:{DIALOG_USER_ID}")
+
+        assert ("POST", f"/chats/{DIALOG_CHAT_ID}/actions") in max_api.methods()
+        req = max_api.calls("POST", f"/chats/{DIALOG_CHAT_ID}/actions")[0]
+        assert max_api.json_body(req) == {"action": "typing_on"}
+
+    async def test_stop_typing_sends_typing_off_to_dialog_chat_id(self, make_adapter, max_api):
+        a = make_adapter()
+        await a._build_event(dm_message_created())
+
+        await a.stop_typing(f"user:{DIALOG_USER_ID}")
+
+        assert ("POST", f"/chats/{DIALOG_CHAT_ID}/actions") in max_api.methods()
+        req = max_api.calls("POST", f"/chats/{DIALOG_CHAT_ID}/actions")[0]
+        assert max_api.json_body(req) == {"action": "typing_off"}
+
+    async def test_get_chat_info_resolves_dm_user_id_to_chat_id(self, make_adapter, max_api):
+        a = make_adapter()
+        await a._build_event(dm_message_created())
+        max_api.route("GET", f"/chats/{DIALOG_CHAT_ID}", 200, {
+            "chat_id": DIALOG_CHAT_ID, "title": "Test Dialog", "type": "dialog",
+        })
+
+        info = await a.get_chat_info(f"user:{DIALOG_USER_ID}")
+
+        assert ("GET", f"/chats/{DIALOG_CHAT_ID}") in max_api.methods()
+        assert info["chat_id"] == str(DIALOG_CHAT_ID)
+        assert info["name"] == "Test Dialog"
+
+    async def test_send_learns_chat_id_from_outbound_response(self, make_adapter, max_api):
+        a = make_adapter()
+        max_api.route("POST", "/messages", 200, {
+            "message": {
+                "body": {"mid": "mid.out.1"},
+                "recipient": {"chat_id": DIALOG_CHAT_ID, "user_id": DIALOG_USER_ID},
+            }
+        })
+
+        await a.send(f"user:{DIALOG_USER_ID}", "outbound first")
+        await a.send_typing(f"user:{DIALOG_USER_ID}")
+
+        assert ("POST", f"/chats/{DIALOG_CHAT_ID}/actions") in max_api.methods()
+
+    async def test_send_image_emits_sending_photo_wire(self, make_adapter, max_api):
+        a = make_adapter()
+        await a._build_event(dm_message_created())
+
+        await a.send_image(f"user:{DIALOG_USER_ID}", "https://example.com/pic.jpg", caption="Look at this")
+
+        assert ("POST", f"/chats/{DIALOG_CHAT_ID}/actions") in max_api.methods()
+        req = max_api.calls("POST", f"/chats/{DIALOG_CHAT_ID}/actions")[0]
+        assert max_api.json_body(req) == {"action": "sending_photo"}
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # Approval / confirmation callbacks
 # ═════════════════════════════════════════════════════════════════════════
 

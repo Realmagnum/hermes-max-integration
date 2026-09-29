@@ -154,6 +154,19 @@ class MediaUploadMixin(MaxBaseMixin):
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
 
+        # Emit chat action indicator so the user sees immediate feedback while uploading
+        action_map = {
+            "image": "sending_photo",
+            "video": "sending_video",
+            "audio": "sending_audio",
+            "file": "sending_file",
+        }
+        action = action_map.get(mtype, "sending_file")
+        try:
+            await self.send_action(chat_id, action)
+        except Exception:
+            pass
+
         # Normalize audio to a Max-accepted container regardless of what the
         # TTS provider emitted (wav/flac/m4a are rejected by the CDN with 415).
         if mtype == "audio":
@@ -185,6 +198,11 @@ class MediaUploadMixin(MaxBaseMixin):
                 resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
                 resp.raise_for_status()
                 d = resp.json()
+                rec = d.get("message", {}).get("recipient", {})
+                resp_cid = rec.get("chat_id")
+                resp_uid = rec.get("user_id") or params.get("user_id")
+                if resp_cid and resp_uid:
+                    self._remember_dm(resp_cid, resp_uid)
                 mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
                 return SendResult(success=True, message_id=mid, raw_response=d)
             except httpx.HTTPStatusError as e:

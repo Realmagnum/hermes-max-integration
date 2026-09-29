@@ -41,5 +41,48 @@ class MaxBaseMixin(BasePlatformAdapter):
     _running: bool
     _stop: asyncio.Event
     _background_tasks: set[asyncio.Task]
+    _dm_user_ids: dict[str, str]
+    _dm_chat_ids: dict[str, str]
 
-    # Shared properties and utilities can be added here
+    def _remember_dm(self, chat_id: str | int | None, user_id: str | int | None) -> None:
+        """Record bidirectional mapping between MAX DM chat_id and user_id.
+
+        Hermes Core addresses DMs via scoped 'user:<user_id>' for user-level session
+        isolation, but the MAX Bot API strictly requires the integer chat_id for
+        chat endpoints such as POST /chats/{chat_id}/actions and GET /chats/{chat_id}.
+        """
+        if not chat_id or not user_id:
+            return
+        cid = str(chat_id).strip()
+        uid = str(user_id).strip()
+        if not cid or not uid:
+            return
+        if not hasattr(self, "_dm_user_ids") or self._dm_user_ids is None:
+            self._dm_user_ids = {}
+        if not hasattr(self, "_dm_chat_ids") or self._dm_chat_ids is None:
+            self._dm_chat_ids = {}
+        self._dm_user_ids[cid] = uid
+        self._dm_user_ids[f"chat:{cid}"] = uid
+        self._dm_chat_ids[uid] = cid
+        self._dm_chat_ids[f"user:{uid}"] = cid
+
+    def _resolve_chat_id(self, chat_id: str) -> str:
+        """Resolve a scoped chat_id (e.g. 'user:123' or 'chat:456') to a MAX chat_id.
+
+        For DMs where chat_id is 'user:<uid>' or '<uid>', looks up the actual
+        MAX dialog chat_id in _dm_chat_ids. If known, returns that chat_id.
+        Otherwise falls back to the raw target ID.
+        """
+        if not chat_id:
+            return ""
+        dm_chat_ids = getattr(self, "_dm_chat_ids", None)
+        if dm_chat_ids:
+            if chat_id in dm_chat_ids:
+                return dm_chat_ids[chat_id]
+            parts = chat_id.split(":", 1)
+            raw_id = parts[1] if len(parts) > 1 else chat_id
+            if raw_id in dm_chat_ids:
+                return dm_chat_ids[raw_id]
+            return raw_id
+        parts = chat_id.split(":", 1)
+        return parts[1] if len(parts) > 1 else chat_id

@@ -114,6 +114,64 @@ class TestSendAction:
         await a.send_action("user:1", "typing")
         await a.send_action("user:1", "sending_file")
 
+    @pytest.mark.asyncio
+    async def test_send_action_resolves_dm_chat_id(self):
+        """When a DM mapping is stored, send_action must target the real MAX dialog chat ID."""
+        a = self._make_adapter()
+        a._remember_dm(chat_id="-70987654321", user_id="95825064")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+
+        # Scoped "user:<user_id>" from Hermes Core
+        await a.send_action("user:95825064", "typing")
+        url = a._http_client.post.call_args[0][0]
+        assert "chats/-70987654321/actions" in url
+        assert a._http_client.post.call_args[1]["json"]["action"] == "typing_on"
+
+        # Raw user_id
+        await a.send_action("95825064", "sending_photo")
+        url = a._http_client.post.call_args[0][0]
+        assert "chats/-70987654321/actions" in url
+        assert a._http_client.post.call_args[1]["json"]["action"] == "sending_photo"
+
+    @pytest.mark.asyncio
+    async def test_stop_typing_sends_typing_off(self):
+        """stop_typing must invoke send_action with typing_off."""
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+
+        await a.stop_typing("chat:123")
+        url = a._http_client.post.call_args[0][0]
+        assert "chats/123/actions" in url
+        assert a._http_client.post.call_args[1]["json"]["action"] == "typing_off"
+
+    @pytest.mark.asyncio
+    async def test_send_action_extended_aliases(self):
+        """Convenience action names (image, audio, voice, etc.) map to MAX Bot API actions."""
+        a = self._make_adapter()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        a._http_client.post = AsyncMock(return_value=mock_resp)
+
+        aliases = {
+            "image": "sending_photo",
+            "photo": "sending_photo",
+            "voice": "sending_audio",
+            "audio": "sending_audio",
+            "record_audio": "sending_audio",
+            "recording_voice": "sending_audio",
+            "document": "sending_file",
+            "file": "sending_file",
+            "video": "sending_video",
+        }
+        for alias, expected in aliases.items():
+            await a.send_action("chat:123", alias)
+            body = a._http_client.post.call_args[1]["json"]
+            assert body["action"] == expected, f"{alias} -> {body['action']}"
+
 
 class TestSendButtons:
     """Tests for send_buttons (generic inline buttons)."""

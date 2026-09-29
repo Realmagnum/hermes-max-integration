@@ -789,8 +789,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             "queue_peak": 0, "handlers_peak": 0,
         }
         self._drop_log_interval = 50
-        # DM routing: chat_id → user_id
+        # DM routing: chat_id <-> user_id
         self._dm_user_ids: dict[str, str] = {}
+        self._dm_chat_ids: dict[str, str] = {}
 
         # Callback state is bound to owner/chat/message and expires (SEC-01).
         self._init_callback_auth()
@@ -1348,7 +1349,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             cid = str(payload.get("chat_id", ""))
             uid = str(user.get("user_id", ""))
             payload_text = payload.get("payload", "")
-            self._dm_user_ids[cid] = uid
+            if cid and uid:
+                self._remember_dm(cid, uid)
+            else:
+                self._dm_user_ids[cid] = uid
             source = self.build_source(
                 chat_id=f"user:{uid}",
                 chat_name=user.get("name", uid),
@@ -1441,7 +1445,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             scoped_chat_id = f"user:{user_id}"
 
         # Store DM mapping
-        self._dm_user_ids[str(chat_id_str or user_id)] = user_id
+        if chat_id_str and user_id:
+            self._remember_dm(chat_id_str, user_id)
+        else:
+            self._dm_user_ids[str(chat_id_str or user_id)] = user_id
 
         # Dedup: suppress only messages inside the configurable TTL and keep
         # the table under its advertised hard cap even during a fresh burst.
@@ -2333,6 +2340,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                 resp.raise_for_status()
                 data = resp.json()
                 msg = data.get("message", {})
+                rec = msg.get("recipient", {})
+                resp_cid = rec.get("chat_id")
+                resp_uid = rec.get("user_id") or params.get("user_id")
+                if resp_cid and resp_uid:
+                    self._remember_dm(resp_cid, resp_uid)
                 last_result = SendResult(
                     success=True,
                     message_id=str(
@@ -2520,6 +2532,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         """Send an image via URL attachment."""
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
+        try:
+            await self.send_action(chat_id, "sending_photo")
+        except Exception:
+            pass
         parts = chat_id.split(":", 1)
         target_type = parts[0] if len(parts) > 1 else "user"
         target_id = parts[1] if len(parts) > 1 else chat_id
@@ -2534,6 +2550,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
             resp.raise_for_status()
             d = resp.json()
+            rec = d.get("message", {}).get("recipient", {})
+            resp_cid = rec.get("chat_id")
+            resp_uid = rec.get("user_id") or params.get("user_id")
+            if resp_cid and resp_uid:
+                self._remember_dm(resp_cid, resp_uid)
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
         except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
@@ -2570,6 +2591,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if not images:
             return SendResult(success=False, error="No images provided")
 
+        try:
+            await self.send_action(chat_id, "sending_photo")
+        except Exception:
+            pass
+
         # Upload all images concurrently
         tokens: list[str] = []
         captions: list[str] = []
@@ -2604,6 +2630,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
             resp.raise_for_status()
             d = resp.json()
+            rec = d.get("message", {}).get("recipient", {})
+            resp_cid = rec.get("chat_id")
+            resp_uid = rec.get("user_id") or params.get("user_id")
+            if resp_cid and resp_uid:
+                self._remember_dm(resp_cid, resp_uid)
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
         except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
@@ -2678,17 +2709,18 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         """Return basic chat info from MAX API."""
         if not self._http_client:
             return {"name": chat_id, "type": "dm", "chat_id": chat_id}
+        target_id = self._resolve_chat_id(chat_id)
         try:
-            resp = await self._http_client.get(f"{MAX_API_BASE}/chats/{chat_id}")
+            resp = await self._http_client.get(f"{MAX_API_BASE}/chats/{target_id}")
             if resp.status_code == 200:
                 d = resp.json()
                 return {
                     "name": d.get("name", d.get("title", chat_id)),
                     "type": d.get("type", "dm"),
-                    "chat_id": chat_id,
+                    "chat_id": str(d.get("chat_id", target_id)),
                 }
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.debug("MAX: failed to fetch chat info for %s: %s", chat_id, exc)
+            logger.debug("MAX: failed to fetch chat info for %s (%s): %s", chat_id, target_id, exc)
         return {"name": chat_id, "type": "dm", "chat_id": chat_id}
 
     # Interactive buttons (send_buttons, send_action, approval/clarify)
@@ -2717,6 +2749,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             or ""
         )
         chat_id = str(raw_chat_id)
+        if chat_id and user_id:
+            self._remember_dm(chat_id, user_id)
         is_dialog = str(recipient.get("chat_type") or "").lower() == "dialog"
         scoped_chat_id = f"user:{user_id}" if is_dialog or not chat_id else f"chat:{chat_id}"
         message_id = str((msg.get("body") or {}).get("mid") or msg.get("mid") or "")

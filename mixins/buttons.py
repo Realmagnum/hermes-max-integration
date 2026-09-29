@@ -28,7 +28,17 @@ class ButtonsMixin(MaxBaseMixin):
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """Send typing indicator (delegates to send_action)."""
-        await self.send_action(chat_id, "typing")
+        if metadata is not None:
+            await self.send_action(chat_id, "typing", metadata=metadata)
+        else:
+            await self.send_action(chat_id, "typing")
+
+    async def stop_typing(self, chat_id: str, metadata=None) -> None:
+        """Clear typing indicator (delegates to send_action with typing_off)."""
+        if metadata is not None:
+            await self.send_action(chat_id, "typing_off", metadata=metadata)
+        else:
+            await self.send_action(chat_id, "typing_off")
 
     async def send_action(self, chat_id: str, action: str = "typing", metadata=None) -> None:
         """Send a chat action indicator. Best-effort (silent on failure).
@@ -38,8 +48,8 @@ class ButtonsMixin(MaxBaseMixin):
           typing_off          — скрыть «печатает»
           sending_photo       — отправляет фото
           sending_video       — отправляет видео
-          sending_audio       — отправляет аудио
-          sending_file        — отправляет файл
+          sending_audio       — отправляет аудио / записывает голосовое
+          sending_file        — отправляет файл / документ
           read                — отметить как прочитано
 
         Args:
@@ -56,15 +66,36 @@ class ButtonsMixin(MaxBaseMixin):
             "typing_on": "typing_on",
             "typing_off": "typing_off",
             "sending_photo": "sending_photo",
+            "sending_image": "sending_photo",
+            "photo": "sending_photo",
+            "image": "sending_photo",
+            "upload_photo": "sending_photo",
+            "upload_image": "sending_photo",
             "sending_video": "sending_video",
+            "video": "sending_video",
+            "upload_video": "sending_video",
             "sending_audio": "sending_audio",
+            "audio": "sending_audio",
+            "voice": "sending_audio",
+            "record_audio": "sending_audio",
+            "recording_audio": "sending_audio",
+            "record_voice": "sending_audio",
+            "recording_voice": "sending_audio",
+            "upload_audio": "sending_audio",
             "sending_file": "sending_file",
+            "file": "sending_file",
+            "document": "sending_file",
+            "sending_document": "sending_file",
+            "upload_file": "sending_file",
+            "upload_document": "sending_file",
             "read": "read",
+            "mark_read": "read",
         }
         api_action = action_map.get(action.lower().strip(), "typing_on")
 
-        parts = chat_id.split(":", 1)
-        target_id = parts[1] if len(parts) > 1 else chat_id
+        target_id = self._resolve_chat_id(chat_id)
+        if not target_id:
+            return
 
         try:
             await self._http_client.post(
@@ -73,7 +104,7 @@ class ButtonsMixin(MaxBaseMixin):
                 timeout=httpx.Timeout(3.0),
             )
         except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.debug("MAX: send_action failed: %s", exc)
+            logger.debug("MAX: send_action failed for chat %s (target %s): %s", chat_id, target_id, exc)
 
     async def _post_interactive(
         self, chat_id: str, text: str, buttons: list[list[dict[str, str]]],
@@ -112,6 +143,11 @@ class ButtonsMixin(MaxBaseMixin):
             )
             resp.raise_for_status()
             d = resp.json()
+            rec = d.get("message", {}).get("recipient", {})
+            resp_cid = rec.get("chat_id")
+            resp_uid = rec.get("user_id") or params.get("user_id")
+            if resp_cid and resp_uid:
+                self._remember_dm(resp_cid, resp_uid)
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
         except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
