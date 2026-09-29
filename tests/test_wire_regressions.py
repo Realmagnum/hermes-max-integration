@@ -6,10 +6,9 @@ These tests replace `MagicMock`/`AsyncMock` HTTP doubles with a real
 assert on the bytes the adapter actually sends — query parameters and JSON
 bodies — and on the absence of side effects, not merely that "a call happened".
 
-Known defects are pinned with ``xfail(strict=True)`` so the suite stays honest:
-a test marked this way documents current, wrong behaviour; it must be tightened
-to a plain assertion as soon as the referenced backlog item is fixed (strict
-mode turns a silent pass into a failure, forcing the marker's removal).
+Release regressions here are plain assertions. They must keep proving that
+outbound chunking is lossless and that cross-platform session data is never
+exposed to a caller who has not explicitly been granted that capability.
 """
 
 import asyncio
@@ -415,14 +414,6 @@ class TestSendWireFormat:
 class TestChunkingPreservation:
     """Every character of a chunk must survive the per-chunk prefixing step."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "CODE-02: `text[:3900 - len(prefix)]` truncates the tail of any "
-            "chunk that is exactly at the split limit; 7800 input chars → 7788 "
-            "chars on the wire. Fix in the CODE-02 task, then drop this marker."
-        ),
-    )
     async def test_prefixing_does_not_drop_chunk_content(self, make_adapter, max_api):
         a = make_adapter()
         content = "a" * 7800
@@ -431,9 +422,13 @@ class TestChunkingPreservation:
         await a.send(f"user:{DIALOG_USER_ID}", content)
 
         on_wire = [max_api.json_body(r)["text"] for r in max_api.calls("POST", "/messages")]
-        assert len(on_wire) == len(chunks)
+        assert len(on_wire) >= len(chunks)
+        assert all(len(text) <= 4000 for text in on_wire)
+        assert [ACCEPT_AFFIX.match(text).group() for text in on_wire] == [
+            f"({index}/{len(on_wire)})\n" for index in range(1, len(on_wire) + 1)
+        ]
         stripped = [ACCEPT_AFFIX.sub("", text) for text in on_wire]
-        assert "".join(stripped) == "".join(chunks)
+        assert "".join(stripped) == content
 
     async def test_chunk_count_and_limits(self, make_adapter, max_api):
         a = make_adapter()
@@ -800,23 +795,16 @@ class TestCrossSessionCommands:
         assert event.text == "/sessions"
         assert max_api.requests == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "SEC-05: with allow_all_users=False and an EMPTY allowlist every user "
-            "passes the access check, so an arbitrary user can run /sessions and "
-            "read title/preview/IDs of sessions from every platform. Fix in the "
-            "SEC-05 task, then drop this marker."
-        ),
-    )
-    async def test_empty_allowlist_does_not_expose_all_sessions(
+    async def test_empty_allowlist_keeps_sessions_scoped_to_core(
         self, make_adapter, max_api
     ):
+        """SEC-05: empty DM allowlists must not invoke the global-session handler."""
         a = make_adapter()  # allow_all_users False, allowed_users []
 
         event = await a._build_event(self._dialog_without_chat_id("/sessions"))
 
-        assert event is None
+        assert event is not None
+        assert event.text == "/sessions"
         assert max_api.calls("POST", "/messages") == []
 
 

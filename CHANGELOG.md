@@ -8,7 +8,7 @@
 
 ### Релизная верификация
 - Закрыты media/SSRF, callback routing, streaming throttle, cross-session и webhook-регрессии без ослабления fail-closed политик.
-- Подтверждены матрица Python 3.11/3.12, ruff, Bandit и dependency audit. В audit оставлены только шесть явно перечисленных временных исключений для жёстко зафиксированных зависимостей Hermes Core 0.19.0; они должны быть сняты после выхода исправленного Core.
+- Релиз разрешён только после успешного полного CI для точного SHA: Python 3.11/3.12, compatibility с закреплённым current Hermes Core, ruff, Bandit и dependency audit базовых и optional-зависимостей. В `pip-audit` нет исключений; неуспех любого job блокирует тег.
 - Версии `plugin.yaml`, `pyproject.toml` и RU/EN changelog синхронизированы на `2.10.0`.
 
 ## [2.10.0-rc1] — 2026-09-22

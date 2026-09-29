@@ -9,7 +9,7 @@ All notable changes to the hermes-max-integration plugin.
 ### Release verification
 
 - Closed media/SSRF, callback routing, streaming throttle, cross-session, and webhook regressions without weakening fail-closed policies.
-- Verified the Python 3.11/3.12 matrix, ruff, Bandit, and dependency audit. The audit retains only six explicitly listed temporary exceptions for Hermes Core 0.19.0's hard-pinned dependencies; remove them when fixed Core packages are published.
+- A release is permitted only after the full CI workflow succeeds for the exact SHA: Python 3.11/3.12, compatibility with the pinned current Hermes Core, ruff, Bandit, and dependency audits for base and optional dependencies. `pip-audit` has no waivers; any failed job blocks the tag.
 - Synchronized `plugin.yaml`, `pyproject.toml`, and RU/EN changelogs at `2.10.0`.
 
 ### Security

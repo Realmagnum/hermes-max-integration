@@ -114,3 +114,23 @@ pytest -q tests/test_wire_regressions.py
 pytest -q
 ```
 Expected result: 100% PASS across all repository tests.
+
+
+---
+
+## 0.2. RELEASE · Readiness audit on 2026-09-27 — open blockers
+
+**Priority:** P0
+
+**Status:** not release-ready. The audit covers the actual `RC-2.10` HEAD `0d34723`, not merely merged PR #1.
+
+**Blockers:**
+
+1. **CORE-01 · Hermes Core compatibility.** Gitea Actions run #123 on `0d34723` failed: `test-current-core` reports `1 failed, 702 passed, 12 skipped, 2 xfailed`. `TestHappyPaths::test_all_media_of_a_message_is_returned_in_order` returns two of three expected inbound attachments; the image is rejected as invalid data.
+2. **SEC-05 · Empty allowlist exposes cross-platform sessions.** A strict xfail in `tests/test_wire_regressions.py` documents that with `allow_all_users=False` and an empty allowlist, an arbitrary user can invoke `/sessions` and read session titles, previews, and IDs.
+3. **REL-01 · Release flow is incomplete.** PR #1 was merged only into `RC-2.10`; `main` remains at its 2026-08-21 commit. `scripts/release.sh` requires `main`, and neither a `v2.10.0` tag nor a Gitea Release exists.
+4. **REL-02 · No isolated MAX E2E.** Production sign-off requires an E2E log with a test bot and public HTTPS endpoint; the required infrastructure and credentials do not yet exist.
+
+**Required exit criteria:** fix CORE-01 and SEC-05, remove both strict xfails, obtain a green full CI on the final SHA, deliver the candidate to `main` through the approved flow, and create `v2.10.0` only after successful gates and E2E.
+
+**Non-blocking risk:** CODE-02 is a strict xfail for tail loss at the message-chunk boundary. Current CI runs dependency audit without `--ignore-vuln`; stale references to six temporary exceptions must be reconciled with the active workflow.

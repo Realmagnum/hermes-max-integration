@@ -65,8 +65,14 @@ jobs:
 
       - name: Install pinned current Hermes Core and plugin
         run: |
-          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-core
-          git -C /tmp/hermes-core checkout d0288be5b3330d2442e3907185b8e9d0958297bb
+          # A depth-1 clone contains only the current branch tip, which may not
+          # include this pinned commit. Fetch the exact object instead; a fetch
+          # failure is a release-gate failure, never a fallback to current HEAD.
+          git init /tmp/hermes-core
+          git -C /tmp/hermes-core remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C /tmp/hermes-core fetch --no-tags --depth=1 origin d0288be5b3330d2442e3907185b8e9d0958297bb
+          git -C /tmp/hermes-core checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/hermes-core rev-parse HEAD)" = "d0288be5b3330d2442e3907185b8e9d0958297bb"
           python -m pip install --upgrade pip
           pip install -e /tmp/hermes-core
           pip install -e .
@@ -109,8 +115,14 @@ jobs:
 
       - name: Install pinned current Hermes Core and audit tooling
         run: |
-          git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-core
-          git -C /tmp/hermes-core checkout d0288be5b3330d2442e3907185b8e9d0958297bb
+          # A depth-1 clone contains only the current branch tip, which may not
+          # include this pinned commit. Fetch the exact object instead; a fetch
+          # failure is a release-gate failure, never a fallback to current HEAD.
+          git init /tmp/hermes-core
+          git -C /tmp/hermes-core remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C /tmp/hermes-core fetch --no-tags --depth=1 origin d0288be5b3330d2442e3907185b8e9d0958297bb
+          git -C /tmp/hermes-core checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/hermes-core rev-parse HEAD)" = "d0288be5b3330d2442e3907185b8e9d0958297bb"
           python -m pip install --upgrade pip
           pip install pip-audit
           pip install -e /tmp/hermes-core
