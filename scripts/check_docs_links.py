@@ -87,7 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         if pth.is_file() and pth.suffix == ".md":
             md_files.append(pth.resolve())
         else:
-            md_files.extend(sorted(pth.rglob("*.md")))
+            for f in sorted(pth.rglob("*.md")):
+                parts = set(f.parts)
+                if ".venv" in parts or ".git" in parts or ".pytest_cache" in parts:
+                    continue
+                md_files.append(f.resolve())
 
     problems: list[str] = []
     for md in md_files:
