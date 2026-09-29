@@ -13,7 +13,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from max.mixins.media_upload import (
     _AUDIO_PASSTHROUGH_CONTAINERS,
     _sniff_audio_container,

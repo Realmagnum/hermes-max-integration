@@ -224,7 +224,17 @@ class ButtonsMixin(MaxBaseMixin):
 
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
-            self._exec_approval_state[approval_id] = session_key
+            # SEC-01: bind the prompt to its owner, chat and message so only
+            # that user can resolve it (see mixins/callback_auth.py).
+            self._register_interaction(
+                "exec", approval_id,
+                session_key=session_key,
+                owner_user_id=self._resolve_interaction_owner(
+                    session_key, chat_id, metadata,
+                ),
+                chat_id=chat_id,
+                message_id=result.message_id,
+            )
         return result
 
     async def send_slash_confirm(
@@ -257,7 +267,16 @@ class ButtonsMixin(MaxBaseMixin):
 
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
-            self._slash_confirm_state[confirm_id] = session_key
+            # SEC-01: owner/chat/message binding + TTL.
+            self._register_interaction(
+                "sc", confirm_id,
+                session_key=session_key,
+                owner_user_id=self._resolve_interaction_owner(
+                    session_key, chat_id, metadata,
+                ),
+                chat_id=chat_id,
+                message_id=result.message_id,
+            )
         return result
 
     async def send_clarify(
@@ -307,7 +326,16 @@ class ButtonsMixin(MaxBaseMixin):
             text = f"**{question}**"[:MAX_MESSAGE_LENGTH]
             result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
             if result.success:
-                self._clarify_state[clarify_id] = session_key
+                # SEC-01: owner/chat/message binding + TTL.
+                self._register_interaction(
+                    "clarify", clarify_id,
+                    session_key=session_key,
+                    owner_user_id=self._resolve_interaction_owner(
+                        session_key, chat_id, metadata,
+                    ),
+                    chat_id=chat_id,
+                    message_id=result.message_id,
+                )
             return result
         else:
             # Open-ended — just send the question as plain text

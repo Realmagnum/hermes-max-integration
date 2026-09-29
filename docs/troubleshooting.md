@@ -12,7 +12,7 @@ cd ~/.hermes/plugins/max-platform
 # Базовая диагностика (без отправки сообщения)
 ./scripts/diagnose.sh
 
-# Полная диагностика с E2E-тестом
+# Диагностика с исходящим API smoke-тестом (не полный E2E)
 ./scripts/diagnose.sh --send
 ```
 
@@ -77,21 +77,34 @@ curl -H "Authorization: ваш_токен" \
 
 **Симптомы:**
 - Голосовые сообщения не транскрибируются
-- В логах: `STT returned empty transcription`
+- В чат приходит `🎙️ ""` либо агент видит `[voice message could not be transcribed automatically; the audio is available at: …]`
+- В логах ядра: `Voice transcription failed for <path>: <error>`
 
-**Причина:** Нет faster-whisper или модель не загружена
+**Причина:** транскрибирует ядро Hermes (не плагин): STT выключен (`stt.enabled`), не
+задан язык, у выбранного провайдера нет ключа либо не установлен faster-whisper для
+провайдера `local`.
 
 **Решение:**
 ```bash
-# Проверить venv
-ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/
+# 1. Проверить секцию stt: enabled, language, provider
+grep -A8 "^stt:" ~/.hermes/config.yaml
 
-# Установить модель
-~/.hermes/stt-venv/bin/pip install faster-whisper
+# 2. Настроить интерактивно (категория 🎙️ Speech-to-Text)
+hermes tools
 
-# Проверить файл
-ls -la ~/.hermes/audio_cache/max_audio_*.ogg
+# 3. Для provider: local — поставить пакет в Python шлюза Hermes
+python -m pip install faster-whisper
+
+# 4. Убедиться, что аудио скачалось адаптером
+ls -la ~/.hermes/cache/audio/
+
+# 5. Ошибки ядра по транскрибации
+grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
 ```
+
+Отдельный stt-venv, `scripts/transcribe_audio.py` и переменные `MAX_STT_*` не
+используются: плагин только скачивает и кэширует аудио, а настройки STT живут в
+`config.yaml` ядра. Для русского языка задайте `stt.language: ru` (дефолт ядра — `"en"`).
 
 ### 4. Таблицы не рендерятся
 
@@ -104,17 +117,21 @@ ls -la ~/.hermes/audio_cache/max_audio_*.ogg
 
 **Решение:**
 ```bash
+# Каталог плагина (активный профиль Hermes) и Python его venv:
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+
 # Диагностика: что отсутствует?
-python scripts/setup-playwright.py --check-only
+"$HERMES_PY" scripts/setup-playwright.py --check-only
 
 # Установить недостающее (идемпотентно):
-python scripts/setup-playwright.py
+"$HERMES_PY" scripts/setup-playwright.py
 # либо вручную:
-python -m pip install 'playwright>=1.40'
-python -m playwright install chromium
+"$HERMES_PY" -m pip install 'playwright>=1.40'
+"$HERMES_PY" -m playwright install chromium
 
 # Фоллбэк-рендер без браузера:
-python -m pip install Pillow
+"$HERMES_PY" -m pip install Pillow
 
 hermes gateway restart
 ```
@@ -146,14 +163,19 @@ grep -A3 'max:' ~/.hermes/config.yaml | grep fresh_final
 - Webhook не работает
 - Нет ошибок в логах
 
-**Причина:** MinCifry CA не в стандартных бандлах
+**Причина:** CA MAX API отсутствует в стандартных бандлах Python/ОС.
 
-**Решение:**
+**Решение:** плагин не предоставляет переключателя для отключения проверки SSL — переменной `MAX_INSECURE_SSL` в коде нет (`adapter.py`), и такой способ «лечения» неприменим. Добавьте CA в доверенные:
+
 ```bash
-# Для тестов
-MAX_INSECURE_SSL=true
+# Вариант 1: системное хранилище (пример для Debian/Ubuntu)
+sudo cp max-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
 
-# Для production — добавить CA в систему
+# Вариант 2: только для процесса Hermes
+# SSL_CERT_FILE=/path/to/ca-bundle.crt hermes gateway restart
+
+# Проверка цепочки до API
+curl -v https://platform-api.max.ru/me 2>&1 | grep -i "SSL\|certificate"
 ```
 
 ### 7. MAX API auth format error
@@ -219,12 +241,25 @@ sudo systemctl restart hermes-gateway
 
 ## Логи
 
+Перед проверкой сверяйте окружение и режим:
+
+```bash
+printf 'HERMES_HOME=%s\n' "${HERMES_HOME:-$HOME/.hermes}"
+printf 'MAX_WEBHOOK_PORT=%s\n' "${MAX_WEBHOOK_PORT:-8646}"
+command -v python
+python -c 'import sys; print(sys.executable)'
+```
+
+`/health` существует только в webhook-режиме и проверяет локальный HTTP endpoint. `GET /me` проверяет только API smoke. Полный E2E требует реального входящего сообщения MAX, обработки Hermes core и исходящего ответа; подтвердите все три этапа по логам и в MAX.
+
 ### Где искать
 
-**Journald:**
+**Linux systemd:**
 ```bash
 journalctl -u hermes-gateway -f
 ```
+
+Для user service используйте `journalctl --user -u hermes-gateway -f`. На macOS `journalctl` и `systemctl` отсутствуют: смотрите файл, указанный вашим launchd/процесс-менеджером, или запускайте gateway в foreground.
 
 **Файл:**
 ```bash

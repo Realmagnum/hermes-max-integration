@@ -2,6 +2,30 @@
 
 Все заметные изменения в плагине hermes-max-integration.
 
+## [2.10.0] — 2026-09-29
+
+### Безопасность и контроль доступа
+- **SEC-01 (Callback Authorization):** универсальная авторизация callback query с жесткой привязкой владельца (owner_user_id), scoped chat, prompt message id и TTL. Полная защита от перехвата и replay в exec, slash confirm, clarify и model picker.
+- **SEC-02 / SEC-03 (SSRF & Download Origin Hardening):** двухконтурная защита скачивания входящих медиа: строгий fail-closed DNS-пиннинг (блокировка приватных/loopback/link-local IP и DNS rebinding), изолированный download-клиент без передачи `Authorization` чужим хостам, поддержка `MAX_DOWNLOAD_ALLOWED_HOSTS` и явных `MAX_TRUSTED_DOWNLOAD_HOSTS`.
+- **SEC-04 (Fail-closed Webhook):** вебхук запускается только с валидным секретом (или явным локальным `MAX_WEBHOOK_INSECURE_DEV=true` на loopback). Проверка заголовка `X-Max-Bot-Api-Secret` выполняется до чтения и парсинга тела запроса (`_build_webhook_app`). Защита от DoS по размеру тела (`WEBHOOK_MAX_BODY_BYTES` = 1 МиБ).
+- **SEC-05 (Cross-session Access):** кросс-платформенные сессии выключены по умолчанию (`MAX_CROSS_SESSION=false`) и доступны только доверенным владельцам (`MAX_CROSS_SESSION_USERS` / `cross_session_users`).
+- **SEC-06 (Group Policy):** строгая семантика белых списков (`MAX_GROUP_ALLOWED_USERS` и `MAX_GROUP_ALLOWED_CHATS`), объединение списков через AND, fail-closed блокировка при пустом allowlist; поддержка режимов `allowlist`, `closed`, `open`.
+- **SEC-07 (Inbound Media Limits):** ограничение размера входящих вложений (`MAX_INBOUND_MEDIA_MAX_BYTES` = 20 МиБ), лимит суммарного размера медиа в апдейте (`MAX_INBOUND_MEDIA_TOTAL_BYTES` = 50 МиБ), лимит количества файлов (`MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` = 10), таймаут и семафор параллельных загрузок, гарантированная очистка частичных файлов.
+
+### Надежность и транспорт
+- **CODE-01 (Polling Backoff):** экспоненциальный backoff с jitter при ошибках сети/API, уважение заголовка `Retry-After`, немедленная фатальная остановка при 401 Unauthorized без спама в лог.
+- **CODE-02 (Lossless Chunking):** алгоритм разбиения длинных сообщений без потери пробелов, форматирования и блоков кода (`"".join(chunks) == original`); расчет бюджета нумерации до разбиения.
+- **CODE-03 (Streaming Isolation & Flush):** изолированное состояние троттлинга стриминга для каждого `(chat_id, message_id)`, исключающее взаимное подавление сообщений между чатами; гарантированный таймер сброса буфера и мгновенный flush при `finalize=True`.
+- **CODE-04 & CODE-06 (Model Picker Isolation):** поддержка составных model ID с двоеточиями (Ollama tags, OpenRouter free); строгая изоляция состояния выбора модели с привязкой к владельцу и сообщению.
+- **CODE-05 (Webhook Health & Readiness Contract):** четкое разделение контрактов liveness (`GET /health` -> `{"status": "ok"}`), readiness (`GET /ready` -> 200 ready / 503 not_ready) и детальной телеметрии бэкпрешера (`GET /metrics`).
+- **CODE-07 (Lifecycle & Teardown):** безопасный жизненный цикл connect/disconnect с гарантированным await отмененных фоновых задач, закрытием соединений и синхронизацией флагов ядра Hermes.
+- **CODE-08 (Backpressure & Dedup):** ограниченная очередь входящих событий (`MAX_QUEUE_MAXSIZE` = 100), ограничение параллельных воркеров (`MAX_MAX_CONCURRENCY` = 4), настраиваемая политика перегрузки (`MAX_OVERLOAD_POLICY` = `drop_oldest` \| `drop_newest`), LRU-дедупликация (`MAX_DEDUP_MAX`, `MAX_DEDUP_TTL`).
+
+### Документация и качество
+- **DOC-02 (Честная конфигурация):** 100% синхронизация переменных окружения (31 переменная) и ключей `platforms.max` (27 ключей), удаление фантомных настроек, таблица внутренних констант.
+- **DOC-07 & DOC-09 (Синхронизация и честные клеймы):** 100% структурный паритет RU/EN, автоматические проверки клеймов версий и тестов (720 тестов), валидация всех локальных ссылок.
+- **Тестовое покрытие:** расширение набора тестов со 126 до 720 тестов (100% passing).
+
 ## [2.9.0] — 2026-08-17
 
 ### Рефакторинг

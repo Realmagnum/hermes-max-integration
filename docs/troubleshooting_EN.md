@@ -12,7 +12,7 @@ cd ~/.hermes/plugins/max-platform
 # Basic diagnostics (without sending message)
 ./scripts/diagnose.sh
 
-# Full diagnostics with E2E test
+# Diagnostics with outbound API smoke test (not full E2E)
 ./scripts/diagnose.sh --send
 ```
 
@@ -76,22 +76,35 @@ curl -H "Authorization: your_token" \
 ### 3. STT returns empty
 
 **Symptoms:**
-- Voice messages not transcribed
-- Logs: `STT returned empty transcription`
+- Voice messages are not transcribed
+- The chat gets `🎙️ ""`, or the agent sees `[voice message could not be transcribed automatically; the audio is available at: …]`
+- Core logs: `Voice transcription failed for <path>: <error>`
 
-**Cause:** No faster-whisper or model not loaded
+**Cause:** transcription is done by the Hermes core (not the plugin): STT is disabled
+(`stt.enabled`), the language is not set, the selected provider has no API key, or
+faster-whisper is missing for the `local` provider.
 
 **Solution:**
 ```bash
-# Check venv
-ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/
+# 1. Check the stt section: enabled, language, provider
+grep -A8 "^stt:" ~/.hermes/config.yaml
 
-# Install model
-~/.hermes/stt-venv/bin/pip install faster-whisper
+# 2. Configure interactively (the 🎙️ Speech-to-Text category)
+hermes tools
 
-# Check file
-ls -la ~/.hermes/audio_cache/max_audio_*.ogg
+# 3. For provider: local — install the package into the Hermes gateway Python
+python -m pip install faster-whisper
+
+# 4. Make sure the adapter actually downloaded the audio
+ls -la ~/.hermes/cache/audio/
+
+# 5. Core transcription errors
+grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
 ```
+
+A dedicated stt-venv, `scripts/transcribe_audio.py` and the `MAX_STT_*` variables are not
+used: the plugin only downloads and caches audio, while STT settings live in the core
+`config.yaml`. For Russian set `stt.language: ru` (the core default is `"en"`).
 
 ### 4. Tables not rendering
 
@@ -104,17 +117,21 @@ missing (fallback). Both must be installed into the Hermes gateway Python (venv)
 
 **Solution:**
 ```bash
+# Plugin directory (active Hermes profile) and the interpreter of its venv:
+cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
+HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
+
 # Diagnostics: what is missing?
-python scripts/setup-playwright.py --check-only
+"$HERMES_PY" scripts/setup-playwright.py --check-only
 
 # Install what's missing (idempotent):
-python scripts/setup-playwright.py
+"$HERMES_PY" scripts/setup-playwright.py
 # or manually:
-python -m pip install 'playwright>=1.40'
-python -m playwright install chromium
+"$HERMES_PY" -m pip install 'playwright>=1.40'
+"$HERMES_PY" -m playwright install chromium
 
 # Fallback renderer without a browser:
-python -m pip install Pillow
+"$HERMES_PY" -m pip install Pillow
 
 hermes gateway restart
 ```
@@ -146,14 +163,19 @@ grep -A3 'max:' ~/.hermes/config.yaml | grep fresh_final
 - Webhook not working
 - No errors in logs
 
-**Cause:** MinCifry CA not in standard bundles
+**Cause:** The MAX API CA is missing from the standard Python/OS bundles.
 
-**Solution:**
+**Solution:** the plugin offers no switch to disable SSL verification — there is no `MAX_INSECURE_SSL` variable in the code (`adapter.py`), so that "fix" does not apply. Add the CA to the trusted stores:
+
 ```bash
-# For testing
-MAX_INSECURE_SSL=true
+# Option 1: system store (Debian/Ubuntu example)
+sudo cp max-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
 
-# For production — add CA to system
+# Option 2: the Hermes process only
+# SSL_CERT_FILE=/path/to/ca-bundle.crt hermes gateway restart
+
+# Verify the chain to the API
+curl -v https://platform-api.max.ru/me 2>&1 | grep -i "SSL\|certificate"
 ```
 
 ### 7. MAX API auth format error
@@ -219,12 +241,25 @@ sudo systemctl restart hermes-gateway
 
 ## Logs
 
+Before checking, confirm the environment and mode:
+
+```bash
+printf 'HERMES_HOME=%s\n' "${HERMES_HOME:-$HOME/.hermes}"
+printf 'MAX_WEBHOOK_PORT=%s\n' "${MAX_WEBHOOK_PORT:-8646}"
+command -v python
+python -c 'import sys; print(sys.executable)'
+```
+
+`/health` exists only in webhook mode and checks the local HTTP endpoint. `GET /me` checks only the API smoke path. Full E2E requires a real inbound MAX message, Hermes core processing, and an outbound reply; confirm all three in logs and in MAX.
+
 ### Where to find
 
-**Journald:**
+**Linux systemd:**
 ```bash
 journalctl -u hermes-gateway -f
 ```
+
+For a user service use `journalctl --user -u hermes-gateway -f`. macOS has no `journalctl` or `systemctl`; inspect the file configured by launchd/your process manager or run the gateway in the foreground.
 
 **File:**
 ```bash

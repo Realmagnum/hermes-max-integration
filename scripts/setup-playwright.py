@@ -67,7 +67,7 @@ def probe(py: str, code: str) -> str:
     """Run a snippet with the target interpreter; return trimmed output."""
     try:
         r = subprocess.run(
-            [py, "-c", code], capture_output=True, text=True, timeout=120
+            [py, "-c", code], capture_output=True, text=True, timeout=120, check=False
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -86,12 +86,12 @@ def playwright_installed(py: str) -> bool:
 def run(cmd: list[str], quiet: bool = False) -> int:
     """Run a subprocess, streaming output unless quiet; return exit code."""
     if quiet:
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if r.returncode != 0:
             print(f"command failed (rc={r.returncode}): {' '.join(cmd)}")
             print((r.stderr or r.stdout).strip()[-2000:])
         return r.returncode
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, check=False).returncode
 
 
 def main() -> int:

@@ -20,6 +20,8 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
 | 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
 | 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
+| 🔗 **Link Buttons** | Link buttons in messages (`send_buttons()` with type `link`) |
+| 👁️ **send_action** | Extended statuses: typing, sending_photo/video/audio/file, read, typing_off |
 | ✂️ **Auto-chunking** | Smart 4000-char message splitting preserving paragraphs |
 | ⬆️ **File Upload** | Two-step upload: `POST /uploads` → PUT → token → send |
 | 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
@@ -27,7 +29,8 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
-| 🧪 **Tested** | pytest + pytest-asyncio, **126 tests** |
+| 🌐 **Cross-Platform Sessions** | `/sessions` shows sessions across ALL platforms, `/resume <id>` switches to any. Requires explicit opt-in (`MAX_CROSS_SESSION=true`) and a trusted owner |
+| 🧪 **Tested** | pytest + pytest-asyncio, **720 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
 
@@ -108,9 +111,9 @@ Each status cell gets a colored icon: ✓ green, ✗ red, ⚠ orange, ◷ amber,
 
 ### Why images instead of native tables?
 
-**Telegram** supports markdown tables natively — just send `| A | B |` with `format=markdown`, and the client renders columns, borders, and alignment automatically.
+**Telegram:** the classic parse modes (`parse_mode=Markdown`, `MarkdownV2`, `HTML`) do **not** support tables — `| A | B |` with `format=markdown` does not create one. Tables arrived only with Bot API 10.1 (June 11, 2026) as part of Rich Messages, via the separate `sendRichMessage` method (`RichBlockTable`).
 
-**MAX** does not support tables in markdown. The supported formatting is limited to `*italic*`, `**bold**`, `` `code` ``, `[links](url)`, `# headings`, `> quotes`. Pipe syntax (`| A | B |`) and fenced code blocks (`` ``` ``) are not in the supported list.
+**MAX** supports tables in neither Markdown nor HTML. The official formatting list (dev.max.ru/docs-api, "Форматирование текста в сообщениях", checked 2026-09-16) covers italic, bold, strikethrough, underline, monospace, links, mentions, highlight, headings and quotes; tables and fenced blocks are not in it.
 
 We tried several approaches before settling on PNG:
 
@@ -122,7 +125,7 @@ We tried several approaches before settling on PNG:
 | Plain text with `\|` and `---` | Readable but looks messy without monospace |
 | **Pillow PNG** ✅ | **Full control: colors, borders, icons, fonts** |
 
-**Bottom line:** PNG images deliver what Telegram provides natively — clean tables with colored status badges. Bonus: images can be forwarded and don't depend on the client's markdown parser. Trade-off: cell text is not copyable.
+**Bottom line:** PNG images provide what MAX has no native format for — clean tables with colored status badges (Telegram needs Bot API 10.1+ and `sendRichMessage` for the same result). Bonus: images can be forwarded and don't depend on the client's markdown parser. Trade-off: cell text is not copyable.
 
 ## Comparison with Upstream
 
@@ -138,7 +141,7 @@ We tried several approaches before settling on PNG:
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 94 tests |
+| Tests | ✅ Basic | ✅ 720 tests |
 | Interactive setup | ✅ | ✅ + tables |
 
 ## Architecture
@@ -277,16 +280,14 @@ Check active subscriptions: `GET /subscriptions` with the same token.
 
 When using reasoning models (DeepSeek R1, Claude Opus, Gemini Thinking, etc.), the reasoning block (`💭 **Reasoning:**`) is automatically prepended to the final response.
 
-To ensure reasoning appears as a **fresh separate message** (rather than an edit of the last streamed draft), add to `~/.hermes/config.yaml`:
+To have reasoning appear as a **fresh separate message** (rather than an edit of the last streamed draft), core exposes `streaming.fresh_final_after_seconds`:
 
 ```yaml
-display:
-  platforms:
-    max:
-      fresh_final_after_seconds: 10
+streaming:
+  fresh_final_after_seconds: 10
 ```
 
-This tells the gateway to deliver the final answer as a new message if streaming lasted longer than 10 seconds — the reasoning block is included in full. Without this setting, reasoning is prepended to the last streaming edit and may go unnoticed.
+**Important (verified on Hermes core 0.21.3, 2026-09-16):** the key is read only from the top-level `streaming:` section (not `display.platforms.max.*`) and is applied to **Telegram only** — `gateway/run_turn.py` forces `0.0` for every other platform. It therefore does nothing for MAX: reasoning stays a prefix on the final edit. If reasoning is not visible in MAX, check your core's streaming/reasoning behaviour instead of setting this key as a "MAX fix".
 
 ### 🔍 Diagnostics
 
@@ -309,7 +310,6 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | Env Variable | Required | Default | Description |
 |-------------|----------|---------|-------------|
 | `MAX_BOT_TOKEN` | ✅ | — | Bot token from Max Platform |
-| `MAX_API_BASE` | ❌ | `https://platform-api.max.ru` | API base URL (docs now recommend `https://platform-api2.max.ru`) |
 | `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
 | `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
 | `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
@@ -323,9 +323,91 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first table render (needs network, 1–2 min) |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
-| `MAX_INSECURE_SSL` | ❌ | `false` | Disable SSL verification (testing only) |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; explicit opt-in required (see below) |
 
-## Table Image Symbol Reference
+---
+
+## 🌐 Cross-Platform Sessions
+
+**Why:** by default, Hermes core only exposes sessions within the same platform — MAX sees only MAX sessions. This makes sense for multi-tenant setups, but is inconvenient when a single user works across multiple platforms.
+
+**How it works:** the adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` without platform filtering, and formats the response.
+
+| Command | Action | Example Output |
+|---------|--------|----------------|
+| `/sessions` | Last 15 sessions across all platforms | `1. 💻 cli — Zabbix deploy...` |
+| `/sessions search <q>` | Search across all sessions | `🔍 Sessions matching "traefik"` |
+| `/resume <id>` | Switch to any session | (switches without error) |
+
+**Requirement:** for `/resume --all`, add `max` to `platforms:` in config.yaml:
+```yaml
+platforms:
+  max:
+    extra:
+      allow_admin_from:
+        - "95825064"  # your MAX user_id
+```
+
+**Disabling:** `MAX_CROSS_SESSION=false` in `.env` — reverts to core standard behavior (MAX sessions only).
+
+---
+
+## 👁️ send_action — Extended Statuses
+
+`send_typing()` now delegates to `send_action()`, which supports all MAX API statuses:
+
+| Method | action | MAX API | Description |
+|--------|--------|---------|-------------|
+| `send_typing()` | `typing` | `typing_on` | Typing (default) |
+| `send_action(cid, "typing_off")` | `typing_off` | `typing_off` | Hide typing indicator |
+| `send_action(cid, "sending_photo")` | `sending_photo` | `sending_photo` | Sending photo |
+| `send_action(cid, "sending_video")` | `sending_video` | `sending_video` | Sending video |
+| `send_action(cid, "sending_audio")` | `sending_audio` | `sending_audio` | Sending audio |
+| `send_action(cid, "sending_file")` | `sending_file` | `sending_file` | Sending file |
+| `send_action(cid, "read")` | `read` | `read` | Mark as read |
+
+```python
+await adapter.send_action("chat:123", "sending_file")
+```
+
+## 🔗 Link Buttons and send_buttons()
+
+New public method `send_buttons()` — send messages with inline buttons of any type:
+
+```python
+await adapter.send_buttons(
+    chat_id="chat:123",
+    text="Choose action:",
+    buttons=[
+        {"type": "link", "text": "🌐 Open website", "url": "https://example.com"},
+        {"type": "callback", "text": "✅ Confirm", "payload": "confirm:123"},
+        {"type": "request_contact", "text": "📞 Share contact"},
+    ],
+)
+```
+
+Supported button types:
+
+| type | Parameters | Description |
+|------|------------|-------------|
+| `callback` | `text`, `payload` (+ opt. `label`) | Inline callback with payload |
+| `link` | `text`, `url` (+ opt. `label`) | Opens URL |
+| `message` | `text`, `payload` (+ opt. `label`) | Sends pre-filled message |
+| `request_contact` | `text` (+ opt. `label`) | Request contact |
+| `request_geo_location` | `text` (+ opt. `label`) | Request geolocation |
+
+Each button takes a separate row (full width). Standard MAX limit — up to 10 buttons per message.
+
+With 3+ buttons, they are automatically numbered (`1.`, `2.`, `3.`...) both in the message body and on the buttons themselves.
+
+Optional `label` field contains **full description text** for fallback in the message body — unlike `text` (which goes onto the button and may be truncated by MAX on mobile devices). If `label` is omitted, `text` is used.
+
+```python
+# text — short (for button), label — full (for description)
+{"type": "callback", "text": "Basic", "label": "Basic — $5/mo, 10GB", "payload": "basic"}
+```
+
+If you need multiple buttons in a single row — use `_post_interactive()` directly with prepared row structure.
 
 | Input Emoji | Rendered As | Meaning | Color |
 |------------|-------------|---------|-------|
@@ -333,7 +415,7 @@ The script checks 8 items: plugin status, MAX connection, activity (polling or w
 | ❌ | ✗ | Failed / Error | `#dc2626` |
 | ⚠️ | ⚠ | In review / Warning | `#ea580c` |
 | ⏳ / ⌛ | ◷ | Pending | `#ca8a04` |
-| ⏳ + "scheduled" | ▶ | Scheduled | `#3b82f6` |
+| ⏳ + schedule | ▶ | Scheduled | `#3b82f6` |
 | 🔴 | ● | Critical (red) | `#dc2626` |
 | 🟢 | ● | Good (green) | `#16a34a` |
 | 🟡 | ● | Mid (yellow) | `#ca8a04` |
@@ -365,9 +447,9 @@ hermes send --to max:USER_ID "📦 Files: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xlsx"
     - Multipart POST to CDN → file token
     - `POST /messages` with `attachments: [{"type": "file", "payload": {"token": token}}]`
 
-All files use `type=file` — MAX CDN does not validate content, guaranteeing delivery for any safe extension (.txt, .md, .png, .jpg, .mp3, .pdf, .doc, .xlsx, etc.).
+All files are sent as `type=file`. MAX officially supports only "common formats" for `file` (e.g. TXT, DOC, PDF), up to 4 GB, and a `file` may be combined only with a keyboard attachment in the same message (dev.max.ru/docs-api/methods/POST/uploads and POST /messages, checked 2026-09-16).
 
-⚠️ **MAX CDN limitation:** Extensions `.exe`, `.apk`, `.bat`, `.msi` and other potentially dangerous types are rejected by MAX CDN (HTTP 415 — "File extension is forbidden"). This is a platform limitation, not addressable from the plugin.
+⚠️ **MAX CDN limitation:** Extensions `.exe`, `.apk`, `.bat`, `.msi` and other potentially dangerous types are rejected by MAX (HTTP 415 — "File extension is forbidden"); an unsupported extension returns the same error. This is a platform limitation, not addressable from the plugin, and delivery of "any reasonable extension" is **not** guaranteed — stick to MAX's supported format list.
 
 For **in-session** file delivery (via gateway), use `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — these use the adapter with retry on `attachment.not.ready`.
 
@@ -386,6 +468,8 @@ python3 scripts/apply-core-fix.py       # apply
 python3 scripts/apply-core-fix.py --revert  # revert
 ```
 
+⚠️ **Core-version compatibility (verified on Hermes 0.21.3, 2026-09-16).** The script looks for the markers `# --- Non-media platforms ---` and `if media_files and not message.strip()` in `tools/send_message_tool.py`. Core 0.21.3 reworked that section (it now has a `_PLUGIN_STANDALONE_MEDIA` registry), the markers are gone, and the script exits with `❌ Could not find insertion marker in core file.` — neither apply nor `--revert` takes effect. A run against a copy of core confirmed the live install is not modified, but media-only delivery is not enabled either. Check the markers against your core version before applying; if they differ, the script needs adapting (or wait for native MAX support in core).
+
 After applying:
 ```bash
 hermes send --to max:USER_ID "MEDIA:/tmp/image.png"      # ✅ works
@@ -394,10 +478,11 @@ hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 
 ## Documentation
 
-- [Setup](docs/setup.md) — .env, webhook, security, deployment
-- [Features](docs/features.md) — STT, tables, streaming, buttons, files
-- [API](docs/api.md) — MAX API formats, callbacks, file upload
-- [Troubleshooting](docs/troubleshooting.md) — errors, diagnose.sh, logs
+- [Setup](docs/setup_EN.md) — .env, webhook, security, deployment
+- [Features](docs/features_EN.md) — STT, tables, streaming, buttons, files
+- [API](docs/api_EN.md) — MAX API formats, callbacks, file upload
+- [Troubleshooting](docs/troubleshooting_EN.md) — errors, diagnose.sh, logs
+- [External claims verification](docs/external-claims_EN.md) — MAX/Telegram doc check, sources and date
 
 ## Troubleshooting
 
@@ -430,7 +515,7 @@ grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
 
 ### SSL errors with Max API
 
-Max uses Russian MinCifry CA certificates. For testing: `MAX_INSECURE_SSL=true`
+The plugin never disables TLS verification. Install the trusted MAX certificate chain in the system trust store or runtime image.
 
 ### Voice not transcribing
 
@@ -462,19 +547,16 @@ hermes-max-integration/
 ├── __init__.py              # register() entry point
 ├── pyproject.toml           # Python package config
 ├── adapter.py               # MaxAdapter (~2600 lines)
-├── scripts/
-│   └── apply-core-fix.py      # Optional core patch for MEDIA-only
-├── skills/
-│   └── max-gateway/
-│       └── SKILL.md         # Agent skill
-├── tests/                   # pytest: 126 tests
+├── mixins/                  # Adapter layers: buttons, sessions, webhook, media, tables
+├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
+│                            #   release.sh, setup-playwright.py
+├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
+├── tests/                   # pytest: 720 tests
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)
 ├── cliff-ru.toml            # git-cliff config (RU)
 ├── README.md                # Russian version
-├── docs/
-│   └── webhook.md           # Webhook architecture (Russian)
 └── .github/workflows/ci.yml # CI/CD
 ```
 

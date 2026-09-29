@@ -59,6 +59,10 @@ Next steps:
      MAX_WEBHOOK_PORT=8646
      MAX_WEBHOOK_PATH=/max/webhook
      ```
+     `MAX_WEBHOOK_SECRET` is mandatory: without it the gateway refuses to start
+     webhook mode (fail closed). To debug locally without a secret use long
+     polling, or `MAX_WEBHOOK_INSECURE_DEV=true` together with
+     `MAX_WEBHOOK_HOST=127.0.0.1`.
    - Register the subscription in MAX API (the adapter does this automatically on startup, but manual registration is also possible):
      ```bash
      curl -X POST "https://platform-api.max.ru/subscriptions" \
@@ -76,7 +80,10 @@ Next steps:
    ```bash
    hermes gateway status
    curl http://localhost:8646/health
-   # Expected: {"status":"ok"}
+   # Expected: {"status":"ok"} — the webhook server is alive
+   curl -i http://localhost:8646/ready
+   # Expected: 200 {"status":"ready"} — MAX actually delivers updates here
+   # 503 not_ready = server alive, subscription not registered
    ```
 
 ## Official Max docs

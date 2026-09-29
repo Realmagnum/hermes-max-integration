@@ -2,6 +2,30 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.10.0] — 2026-09-29
+
+### Security & Access Control
+- **SEC-01 (Callback Authorization):** Universal callback query authorization scoped to owner (`owner_user_id`), chat, prompt message ID, and TTL. Complete protection against tampering and replay in exec, slash confirm, clarify, and model picker.
+- **SEC-02 / SEC-03 (SSRF & Download Origin Hardening):** Multi-layered inbound media download protection: strict fail-closed DNS pinning (blocking private/loopback/link-local IPs and DNS rebinding), isolated download client without propagating `Authorization` headers to untrusted origins, configurable `MAX_DOWNLOAD_ALLOWED_HOSTS` and `MAX_TRUSTED_DOWNLOAD_HOSTS`.
+- **SEC-04 (Fail-closed Webhook):** Webhooks start strictly with a valid secret (or explicit local `MAX_WEBHOOK_INSECURE_DEV=true` on loopback). Timing-safe header validation (`X-Max-Bot-Api-Secret`) occurs before reading or parsing the payload (`_build_webhook_app`). DoS protection via body size ceiling (`WEBHOOK_MAX_BODY_BYTES` = 1 MiB).
+- **SEC-05 (Cross-session Access):** Cross-platform session browsing disabled by default (`MAX_CROSS_SESSION=false`) and restricted to verified owners (`MAX_CROSS_SESSION_USERS` / `cross_session_users`).
+- **SEC-06 (Group Policy):** Strict allowlist semantics (`MAX_GROUP_ALLOWED_USERS` and `MAX_GROUP_ALLOWED_CHATS`), AND-based combination, fail-closed rejection on empty allowlist; full support for `allowlist`, `closed`, and `open` policies.
+- **SEC-07 (Inbound Media Limits):** Bounded attachment sizes (`MAX_INBOUND_MEDIA_MAX_BYTES` = 20 MiB), message-total attachment ceiling (`MAX_INBOUND_MEDIA_TOTAL_BYTES` = 50 MiB), max attachment count (`MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` = 10), download timeouts, concurrency semaphores, and guaranteed cleanup of partial downloads.
+
+### Reliability & Transport
+- **CODE-01 (Polling Backoff):** Exponential backoff with jitter on network/API errors, `Retry-After` header support, immediate fatal exit on 401 Unauthorized without log flooding.
+- **CODE-02 (Lossless Chunking):** Message chunking algorithm preserving all whitespace, formatting, and fenced code blocks (`"".join(chunks) == original`); pre-partitioning numbering budgeting.
+- **CODE-03 (Streaming Isolation & Flush):** Isolated streaming throttle state per `(chat_id, message_id)`, eliminating cross-chat suppression; guaranteed flush timer and immediate flush on `finalize=True`.
+- **CODE-04 & CODE-06 (Model Picker Isolation):** Support for composite model IDs with colons (Ollama tags, OpenRouter free); strict owner-bound and message-scoped picker state.
+- **CODE-05 (Webhook Health & Readiness Contract):** Clear separation of contracts: liveness (`GET /health` -> `{"status": "ok"}`), readiness (`GET /ready` -> 200 ready / 503 not_ready), and telemetry metrics (`GET /metrics`).
+- **CODE-07 (Lifecycle & Teardown):** Clean connect/disconnect lifecycle with guaranteed await of cancelled background tasks, client closure, and Hermes core flag synchronization.
+- **CODE-08 (Backpressure & Dedup):** Bounded ingress queue (`MAX_QUEUE_MAXSIZE` = 100), worker concurrency cap (`MAX_MAX_CONCURRENCY` = 4), configurable overload policy (`MAX_OVERLOAD_POLICY` = `drop_oldest` | `drop_newest`), LRU deduplication (`MAX_DEDUP_MAX`, `MAX_DEDUP_TTL`).
+
+### Documentation & Quality
+- **DOC-02 (Honest Configuration):** 100% synchronization of environment variables (31 variables) and `platforms.max` keys (27 keys), removal of phantom settings, internal constants table.
+- **DOC-07 & DOC-09 (Parity & Honest Claims):** 100% structural RU/EN parity, automated validation of version and test count claims (720 tests), zero broken links.
+- **Test Suite:** Test coverage expanded from 126 to 720 tests (100% passing).
+
 ## [2.9.0] — 2026-08-17
 
 ### Refactor

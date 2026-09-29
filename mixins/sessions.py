@@ -17,14 +17,29 @@ class SessionsMixin(MaxBaseMixin):
 
     Lists sessions from ALL platforms (CLI, Telegram, Discord, WebUI...)
     directly from MAX, bypassing the core gateway's per-platform scoping.
+    SEC-05: this is deny-by-default and owner-only — see
+    ``MaxAdapter._cross_session_allowed``.
     """
 
-    async def _handle_cross_sessions(self, text: str, chat_id: str) -> None:
+    async def _handle_cross_sessions(
+        self, text: str, chat_id: str, user_id: str = ""
+    ) -> None:
         """Handle /sessions and /resume (no-arg) — list sessions from ALL platforms.
 
         Bypasses the core gateway's per-platform scoping so the user can see
         CLI, Telegram, Discord, WebUI and other sessions directly from MAX.
+
+        SEC-05: defence in depth — re-check the owner authorization here, before
+        opening the session store or sending anything, so no caller can reach the
+        cross-platform listing by another path.
         """
+        if not self._cross_session_allowed(user_id):
+            logger.warning(
+                "MAX: cross-session request denied: user=%r chat=%r",
+                user_id, chat_id,
+            )
+            return
+
         try:
             from hermes_state import SessionDB
         except ImportError:
@@ -33,7 +48,8 @@ class SessionsMixin(MaxBaseMixin):
 
         args = text[len('/sessions'):].strip()
         search = None
-        if args.lower().startswith('search '):
+        args_lower = args.lower()
+        if args_lower == 'search' or args_lower.startswith('search '):
             search = args[6:].strip()
             if not search:
                 await self.send(chat_id, "Usage: `/sessions search <query>`")

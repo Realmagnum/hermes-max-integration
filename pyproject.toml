@@ -1,6 +1,9 @@
 [project]
 name = "hermes-max-integration"
-version = "2.1.4"
+# Mirror of plugin.yaml `version:` — plugin.yaml is the single source of truth
+# (what Hermes displays and what scripts/release.sh reads). Enforced by
+# scripts/check-doc-claims.py.
+version = "2.10.0"
 description = "Hermes Agent MAX messenger adapter with STT voice transcription"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -14,14 +17,47 @@ dependencies = [
 
 [project.optional-dependencies]
 stt = ["faster-whisper>=1.0"]
-tables = ["playwright>=1.40"]
+# Table-as-image: playwright is the primary HTML→PNG renderer; Pillow and
+# wcwidth form its fallback. All are declared in plugin.yaml too.
+tables = ["playwright>=1.40", "pillow>=12.3", "wcwidth>=0.2"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "pytest-mock>=3.14",
     "ruff>=0.6",
+    # The suite imports the Hermes core (`gateway.config`,
+    # `gateway.platforms.base`): the adapter subclasses `BasePlatformAdapter`
+    # and tests/test_lifecycle.py asserts the inherited lifecycle contract it
+    # owns (`_running`, `_mark_connected`, `_mark_disconnected`, the
+    # `_expected_cancelled_tasks` bookkeeping). Without it, a clean
+    # `pytest` collection fails with `ModuleNotFoundError: gateway`.
+    #
+    # Pin policy: the contract above exists in the published 0.19.0 and is
+    # verified against 0.21.3 (the version the development checkout runs).
+    # `TestCoreContract` fails loudly if the installed core is older or has
+    # changed the contract, so the floor below is load-bearing — raise it when
+    # a newer core is verified, don't drop it.
+    "hermes-agent>=0.19",
 ]
 
 [build-system]
 requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
+
+# The repo is a flat Hermes platform plugin: `adapter.py` plus the `mixins/`
+# sub-package, which Hermes core loads as a directory plugin
+# (`hermes_cli/plugins_loader.py` imports the plugin dir as
+# `hermes_plugins.<slug>` via `__init__.py` and relative imports). Setuptools
+# auto-discovery cannot be used here — the top-level `mixins/`, `skills/` and
+# `assets/` directories trigger "Multiple top-level packages discovered".
+# Declare the distribution contents explicitly instead.
+[tool.setuptools]
+py-modules = ["adapter"]
+
+[tool.setuptools.packages.find]
+include = ["mixins*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
