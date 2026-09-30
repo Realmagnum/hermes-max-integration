@@ -14,7 +14,7 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 
-const PLUGIN_ID = 'max-sessions'
+const PLUGIN_ID = 'max-sessions-sidebar'
 const PLUGIN_NAME = 'MAX Messenger Sessions'
 const PLUGIN_ROUTE = '/max-sessions'
 
