@@ -18,7 +18,7 @@ import socket
 import httpx
 import pytest
 
-from tests.conftest import (
+from .conftest import (
     BOT_USER_ID,
     DIALOG_CHAT_ID,
     DIALOG_USER_ID,

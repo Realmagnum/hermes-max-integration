@@ -93,7 +93,7 @@ class TestLoopbackHostDetection:
 
 class TestStartWebhookFailsClosed:
     async def test_refuses_to_start_without_secret(self):
-        a = _make_adapter(webhook_url="https://example.com/max/webhook")
+        a = _make_adapter(webhook_url="https://example.com/max/webhook", port=_free_port())
         assert a._webhook_secret == ""
         assert await a._start_webhook() is False
         assert a._fatal_error_code == "webhook_secret_required"

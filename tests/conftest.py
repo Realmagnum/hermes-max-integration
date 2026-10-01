@@ -50,16 +50,15 @@ adapter = importlib.import_module(f"{_NAMESPACE}.adapter")
 # Register under the flat name the tests use, and expose the plugin package
 # under `max` so `from max.mixins...` imports keep resolving.
 sys.modules.setdefault("adapter", adapter)
-sys.modules.setdefault("max", sys.modules[_NAMESPACE])
-sys.modules.setdefault("max.adapter", adapter)
+sys.modules["max"] = sys.modules[_NAMESPACE]
+sys.modules["max.adapter"] = adapter
 
 # Register already-loaded plugin submodules under the legacy `max.` namespace
 # too. Otherwise a test importing `max.mixins.*` executes a duplicate module.
-if sys.modules.get("max") is sys.modules[_NAMESPACE]:
-    _PREFIX = _NAMESPACE + "."
-    for _name, _module in list(sys.modules.items()):
-        if _name.startswith(_PREFIX) and _module is not None:
-            sys.modules["max." + _name[len(_PREFIX):]] = _module
+_PREFIX = _NAMESPACE + "."
+for _name, _module in list(sys.modules.items()):
+    if _name.startswith(_PREFIX) and _module is not None:
+        sys.modules["max." + _name[len(_PREFIX):]] = _module
 
 
 @pytest.fixture

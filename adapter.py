@@ -2529,7 +2529,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         reply_to: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> SendResult:
-        """Send an image via URL attachment."""
+        """Send an image via URL attachment or local file://."""
+        if image_url.startswith("file://"):
+            import urllib.parse
+            clean_path = urllib.parse.unquote(image_url[7:])
+            if clean_path.startswith("/") and len(clean_path) > 2 and clean_path[2] == ":":
+                clean_path = clean_path[1:]
+            return await self.send_image_file(chat_id, clean_path, caption=caption, reply_to=reply_to, metadata=metadata)
+
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
         try:
@@ -2600,16 +2607,18 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         tokens: list[str] = []
         captions: list[str] = []
         for url_or_path, caption in images:
-            # Prefer local path, fall back to URL-based _send_image
-            if url_or_path.startswith(("http://", "https://", "file://")):
-                tok = await self._upload(url_or_path, "image") if not url_or_path.startswith("http") else None
-                if tok:
-                    tokens.append(tok)
-                else:
-                    # URL-based: send_image handles this; fall back to sequential
-                    return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
+            # Handle file:// URLs from core (e.g. file:///C:/path or file://C:/path)
+            clean_path = url_or_path
+            if clean_path.startswith("file://"):
+                import urllib.parse
+                clean_path = urllib.parse.unquote(clean_path[7:])
+                if clean_path.startswith("/") and len(clean_path) > 2 and clean_path[2] == ":":
+                    clean_path = clean_path[1:]
+
+            if clean_path.startswith(("http://", "https://")):
+                return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
             else:
-                tok = await self._upload(url_or_path, "image")
+                tok = await self._upload(clean_path, "image")
                 if tok:
                     tokens.append(tok)
                     captions.append(caption or "")
