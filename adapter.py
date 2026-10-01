@@ -3006,6 +3006,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             await self._on_model_back(scoped_chat, user_id)
             return None
 
+        if data == "model:cancel":
+            await self._on_model_cancel(scoped_chat, user_id)
+            return None
+
         logger.warning("MAX: unhandled model callback: %s", data)
         return None
 
@@ -3065,6 +3069,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if row:
             buttons.append(row)
 
+        # Add "Cancel" button to dismiss the picker
+        buttons.append([{
+            "type": "callback",
+            "text": "🔴 Cancel",
+            "payload": "model:cancel",
+        }])
+
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
@@ -3099,8 +3110,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         all_models = provider.get("models", [])
         provider_name = provider.get("name", provider_slug)
 
-        # Pagination: 15 models per page
-        PAGE_SIZE = 15
+        # Pagination: 10 models per page (reduced from 15 to avoid MAX scroll issues)
+        PAGE_SIZE = 10
         total_pages = max(1, (len(all_models) + PAGE_SIZE - 1) // PAGE_SIZE)
         page = max(0, min(page, total_pages - 1))
         start = page * PAGE_SIZE
@@ -3140,13 +3151,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             if page > 0:
                 nav_row.append({
                     "type": "callback",
-                    "text": "⬅ Prev",
+                    "text": "◀️ Prev",
                     "payload": f"model:page:{provider_slug}:{page - 1}",
                 })
             if page < total_pages - 1:
                 nav_row.append({
                     "type": "callback",
-                    "text": "Next ➡",
+                    "text": "Next ▶️",
                     "payload": f"model:page:{provider_slug}:{page + 1}",
                 })
             if nav_row:
@@ -3155,8 +3166,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         # Add "← Back" button
         buttons.append([{
             "type": "callback",
-            "text": "← Back to providers",
+            "text": "🔙 Back to providers",
             "payload": "model:back",
+        }])
+
+        # Add "Cancel" button to dismiss the picker
+        buttons.append([{
+            "type": "callback",
+            "text": "🔴 Cancel",
+            "payload": "model:cancel",
         }])
 
         # Edit the original message to show models
@@ -3178,7 +3196,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                     state["model_msg_id"] = result.message_id
                     self._model_picker_state[str(chat_id)] = state
         else:
-            # Initial display: send new message with models (text + buttons together)
+            # Initial display: clean up provider message so it is replaced by models
+            provider_msg_id = state.get("provider_msg_id", "")
+            if provider_msg_id:
+                await self.delete_message(chat_id, provider_msg_id)
+                state["provider_msg_id"] = ""
+
+            # Send new message with models (text + buttons together)
             model_msg_result = await self._post_interactive(chat_id, text, buttons)
             # Store model message ID for pagination (this message has both text and buttons)
             if model_msg_result.success:
@@ -3274,14 +3298,29 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if row:
             buttons.append(row)
 
+        # Add "Cancel" button to dismiss the picker
+        buttons.append([{
+            "type": "callback",
+            "text": "🔴 Cancel",
+            "payload": "model:cancel",
+        }])
+
+        logger.info("MAX model picker (back): sending %d providers from state, %d button rows", len(providers[:20]), len(buttons))
+
         # Delete old messages (provider + model buttons)
         model_msg_id = state.get("model_msg_id", "")
         if model_msg_id:
             await self.delete_message(chat_id, model_msg_id)
+            state["model_msg_id"] = ""  # Clear after deletion
 
         provider_msg_id = state.get("provider_msg_id", "")
         if provider_msg_id:
             await self.delete_message(chat_id, provider_msg_id)
+            # provider_msg_id will be updated with new ID below
+
+        # Small delay to ensure MAX API processes deletions before sending new message
+        import asyncio
+        await asyncio.sleep(0.3)
 
         # Send fresh provider message
         result = await self._post_interactive(chat_id, text, buttons)
@@ -3290,6 +3329,22 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if result.success:
             state["provider_msg_id"] = result.message_id
             self._model_picker_state[str(chat_id)] = state
+
+    async def _on_model_cancel(self, chat_id: str, user_id: str) -> None:
+        """Cancel model picker: delete all messages and clear state."""
+        state = self._model_picker_state.pop(str(chat_id), None)
+        if not state:
+            return
+
+        # Delete all picker messages
+        model_msg_id = state.get("model_msg_id", "")
+        if model_msg_id:
+            await self.delete_message(chat_id, model_msg_id)
+
+        provider_msg_id = state.get("provider_msg_id", "")
+        if provider_msg_id:
+            await self.delete_message(chat_id, provider_msg_id)
+
 
     # Cross-platform session commands (/sessions, /resume)
     # — moved to mixins/sessions.py (SessionsMixin)
