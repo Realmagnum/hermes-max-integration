@@ -42,7 +42,6 @@ KNOWN_DRIFT = {
     "CHANGELOG.md",
     # Audit backlogs carry cross-language links.
     "BACKLOG.md",
-    "RELEASE_BACKLOG_2.10.md",
 }
 
 # Directory names never scanned for documentation pairs.
