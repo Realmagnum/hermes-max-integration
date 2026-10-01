@@ -20,6 +20,14 @@ python_dependencies:
   - "pillow>=12.3"
   - "wcwidth>=0.2"
 
+provides_locales:
+  - id: ru
+    endonym: Русский
+    rtl: false
+  - id: en
+    endonym: English
+    rtl: false
+
 requires_env:
   - name: MAX_BOT_TOKEN
     description: "Bot token from MAX for Partners: Chat-bots → Advanced settings → Configure → Token"

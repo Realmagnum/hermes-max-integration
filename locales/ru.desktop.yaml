@@ -1,0 +1,47 @@
+messaging.platformIntro.max: >-
+  Шлюз-адаптер для мессенджера MAX (max.ru) с поддержкой Long Polling и Webhook.
+  Репозиторий проекта: https://github.com/Realmagnum/hermes-max-integration
+
+messaging.fieldCopy.MAX_BOT_TOKEN.label: "Токен бота MAX"
+messaging.fieldCopy.MAX_BOT_TOKEN.help: "Токен из MAX для Бизнеса: Чат-боты → Настройки → Настроить → Токен."
+messaging.fieldCopy.MAX_BOT_TOKEN.placeholder: "Вставьте токен бота MAX"
+
+messaging.fieldCopy.MAX_WEBHOOK_SECRET.label: "Секрет вебхука"
+messaging.fieldCopy.MAX_WEBHOOK_SECRET.help: "Секретный ключ для проверки заголовка X-Max-Bot-Api-Secret (5-256 символов)."
+messaging.fieldCopy.MAX_WEBHOOK_SECRET.placeholder: "Секретная строка"
+
+messaging.fieldCopy.MAX_WEBHOOK_HOST.label: "Хост вебхука"
+messaging.fieldCopy.MAX_WEBHOOK_HOST.help: "Локальный адрес привязки вебхук-сервера (по умолчанию 0.0.0.0)."
+messaging.fieldCopy.MAX_WEBHOOK_HOST.placeholder: "0.0.0.0"
+
+messaging.fieldCopy.MAX_WEBHOOK_PORT.label: "Порт вебхука"
+messaging.fieldCopy.MAX_WEBHOOK_PORT.help: "Локальный порт вебхук-сервера (по умолчанию 8646)."
+messaging.fieldCopy.MAX_WEBHOOK_PORT.placeholder: "8646"
+
+messaging.fieldCopy.MAX_WEBHOOK_PATH.label: "Путь вебхука"
+messaging.fieldCopy.MAX_WEBHOOK_PATH.help: "URL-путь для входящих вебхуков (по умолчанию /max/webhook)."
+messaging.fieldCopy.MAX_WEBHOOK_PATH.placeholder: "/max/webhook"
+
+messaging.fieldCopy.MAX_ALLOWED_USERS.label: "Разрешённые ID пользователей MAX"
+messaging.fieldCopy.MAX_ALLOWED_USERS.help: "Рекомендуется. ID пользователей через запятую, которым разрешён доступ к боту."
+messaging.fieldCopy.MAX_ALLOWED_USERS.placeholder: "user:123,user:456"
+
+messaging.fieldCopy.MAX_ALLOW_ALL_USERS.label: "Разрешить всех пользователей MAX"
+messaging.fieldCopy.MAX_ALLOW_ALL_USERS.help: "Если включено (true), писать боту может любой пользователь без проверки списка."
+messaging.fieldCopy.MAX_ALLOW_ALL_USERS.placeholder: "false"
+
+messaging.fieldCopy.MAX_HOME_CHANNEL.label: "Домашний канал MAX"
+messaging.fieldCopy.MAX_HOME_CHANNEL.help: "Целевой канал или пользователь по умолчанию для cron и системных уведомлений (например, user:123 или chat:456)."
+messaging.fieldCopy.MAX_HOME_CHANNEL.placeholder: "user:95825064"
+
+messaging.fieldCopy.MAX_TABLE_AS_IMAGE.label: "Таблицы как изображения"
+messaging.fieldCopy.MAX_TABLE_AS_IMAGE.help: "Рендерить Markdown-таблицы в виде картинок через Pillow/Playwright (true/false)."
+messaging.fieldCopy.MAX_TABLE_AS_IMAGE.placeholder: "false"
+
+messaging.fieldCopy.MAX_CROSS_SESSION.label: "Кросс-платформенные сессии"
+messaging.fieldCopy.MAX_CROSS_SESSION.help: "Разрешить доверенным пользователям управление сессиями других платформ (true/false)."
+messaging.fieldCopy.MAX_CROSS_SESSION.placeholder: "false"
+
+messaging.fieldCopy.MAX_EDIT_THROTTLE.label: "Интервал стриминга сообщений"
+messaging.fieldCopy.MAX_EDIT_THROTTLE.help: "Минимальный интервал между промежутковными правками сообщений в секундах (по умолчанию 0.2)."
+messaging.fieldCopy.MAX_EDIT_THROTTLE.placeholder: "0.2"

@@ -1,0 +1,47 @@
+messaging.platformIntro.max: >-
+  MAX messenger (max.ru) gateway adapter for Hermes Agent with cross-platform session management.
+  Project repository: https://github.com/Realmagnum/hermes-max-integration
+
+messaging.fieldCopy.MAX_BOT_TOKEN.label: "Max Bot Token"
+messaging.fieldCopy.MAX_BOT_TOKEN.help: "Bot token from MAX for Partners: Chat-bots → Advanced settings → Configure → Token."
+messaging.fieldCopy.MAX_BOT_TOKEN.placeholder: "Paste Max bot token"
+
+messaging.fieldCopy.MAX_WEBHOOK_SECRET.label: "Webhook Secret"
+messaging.fieldCopy.MAX_WEBHOOK_SECRET.help: "Secret key for X-Max-Bot-Api-Secret verification (5-256 characters)."
+messaging.fieldCopy.MAX_WEBHOOK_SECRET.placeholder: "Secret string"
+
+messaging.fieldCopy.MAX_WEBHOOK_HOST.label: "Webhook Host"
+messaging.fieldCopy.MAX_WEBHOOK_HOST.help: "Local bind address for webhook server (default: 0.0.0.0)."
+messaging.fieldCopy.MAX_WEBHOOK_HOST.placeholder: "0.0.0.0"
+
+messaging.fieldCopy.MAX_WEBHOOK_PORT.label: "Webhook Port"
+messaging.fieldCopy.MAX_WEBHOOK_PORT.help: "Local bind port for webhook server (default: 8646)."
+messaging.fieldCopy.MAX_WEBHOOK_PORT.placeholder: "8646"
+
+messaging.fieldCopy.MAX_WEBHOOK_PATH.label: "Webhook Path"
+messaging.fieldCopy.MAX_WEBHOOK_PATH.help: "URL path for incoming webhooks (default: /max/webhook)."
+messaging.fieldCopy.MAX_WEBHOOK_PATH.placeholder: "/max/webhook"
+
+messaging.fieldCopy.MAX_ALLOWED_USERS.label: "Allowed Max User IDs"
+messaging.fieldCopy.MAX_ALLOWED_USERS.help: "Recommended. Comma-separated user IDs allowed to interact with the bot."
+messaging.fieldCopy.MAX_ALLOWED_USERS.placeholder: "user:123,user:456"
+
+messaging.fieldCopy.MAX_ALLOW_ALL_USERS.label: "Allow All Max Users"
+messaging.fieldCopy.MAX_ALLOW_ALL_USERS.help: "If true, any Max user can message the bot without allowlist gating."
+messaging.fieldCopy.MAX_ALLOW_ALL_USERS.placeholder: "false"
+
+messaging.fieldCopy.MAX_HOME_CHANNEL.label: "Max Home Channel"
+messaging.fieldCopy.MAX_HOME_CHANNEL.help: "Default delivery target for cron tasks and notifications (e.g. user:123 or chat:456)."
+messaging.fieldCopy.MAX_HOME_CHANNEL.placeholder: "user:95825064"
+
+messaging.fieldCopy.MAX_TABLE_AS_IMAGE.label: "Tables as Images"
+messaging.fieldCopy.MAX_TABLE_AS_IMAGE.help: "Render markdown tables as PNG images via Pillow/Playwright (true/false)."
+messaging.fieldCopy.MAX_TABLE_AS_IMAGE.placeholder: "false"
+
+messaging.fieldCopy.MAX_CROSS_SESSION.label: "Cross-Platform Sessions"
+messaging.fieldCopy.MAX_CROSS_SESSION.help: "Allow trusted users to manage sessions from other platforms (true/false)."
+messaging.fieldCopy.MAX_CROSS_SESSION.placeholder: "false"
+
+messaging.fieldCopy.MAX_EDIT_THROTTLE.label: "Streaming Edit Throttle"
+messaging.fieldCopy.MAX_EDIT_THROTTLE.help: "Minimum interval in seconds between streaming message edits (default: 0.2)."
+messaging.fieldCopy.MAX_EDIT_THROTTLE.placeholder: "0.2"
