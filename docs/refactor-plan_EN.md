@@ -26,7 +26,7 @@ hermes-max-integration/
 ├── mixins/
 │   ├── __init__.py
 │   ├── base.py             # ✅ MaxBaseMixin — base state, http_client
-│   ├── table_renderer.py   # 🔄 Table rendering — (in progress) migration from Pillow to HTML→PNG (Playwright)
+│   ├── table_renderer.py   # ✅ Table rendering — switch from Pillow to HTML→PNG (Playwright) completed in v2.10.0
 │   ├── media_upload.py     # ✅ File upload (POST /uploads, CDN, retry, SSRF)
 │   ├── buttons.py          # ✅ Buttons: send_buttons, send_action, _post_interactive, approval/clarify
 │   ├── stt_processor.py    # ❌ removed — STT in the Hermes core (v0.20.0+)
@@ -77,7 +77,7 @@ Absolute imports (`from mixins.base import ...`) work in local testing (CWD == p
 
 The features below will make the plugin Enterprise-ready.
 
-### Priority #1: Table rendering 2.0 (HTML → PNG) — **in development**
+### Priority #1: Table rendering 2.0 (HTML → PNG) — **implemented ✅ (v2.10.0)**
 
 **The current implementation (Pillow `ImageDraw`) is considered clumsy:** manual width calculation using
 `draw.textlength` + `wcwidth*0.6` fallback causes cells to overflow, text to overlap neighboring cells,

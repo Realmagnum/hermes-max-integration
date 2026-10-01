@@ -6,44 +6,46 @@
 
 Голосовые сообщения от MAX приходят как аудиовложения с `payload.url` для прямой загрузки. Адаптер автоматически:
 
-1. Загружает аудиофайл в `~/.hermes/audio_cache/max_audio_{message_id}.ogg`
-2. Транскрибирует через faster-whisper
-3. Добавляет текст к сообщению
+1. Загружает аудиофайл в `$HERMES_HOME/cache/audio/` (`~/.hermes/cache/audio/`)
+2. Передаёт аудиофайл ядру Hermes
+3. Ядро транскрибирует аудио (Core STT) и добавляет текст к сообщению
 
 ### Настройка
 
-```bash
-# Создать venv для faster-whisper
-python3 -m venv ~/.hermes/stt-venv
-~/.hermes/stt-venv/bin/pip install faster-whisper
+Транскрипция выполняется **ядром Hermes** (≥ 0.20.0). Настройка выполняется в `config.yaml` ядра:
 
-# Скопировать скрипт
-cp scripts/transcribe_audio.py ~/.hermes/scripts/
+```yaml
+stt:
+  enabled: true
+  language: ru      # дефолт ядра — "en"
+  provider: local   # или openai, groq, mistral, xai, elevenlabs
 ```
+
+Для интерактивной настройки используйте `hermes tools` (категория 🎙️ Speech-to-Text).
 
 ### Параметры
 
 | Параметр | По умолчанию | Описание |
 |----------|--------------|----------|
-| `MAX_STT_ENABLED` | `true` | Включить/выключить STT |
-| `MAX_STT_VENV` | `~/.hermes/stt-venv` | Путь к venv |
-| Модель | `base` | faster-whisper модель |
+| `enabled` | `false` | Включить транскрипцию голоса в ядре |
+| `language` | `en` | Язык транскрипции (`ru` для распознавания русской речи) |
+| `provider` | `local` | Провайдер STT (`local`, `openai`, `groq`, `mistral`, `xai`, `elevenlabs`) |
 
-### Скрипт транскрипции
+### Проверка конфигурации
 
 ```bash
-~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
+grep -A8 "^stt:" ~/.hermes/config.yaml
 ```
 
 ### Troubleshooting
 
 **STT возвращает пустоту:**
-- Проверить модель: `ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/assets/`
-- Убедиться что файл загружен: `ls -la ~/.hermes/audio_cache/max_audio_*.ogg`
+- Проверить настройки в `config.yaml`: `enabled: true`, `language: ru`
+- Убедиться, что аудиофайл загружен адаптером: `ls -la ~/.hermes/cache/audio/`
 
-**Медленная транскрипция:**
-- Использовать модель `tiny` вместо `base`
-- Включить GPU: `export WHISPER_DEVICE=cuda:0`
+**Локальный провайдер faster-whisper:**
+- Для `provider: local` установить пакет в окружение ядра: `pip install faster-whisper`
+- Ошибки транскрипции в логах ядра: `grep -i "transcri" ~/.hermes/logs/gateway.log`
 
 ## Таблицы-картинки
 
@@ -111,23 +113,21 @@ python -m pip install Pillow                # фоллбэк-рендер
 
 При использовании reasoning-моделей (DeepSeek R1, Claude Opus, Gemini Thinking) блок с рассуждениями добавляется к финальному ответу.
 
-**Отображение как отдельное сообщение:**
+**Отображение reasoning:**
 
 ```yaml
 # ~/.hermes/config.yaml
-display:
-  platforms:
-    max:
-      fresh_final_after_seconds: 10
+streaming:
+  fresh_final_after_seconds: 10
 ```
 
-После 10 секунд стриминга финальный ответ отправляется новым сообщением (с reasoning внутри).
+> **Примечание:** Ключ `streaming.fresh_final_after_seconds` читается ядром из секции `streaming:` (не `display.platforms.max.*`) и действует только для Telegram. В MAX рассуждения модели передаются в рамках финального редактирования сообщения.
 
 ### Troubleshooting
 
 **Reasoning не отображается:**
 - Проверить модель (fast модели не генерируют reasoning)
-- Проверить `fresh_final_after_seconds` в config.yaml
+- Проверить журнал шлюза на наличие ошибок стриминга
 
 ## Кнопки
 
@@ -248,11 +248,12 @@ _ALLOWED_UPLOAD_HOSTS = {
 platforms:
   max:
     extra:
-      allow_admin_from:
+      cross_session_users:
         - "95825064"  # ваш MAX user_id
 ```
 
-Отключение: `MAX_CROSS_SESSION=false` в `.env`.
+Переменная окружения: `MAX_CROSS_SESSION_USERS="95825064"`.
+Включение/отключение: `MAX_CROSS_SESSION=false` в `.env` (по умолчанию: `false`).
 
 ## Standalone отправитель
 

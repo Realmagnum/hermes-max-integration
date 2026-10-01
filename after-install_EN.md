@@ -22,7 +22,7 @@ Next steps:
    ```bash
    hermes gateway setup
    ```
-   Choose **Max**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and optional secret.
+   Choose **Max**, paste `MAX_BOT_TOKEN`, set webhook host/port/path and secret (mandatory for webhook).
 
 3. **Voice messages:** transcription is performed by the Hermes core (>= 0.20.0) — the plugin only downloads and caches audio. For Russian, set in `config.yaml`:
    ```yaml

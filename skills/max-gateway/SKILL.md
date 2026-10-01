@@ -1,7 +1,7 @@
 ---
 name: max-gateway
-description: "Установка и настройка доступа Hermes Agent через мессенджер MAX (транскрипция голоса — ядром Hermes)."
-version: 2.1.0
+description: "Установка и настройка доступа Hermes Agent через мессенджер MAX (транскрипция голоса — ядром Hermes, интеграция с сайдбаром Hermes Desktop)."
+version: 2.10.2
 author: Alexander / Hermes Agent community
 license: MIT
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 # Шлюз MAX для Hermes
 
-Используйте этот навык, когда пользователь хочет управлять Hermes Agent через мессенджер MAX.
+Используйте этот навык, когда пользователь хочет управлять Hermes Agent через мессенджер MAX (включая нативный сайдбар сессий Hermes Desktop).
 
 ## Официальные факты, которым доверять в первую очередь
 

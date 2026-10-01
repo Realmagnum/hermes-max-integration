@@ -26,7 +26,7 @@ hermes-max-integration/
 ├── mixins/
 │   ├── __init__.py
 │   ├── base.py             # ✅ MaxBaseMixin — базовое состояние, http_client
-│   ├── table_renderer.py   # 🔄 Рендеринг таблиц — (в работе) переход с Pillow на HTML→PNG (Playwright)
+│   ├── table_renderer.py   # ✅ Рендеринг таблиц — переход с Pillow на HTML→PNG (Playwright) выполнен в v2.10.0
 │   ├── media_upload.py     # ✅ Загрузка файлов (POST /uploads, CDN, retry, SSRF)
 │   ├── buttons.py          # ✅ Кнопки: send_buttons, send_action, _post_interactive, approval/clarify
 │   ├── stt_processor.py    # ❌ удалён — STT в ядре Hermes (v0.20.0+)
@@ -77,7 +77,7 @@ hermes-max-integration/
 
 Ниже представлены фичи, которые сделают плагин Enterprise-ready.
 
-### Приоритет №1: Рендеринг таблиц 2.0 (HTML → PNG) — **в разработке**
+### Приоритет №1: Рендеринг таблиц 2.0 (HTML → PNG) — **реализовано ✅ (v2.10.0)**
 
 **Текущая реализация (Pillow `ImageDraw`) признана корявой:** ручной расчёт ширины через
 `draw.textlength` + `wcwidth*0.6`-фолбэк даёт переполнение ячеек, текст наезжает на соседние,

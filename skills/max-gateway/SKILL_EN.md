@@ -1,7 +1,7 @@
 ---
 name: max-gateway
-description: "Install and configure Hermes Agent access through Max messenger (voice transcription by the Hermes core)."
-version: 2.1.0
+description: "Install and configure Hermes Agent access through Max messenger (voice transcription by the Hermes core, Hermes Desktop sidebar integration)."
+version: 2.10.2
 author: Alexander / Hermes Agent community
 license: MIT
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 # Max Gateway for Hermes
 
-Use this skill when a user wants to control Hermes Agent through Max messenger.
+Use this skill when a user wants to control Hermes Agent through Max messenger (including native Hermes Desktop sessions sidebar).
 
 ## Official facts to trust first
 

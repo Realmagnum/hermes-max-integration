@@ -6,44 +6,46 @@
 
 Voice messages from MAX come as audio attachments with `payload.url` for direct download. The adapter automatically:
 
-1. Downloads audio file to `~/.hermes/audio_cache/max_audio_{message_id}.ogg`
-2. Transcribes via faster-whisper
-3. Adds text to message
+1. Downloads audio file to `$HERMES_HOME/cache/audio/` (`~/.hermes/cache/audio/`)
+2. Forwards audio file to Hermes Core
+3. Core transcribes audio (Core STT) and appends text to message
 
 ### Setup
 
-```bash
-# Create venv for faster-whisper
-python3 -m venv ~/.hermes/stt-venv
-~/.hermes/stt-venv/bin/pip install faster-whisper
+Transcription is performed by **Hermes Core** (≥ 0.20.0). Configuration lives in the core `config.yaml`:
 
-# Copy script
-cp scripts/transcribe_audio.py ~/.hermes/scripts/
+```yaml
+stt:
+  enabled: true
+  language: ru      # core default is "en"
+  provider: local   # or openai, groq, mistral, xai, elevenlabs
 ```
+
+For interactive setup, use `hermes tools` (🎙️ Speech-to-Text category).
 
 ### Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `MAX_STT_ENABLED` | `true` | Enable/disable STT |
-| `MAX_STT_VENV` | `~/.hermes/stt-venv` | Venv path |
-| Model | `base` | faster-whisper model |
+| `enabled` | `false` | Enable voice transcription in core |
+| `language` | `en` | Transcription language (`ru` for Russian speech) |
+| `provider` | `local` | STT provider (`local`, `openai`, `groq`, `mistral`, `xai`, `elevenlabs`) |
 
-### Transcription Script
+### Configuration Check
 
 ```bash
-~/.hermes/scripts/transcribe_audio.py /path/to/file.ogg
+grep -A8 "^stt:" ~/.hermes/config.yaml
 ```
 
 ### Troubleshooting
 
 **STT returns empty:**
-- Check model: `ls ~/.hermes/stt-venv/lib/python*/site-packages/whisper/assets/`
-- Verify file downloaded: `ls -la ~/.hermes/audio_cache/max_audio_*.ogg`
+- Check settings in `config.yaml`: `enabled: true`, `language: ru`
+- Verify audio file downloaded by adapter: `ls -la ~/.hermes/cache/audio/`
 
-**Slow transcription:**
-- Use `tiny` model instead of `base`
-- Enable GPU: `export WHISPER_DEVICE=cuda:0`
+**Local provider faster-whisper:**
+- For `provider: local` install package into core environment: `pip install faster-whisper`
+- Core transcription errors in logs: `grep -i "transcri" ~/.hermes/logs/gateway.log`
 
 ## Table Images
 
@@ -111,23 +113,21 @@ Adapter uses `edit_message` via `PUT /messages` for real-time token output.
 
 When using reasoning models (DeepSeek R1, Claude Opus, Gemini Thinking), reasoning block added to final response.
 
-**Display as separate message:**
+**Reasoning display:**
 
 ```yaml
 # ~/.hermes/config.yaml
-display:
-  platforms:
-    max:
-      fresh_final_after_seconds: 10
+streaming:
+  fresh_final_after_seconds: 10
 ```
 
-After 10 seconds of streaming, final response sent as new message (with reasoning inside).
+> **Note:** The `streaming.fresh_final_after_seconds` key is read by the core from the `streaming:` section (not `display.platforms.max.*`) and applies only to Telegram. In MAX, reasoning is sent as part of the final message edit.
 
 ### Troubleshooting
 
 **Reasoning not displayed:**
 - Check model (fast models don't generate reasoning)
-- Check `fresh_final_after_seconds` in config.yaml
+- Check gateway logs for streaming errors
 
 ## Buttons
 
@@ -249,11 +249,12 @@ Adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` wi
 platforms:
   max:
     extra:
-      allow_admin_from:
+      cross_session_users:
         - "95825064"  # your MAX user_id
 ```
 
-Disable: `MAX_CROSS_SESSION=false` in `.env`.
+Environment variable: `MAX_CROSS_SESSION_USERS="95825064"`.
+Enable/disable: `MAX_CROSS_SESSION=false` in `.env` (default: `false`).
 
 ## Standalone Sender
 
