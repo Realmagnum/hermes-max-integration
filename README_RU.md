@@ -38,9 +38,17 @@
 | 🖥️ **Desktop UI Сайдбар** | Нативная боковая панель сессий в Hermes Desktop (`max-sessions-sidebar`): активные диалоги, счетчик сообщений, токены, время активности и бейджи |
 | 📦 **Unified Package** | Автоматическая установка и подключение десктопного UI-плагина вместе с платформой без ручных действий пользователя |
 | 🌍 **Локализация RU/EN** | Полная поддержка русского и английского языков в интерфейсе Desktop и документации |
-| 🧪 **Тесты** | pytest + pytest-asyncio, **729 тестов** |
+| 🧪 **Тесты** | pytest + pytest-asyncio, **731 тестов** |
 | 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
 | 📋 **Слеш-команды** | 20 команд (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) через MAX API `PATCH /me/commands` |
+
+## Документация
+
+- [Настройка](docs/setup.md) — .env, webhook, security, deployment
+- [Возможности](docs/features.md) — STT, таблицы, стриминг, кнопки, файлы
+- [API](docs/api.md) — форматы MAX API, callbacks, загрузка файлов
+- [Диагностика](docs/troubleshooting.md) — ошибки, diagnose.sh, логи
+- [Проверка внешних утверждений](docs/external-claims.md) — сверка с docs MAX/Telegram, источники и дата
 
 ## Слеш-команды MAX
 
@@ -149,29 +157,8 @@ curl -H "Authorization: $MAX_BOT_TOKEN" \
 | Разбивка сообщений | ✅ | ✅ Улучшена |
 | Извлечение медиа | ✅ | ✅ Расширено |
 | Дедупликация сообщений | ❌ | ✅ 300 сек |
-| Тесты | ✅ Базовые | ✅ 729 тестов |
+| Тесты | ✅ Базовые | ✅ 731 тестов |
 | Настройка | ✅ | ✅ + табл. |
-
-## Как это работает (архитектура)
-
-```
-┌─────────┐     Long Polling / Webhook     ┌─────────────────┐
-│  MAX    │ ──────────────────────────────→ │  MaxAdapter     │
-│  Client │                                  │  (adapter.py)   │
-│  (бот)  │ ←────────────────────────────── │     ↓           │
-└─────────┘     POST /messages (текст/PNG)  │  ┌───────────┐  │
-                                            │  │ send()    │  │
-                                            │  │  ↓        │  │
-                                            │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
-                                            │  │  ↓   ↓    │  │    → Playwright(HTML→PNG) или Pillow → PNG
-                                            │  │ текст PN  │  │    → POST /uploads
-                                            │  │       G   │  │    → PUT → token
-                                            │  └───────────┘  │    → POST /messages
-                                            │  ┌───────────┐  │
-                                            │  │ STT (ядро) │──┼── core STT (config.yaml)
-                                            │  └───────────┘  │
-                                            └─────────────────┘
-```
 
 ## Быстрый старт
 
@@ -484,14 +471,6 @@ hermes send --to max:USER_ID "MEDIA:/tmp/image.png"     # ✅ работает
 hermes send --to max:USER_ID "текст MEDIA:/file.pdf"     # ✅ и так работало
 ```
 
-## Документация
-
-- [Настройка](docs/setup.md) — .env, webhook, security, deployment
-- [Возможности](docs/features.md) — STT, таблицы, стриминг, кнопки, файлы
-- [API](docs/api.md) — форматы MAX API, callbacks, загрузка файлов
-- [Диагностика](docs/troubleshooting.md) — ошибки, diagnose.sh, логи
-- [Проверка внешних утверждений](docs/external-claims.md) — сверка с docs MAX/Telegram, источники и дата
-
 ## Решение проблем
 
 ### Бот не отвечает
@@ -561,7 +540,7 @@ hermes-max-integration/
 ├── skills/
 │   └── max-gateway/
 │       └── SKILL.md         # Навык для AI-агента
-├── tests/                   # pytest: 729 тестов
+├── tests/                   # pytest: 731 тестов
 ├── AGENTS.md                # Инструкции для AI-агентов
 ├── after-install.md         # Пост-установка
 ├── cliff.toml               # git-cliff config (EN)

@@ -20,6 +20,10 @@ This document contains the up-to-date refactoring plan for the `adapter.py` mono
 
 ## Module plan
 
+<p align="center">
+  <img src="../assets/architecture_en.jpg" alt="Hermes MAX Gateway Module Architecture" width="100%">
+</p>
+
 ```
 hermes-max-integration/
 ├── adapter.py              # thin layer (multiple mixin inheritance)

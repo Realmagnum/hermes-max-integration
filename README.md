@@ -38,9 +38,17 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🖥️ **Desktop UI Sidebar** | Native sessions sidebar in Hermes Desktop (`max-sessions-sidebar`): active dialogs, message counts, tokens, activity timestamps, and badges |
 | 📦 **Unified Package** | Automatic installation and registration of the desktop UI plugin alongside the platform without manual steps |
 | 🌍 **RU/EN Localization** | Full Russian and English language support across the Desktop UI and documentation |
-| 🧪 **Tested** | pytest + pytest-asyncio, **729 tests** |
+| 🧪 **Tested** | pytest + pytest-asyncio, **731 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
+
+## Documentation
+
+- [Setup](docs/setup_EN.md) — .env, webhook, security, deployment
+- [Features](docs/features_EN.md) — STT, tables, streaming, buttons, files
+- [API](docs/api_EN.md) — MAX API formats, callbacks, file upload
+- [Troubleshooting](docs/troubleshooting_EN.md) — errors, diagnose.sh, logs
+- [External claims verification](docs/external-claims_EN.md) — MAX/Telegram doc check, sources and date
 
 ## MAX Slash Commands
 
@@ -149,29 +157,8 @@ We tried several approaches before settling on PNG:
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 729 tests |
+| Tests | ✅ Basic | ✅ 731 tests |
 | Interactive setup | ✅ | ✅ + tables |
-
-## Architecture
-
-```
-┌─────────┐     Long Polling / Webhook     ┌─────────────────┐
-│  MAX    │ ──────────────────────────────→ │  MaxAdapter     │
-│  Client │                                  │  (adapter.py)   │
-│  (bot)  │ ←────────────────────────────── │     ↓           │
-└─────────┘     POST /messages (text/PNG)  │  ┌───────────┐  │
-                                            │  │ send()    │  │
-                                            │  │  ↓        │  │
-                                            │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
-                                            │  │  ↓   ↓    │  │    → Pillow → PNG
-                                            │  │ text PNG  │  │    → POST /uploads
-                                            │  │       │   │  │    → PUT → token
-                                            │  └───────────┘  │    → POST /messages
-                                            │  ┌───────────┐  │
-                                            │  │ STT (core) │──┼── core STT (config.yaml)
-                                            │  └───────────┘  │
-                                            └─────────────────┘
-```
 
 ## Quick Start
 
@@ -484,14 +471,6 @@ hermes send --to max:USER_ID "MEDIA:/tmp/image.png"      # ✅ works
 hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
 ```
 
-## Documentation
-
-- [Setup](docs/setup_EN.md) — .env, webhook, security, deployment
-- [Features](docs/features_EN.md) — STT, tables, streaming, buttons, files
-- [API](docs/api_EN.md) — MAX API formats, callbacks, file upload
-- [Troubleshooting](docs/troubleshooting_EN.md) — errors, diagnose.sh, logs
-- [External claims verification](docs/external-claims_EN.md) — MAX/Telegram doc check, sources and date
-
 ## Troubleshooting
 
 ### Bot not responding
@@ -559,7 +538,7 @@ hermes-max-integration/
 ├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
 │                            #   release.sh, setup-playwright.py
 ├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
-├── tests/                   # pytest: 729 tests
+├── tests/                   # pytest: 731 tests
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)

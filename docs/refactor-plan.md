@@ -20,6 +20,10 @@
 
 ## План модулей
 
+<p align="center">
+  <img src="../assets/architecture_ru.jpg" alt="Архитектура модулей Hermes MAX Gateway" width="100%">
+</p>
+
 ```
 hermes-max-integration/
 ├── adapter.py              # тонкая прослойка (множественное наследование миксинов)
