@@ -1,5 +1,9 @@
 # Hermes MAX Gateway
 
+<p align="center">
+  <img src="assets/banner.jpg" alt="Hermes MAX.ru Integration" width="100%">
+</p>
+
 > **⚠️ Двуязычный проект:** Основной язык документации — **русский**. Английский перевод — `README_EN.md`. При изменении этого файла **обязательно** синхронизируйте изменения с `README_EN.md`.
 
 **Плагин-шлюз для подключения Hermes Agent к мессенджеру MAX.**  
