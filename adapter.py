@@ -73,12 +73,16 @@ from .mixins.webhook import (  # noqa: F401 — re-export (tests use adapter._ve
     WebhookMixin,
     _verify_raw_secret,
 )
+try:
+    from .ssl_support import get_max_ssl_context
+except (ImportError, ValueError):
+    from ssl_support import get_max_ssl_context
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-MAX_API_BASE = "https://platform-api.max.ru"
+MAX_API_BASE = "https://platform-api2.max.ru"
 MAX_MESSAGE_LENGTH = 4000
 # Text budget per chunk: MAX_MESSAGE_LENGTH minus headroom for the "(i/n)\n"
 # numbering prefix that the sender prepends to every chunk of a split message.
@@ -1043,14 +1047,17 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             # (token) would be forwarded to any redirect target (token leak).
             # Redirects with Authorization are disabled; if the Max API ever
             # needs redirects, add a limited-redirects transport for known domains.
+            ssl_ctx = get_max_ssl_context()
             self._http_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0),
                 headers={"Authorization": self._token},
                 follow_redirects=False,
+                verify=ssl_ctx,
             )
             self._download_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self._inbound_media_timeout),
                 follow_redirects=False,
+                verify=ssl_ctx,
             )
             try:
                 ok = await self._verify_token_and_start(self._http_client)

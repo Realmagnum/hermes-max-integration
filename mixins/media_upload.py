@@ -15,11 +15,16 @@ from gateway.platforms.base import SendResult
 
 from .base import MaxBaseMixin
 
+try:
+    from ..ssl_support import get_max_ssl_context
+except (ImportError, ValueError):
+    from ssl_support import get_max_ssl_context
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-MAX_API_BASE = "https://platform-api.max.ru"
+MAX_API_BASE = "https://platform-api2.max.ru"
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 UPLOAD_DELAY = 2.0
 
@@ -31,6 +36,7 @@ _AUDIO_PASSTHROUGH_CONTAINERS = frozenset({"ogg", "mp3"})
 
 # SSRF allowlist for file upload CDNs (used by both adapter and standalone sender)
 _ALLOWED_UPLOAD_HOSTS = frozenset({
+    "platform-api2.max.ru",
     "platform-api.max.ru",
     "cdn.max.ru",
     "storage.max.ru",
@@ -263,7 +269,8 @@ class MediaUploadMixin(MaxBaseMixin):
                 return None
 
             # Step 2: upload file to the URL (use aiohttp for multipart)
-            async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as session:
+            connector = _aiohttp.TCPConnector(ssl=get_max_ssl_context())
+            async with _aiohttp.ClientSession(connector=connector, timeout=_aiohttp.ClientTimeout(total=120)) as session:
                 # Read file bytes off the event loop (ASYNC230); 50MB cap
                 # means loading into memory is acceptable here.
                 file_bytes = await asyncio.to_thread(fp.read_bytes)

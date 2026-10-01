@@ -90,10 +90,11 @@ class TestSendModelPicker:
         call_args = a._http_client.post.call_args
         body = call_args[1]["json"]
         buttons = body["attachments"][0]["payload"]["buttons"]
-        # OpenRouter + DeepSeek = 2 providers, 2 per row → 1 row
-        assert len(buttons) == 1
+        # OpenRouter + DeepSeek = 2 providers, 2 per row → 1 row + 1 row for Cancel button
+        assert len(buttons) == 2
         assert buttons[0][0]["text"] == "OpenRouter ✅"
         assert buttons[0][1]["text"] == "DeepSeek"
+        assert buttons[1][0]["text"] == "🔴 Cancel"
 
     @pytest.mark.asyncio
     async def test_session_bound_to_owner_and_message(self):
@@ -290,9 +291,9 @@ class TestModelCallback:
         buttons = body["attachments"][0]["payload"]["buttons"]
 
         # Should have 20 model buttons + Prev/Next + Back
-        # First page: 15 models
+        # First page: 10 models (PAGE_SIZE = 10)
         model_buttons = [b for row in buttons for b in row if "model:pick" in b.get("payload", "")]
-        assert len(model_buttons) == 15  # First page
+        assert len(model_buttons) == 10  # First page
 
         # Should have pagination buttons
         nav_buttons = [b for row in buttons for b in row if "model:page" in b.get("payload", "")]
@@ -343,9 +344,9 @@ class TestModelCallback:
         body = post_call[1]["json"]
         buttons = body["attachments"][0]["payload"]["buttons"]
 
-        # Second page: models 15-19 (5 models)
+        # Second page: models 10-19 (10 models with PAGE_SIZE=10)
         model_buttons = [b for row in buttons for b in row if "model:pick" in b.get("payload", "")]
-        assert len(model_buttons) == 5  # Second page has 5 models
+        assert len(model_buttons) == 10  # Second page has 10 models
 
         # Should have Prev button (no Next on last page)
         nav_buttons = [b for row in buttons for b in row if "model:page" in b.get("payload", "")]

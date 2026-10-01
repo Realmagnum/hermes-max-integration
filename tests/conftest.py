@@ -158,7 +158,7 @@ def mock_httpx_client():
 # instead of merely asserting that "some call happened".
 # ═════════════════════════════════════════════════════════════════════════
 
-MAX_API_HOST = "https://platform-api.max.ru"
+MAX_API_HOST = "https://platform-api2.max.ru"
 
 # Bound before any test can monkeypatch `httpx.AsyncClient` (see the
 # `http_client_factory` fixture) so building the double cannot recurse.

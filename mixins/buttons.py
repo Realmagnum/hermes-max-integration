@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-MAX_API_BASE = "https://platform-api.max.ru"
+MAX_API_BASE = "https://platform-api2.max.ru"
 MAX_MESSAGE_LENGTH = 4000
 
 

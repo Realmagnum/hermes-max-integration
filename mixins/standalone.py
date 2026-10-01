@@ -10,13 +10,17 @@ import httpx
 from gateway.config import PlatformConfig
 from gateway.platforms.base import SendResult
 
+try:
+    from ..ssl_support import get_max_ssl_context
+except (ImportError, ValueError):
+    from ssl_support import get_max_ssl_context
 from .media_upload import _ALLOWED_UPLOAD_HOSTS
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-MAX_API_BASE = "https://platform-api.max.ru"
+MAX_API_BASE = "https://platform-api2.max.ru"
 MAX_MESSAGE_LENGTH = 4000
 UPLOAD_DELAY = 2.0
 
@@ -42,7 +46,7 @@ async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str)
     headers = {"Authorization": token, "Content-Type": "application/json"}
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), verify=get_max_ssl_context()) as client:
             resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()
@@ -85,7 +89,7 @@ async def _standalone_send(
     headers = {"Authorization": token, "Content-Type": "application/json"}
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0), verify=get_max_ssl_context()) as client:
             # 1. Send text message first
             last_message_id: str | None = None
             if message and message.strip():
@@ -166,7 +170,8 @@ async def _standalone_send(
                 # Step 2: upload file as multipart
                 try:
                     import aiohttp as _aiohttp
-                    async with _aiohttp.ClientSession(timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
+                    aio_conn = _aiohttp.TCPConnector(ssl=get_max_ssl_context())
+                    async with _aiohttp.ClientSession(connector=aio_conn, timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
                         # Read file bytes off the event loop (ASYNC230).
                         file_bytes = await asyncio.to_thread(Path(media_path).read_bytes)
                         form = _aiohttp.FormData()

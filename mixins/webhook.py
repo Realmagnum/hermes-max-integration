@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────
 
-MAX_API_BASE = "https://platform-api.max.ru"
+MAX_API_BASE = "https://platform-api2.max.ru"
 WEBHOOK_MAX_BODY_BYTES = 1_048_576  # 1 MB
 WEBHOOK_SECRET_HEADER = "X-Max-Bot-Api-Secret"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "[::1]"})
