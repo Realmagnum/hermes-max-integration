@@ -30,6 +30,9 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
 | 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
 | 🌐 **Cross-Platform Sessions** | `/sessions` shows sessions across ALL platforms, `/resume <id>` switches to any. Requires explicit opt-in (`MAX_CROSS_SESSION=true`) and a trusted owner |
+| 🖥️ **Desktop UI Sidebar** | Native sessions sidebar in Hermes Desktop (`max-sessions-sidebar`): active dialogs, message counts, tokens, activity timestamps, and badges |
+| 📦 **Unified Package** | Automatic installation and registration of the desktop UI plugin alongside the platform without manual steps |
+| 🌍 **RU/EN Localization** | Full Russian and English language support across the Desktop UI and documentation |
 | 🧪 **Tested** | pytest + pytest-asyncio, **729 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |

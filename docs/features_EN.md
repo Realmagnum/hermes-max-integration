@@ -264,3 +264,23 @@ hermes send "text MEDIA:/file"
 ```
 
 Works via `_standalone_send` with native file delivery.
+
+## Desktop UI Sessions Sidebar
+
+### How it works
+
+The plugin includes a native UI component for Hermes Desktop — `desktop/plugin.js` (ID: `max-sessions-sidebar`).
+When the plugin is enabled, it automatically integrates into the left sidebar of Hermes Desktop.
+
+### Sidebar Features
+
+1. **Active MAX Dialogs List:** shows users and groups communicated with via MAX Bot API.
+2. **Session Metrics:** displays message counts and total token consumption for each conversation.
+3. **Time Formatting:** leverages localized Hermes time formatters (`fmtDateTime`, `fmtDayTime`, `relativeTime`).
+4. **Theme Integration:** seamlessly inherits the active Hermes theme variables, badges, and card styling.
+
+### Automatic Installation (Unified Package)
+
+The desktop widget requires no separate installation:
+- Hermes Core's Unified Package mechanism automatically copies and registers `desktop/plugin.js` into the desktop plugins directory.
+- Updates to the plugin automatically synchronize the desktop UI component.

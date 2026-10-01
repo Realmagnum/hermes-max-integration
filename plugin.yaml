@@ -1,15 +1,15 @@
 name: max-platform
 label: Max
 kind: platform
-version: 2.10.1
+version: 2.10.2
 description: >
   MAX messenger (max.ru) gateway adapter for Hermes Agent with cross-platform
-  session management. Supports both long-polling and webhook. Downloads and
-  caches voice messages; transcription is provided by the Hermes core STT
-  pipeline (config.yaml → stt), not by the plugin.
+  session management and native Hermes Desktop sessions sidebar integration.
+  Supports both long-polling and webhook. Downloads and caches voice messages;
+  transcription is provided by the Hermes core STT pipeline (config.yaml → stt).
 author: Alexander / Hermes Agent community
 license: MIT
-homepage: https://gitea.rmg7.com/agent/hermes-max-integration
+homepage: https://github.com/Realmagnum/hermes-max-integration
 
 # Declared for the `hermes plugins install/update` hint (never auto-installed
 # by Hermes by design). Table-as-image: playwright is the preferred HTML→PNG

@@ -2,7 +2,16 @@
 
 All notable changes to the hermes-max-integration plugin.
 
-## [2.10.1] — 2026-09-29
+## [2.10.2] — 2026-09-30
+
+### Features & Desktop UI
+- **Hermes Desktop Sessions Sidebar (`max-sessions-sidebar`):** added native MAX messenger sessions panel for the Hermes Desktop interface. Displays active conversations with MAX users, message counts, token consumption, formatted timestamps, and status badges.
+- **Unified Package & Automatic Installation:** packaged as a unified bundle (backend + desktop UI). When the plugin is enabled in Hermes, `desktop/plugin.js` is automatically registered within the desktop application.
+- **Localization Support:** verified full availability of Russian UI translations when switching Hermes Desktop language (`ru`), maintaining complete English fallback parity (`en`).
+- **Public Repository:** the project is synchronized with the public GitHub repository [Realmagnum/hermes-max-integration](https://github.com/Realmagnum/hermes-max-integration).
+
+### Fixed
+- **`file://` URL Handling for Images:** fixed image dispatch in `adapter.py` by decoding `file://` URLs from Hermes Core, resolving 400 Bad Request responses when sending local generated files.
 
 ### Fixed
 - **Chat Action & Typing Status Indicators in DMs:** fixed a critical regression where status indicators ("typing...", "sending photo...", "recording audio...") were missing in 1-on-1 direct messages. Hermes Core addresses DMs via scoped `user:<user_id>`, while MAX Bot API strictly requires the integer dialog `chat_id` on `/chats/{chat_id}/actions` and `/chats/{chat_id}` endpoints.
