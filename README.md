@@ -404,7 +404,7 @@ Supported button types:
 | `request_contact` | `text` (+ opt. `label`) | Request contact |
 | `request_geo_location` | `text` (+ opt. `label`) | Request geolocation |
 
-Each button takes a separate row (full width). Standard MAX limit — up to 10 buttons per message.
+Each button takes a separate row (full width). Standard MAX limit — up to 210 buttons per message (30 rows, up to 7 buttons per row for callback buttons).
 
 With 3+ buttons, they are automatically numbered (`1.`, `2.`, `3.`...) both in the message body and on the buttons themselves.
 
