@@ -3,7 +3,7 @@
 
 Scope (DOC-02): the environment-variable tables of
 
-  * README.md        README_EN.md
+  * README_RU.md    README.md
   * docs/setup.md    docs/setup_EN.md
 
 Verified per run:
@@ -32,7 +32,7 @@ import re
 import sys
 from pathlib import Path
 
-CONFIG_DOCS = ["README.md", "README_EN.md", "docs/setup.md", "docs/setup_EN.md"]
+CONFIG_DOCS = ["README_RU.md", "README.md", "docs/setup.md", "docs/setup_EN.md"]
 CORE_CONFIG_DOCS = ["docs/setup.md", "docs/setup_EN.md"]
 
 # Keys consumed by typed ``PlatformConfig`` fields (gateway/config.py::_TYPED_KEYS).
@@ -241,8 +241,8 @@ def main() -> int:
             problems.append(f"internal constant value for {label} ({literal!r}) not found in source")
 
     # 5. RU/EN parity (env tables) and constants table coverage
-    ru = set(documented.get("README.md", {})) | set(documented.get("docs/setup.md", {}))
-    en = set(documented.get("README_EN.md", {})) | set(documented.get("docs/setup_EN.md", {}))
+    ru = set(documented.get("README_RU.md", {})) | set(documented.get("docs/setup.md", {}))
+    en = set(documented.get("README.md", {})) | set(documented.get("docs/setup_EN.md", {}))
     if ru != en:
         problems.append(f"RU/EN mismatch: only RU {sorted(ru - en)}; only EN {sorted(en - ru)}")
     for rel in ("docs/setup.md", "docs/setup_EN.md"):

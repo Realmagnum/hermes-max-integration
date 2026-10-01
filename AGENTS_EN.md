@@ -8,7 +8,7 @@ This repository contains a Hermes Agent platform plugin that adds Max messenger 
 
 When a user gives you this repository and asks to connect Hermes to Max:
 
-1. **Do not invent** Max bot setup steps. Use the fact-checked sources in `README.md` (Russian) or `README_EN.md` (English); if available, re-open the official pages under `https://dev.max.ru/` and prefer current official docs.
+1. **Do not invent** Max bot setup steps. Use the fact-checked sources in `README.md` (English) or `README_RU.md` (Russian); if available, re-open the official pages under `https://dev.max.ru/` and prefer current official docs.
 2. Install Hermes first if it is missing: https://hermes-agent.nousresearch.com/docs
 3. Install this plugin with:
    ```bash

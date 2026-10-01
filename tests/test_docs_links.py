@@ -90,7 +90,7 @@ class TestProjectTreeDocs:
 
     def test_readme_trees_match_repository(self):
         missing = []
-        for name in ("README.md", "README_EN.md"):
+        for name in ("README.md", "README_RU.md"):
             text = (REPO_ROOT / name).read_text(encoding="utf-8")
             if "docs/webhook.md" in text:
                 missing.append(f"{name} still lists docs/webhook.md")

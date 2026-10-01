@@ -164,7 +164,7 @@ class MediaUploadMixin(MaxBaseMixin):
         action = action_map.get(mtype, "sending_file")
         try:
             await self.send_action(chat_id, action)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
         # Normalize audio to a Max-accepted container regardless of what the

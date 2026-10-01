@@ -19,11 +19,11 @@ def _read(*parts: str) -> str:
 # --------------------------------------------------------------------------
 
 RETRACTED = {
-    ("README.md",): [
+    ("README_RU.md",): [
         "гарантирует доставку любых безопасных расширений",  # unsupported absolute
         "поддерживает markdown-таблицы «из коробки»",  # false for classic parse_mode
     ],
-    ("README_EN.md",): [
+    ("README.md",): [
         "guaranteeing delivery for any safe extension",
         "supports markdown tables natively",
     ],
@@ -41,7 +41,7 @@ def test_reasoning_workaround_no_longer_points_at_display_platforms():
     # The old README told users to set display.platforms.max.fresh_final_after_seconds,
     # a key path core never reads, on a platform the setting never applies to.
     broken_fragment = "display:\n  platforms:\n    max:\n      fresh_final_after_seconds"
-    for fname in ("README.md", "README_EN.md"):
+    for fname in ("README.md", "README_RU.md"):
         text = _read(fname)
         assert broken_fragment not in text, f"{fname} still documents the broken config path"
         assert "streaming:\n  fresh_final_after_seconds" in text, (
@@ -55,7 +55,7 @@ def test_reasoning_workaround_no_longer_points_at_display_platforms():
 
 
 def test_telegram_tables_route_through_rich_messages():
-    for fname in ("README.md", "README_EN.md"):
+    for fname in ("README.md", "README_RU.md"):
         text = _read(fname)
         assert "sendRichMessage" in text, f"{fname} must name the only table-capable API"
         assert "Bot API 10.1" in text, f"{fname} must cite the Telegram Bot API version"

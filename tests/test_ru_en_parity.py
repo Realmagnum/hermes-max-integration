@@ -30,8 +30,8 @@ def test_repository_documentation_is_in_ru_en_parity():
 
 
 def test_checker_flags_each_kind_of_drift(tmp_path):
-    ru = tmp_path / "README.md"
-    en = tmp_path / "README_EN.md"
+    ru = tmp_path / "README_RU.md"
+    en = tmp_path / "README.md"
     ru.write_text(
         "# Заголовок\n\n"
         "## Раздел\n\n"
@@ -69,8 +69,8 @@ def test_checker_flags_each_kind_of_drift(tmp_path):
 
 def test_identical_translations_pass(tmp_path):
     body = "# Заголовок\n\n## Раздел\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"
+    (tmp_path / "README_RU.md").write_text(body, encoding="utf-8")
     (tmp_path / "README.md").write_text(body, encoding="utf-8")
-    (tmp_path / "README_EN.md").write_text(body, encoding="utf-8")
     proc = run_checker(tmp_path)
     assert proc.returncode == 0, proc.stdout
     assert "1 in sync" in proc.stdout

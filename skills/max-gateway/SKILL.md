@@ -121,7 +121,7 @@ metadata:
   grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
   ```
   В логе ядра ищите `Voice transcription failed for <path>: <error>` (ошибка провайдера) и маркер `[voice message could not be transcribed automatically; the audio is available at: …]`
-- Подробнее: README → «Голос не транскрибируется», `docs/troubleshooting.md`
+- Подробнее: README_RU.md → «Голос не транскрибируется», `docs/troubleshooting.md`
 
 ## Проблемы (общие)
 

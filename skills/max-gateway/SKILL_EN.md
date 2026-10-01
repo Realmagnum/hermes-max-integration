@@ -122,7 +122,7 @@ Transcription is performed by the **Hermes core** (>= 0.20.0) — the plugin onl
   grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
   ```
   In the core log look for `Voice transcription failed for <path>: <error>` (provider error) and the marker `[voice message could not be transcribed automatically; the audio is available at: …]`
-- More: README → "Voice not transcribing", `docs/troubleshooting_EN.md`
+- More: README.md → "Voice not transcribing", `docs/troubleshooting_EN.md`
 
 ## Pitfalls (general)
 

@@ -1,7 +1,7 @@
 # External and unconfirmed claims — verification register (DOC-10)
 
 **Verification date:** 2026-09-16.
-**Scope:** README / README_EN / docs/setup* claims about the MAX API and platform requirements, Telegram capabilities, and Hermes core behaviour.
+**Scope:** README / README_RU / docs/setup* claims about the MAX API and platform requirements, Telegram capabilities, and Hermes core behaviour.
 **Method:** reconciled against the official MAX documentation (`dev.max.ru/docs-api`), the official Telegram Bot API documentation (`core.telegram.org/bots/api`) and the actual Hermes 0.21.3 core source (`~/.hermes/hermes-agent`). No live API calls; no production tokens or messages were used.
 
 ## 1. Change summary

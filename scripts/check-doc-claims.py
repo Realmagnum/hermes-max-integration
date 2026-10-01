@@ -10,7 +10,7 @@ README advertised 126 and 94 tests in different tables):
     ``pyproject.toml`` version and the newest ``CHANGELOG*`` heading must
     mirror it.
   * **Test count.** Every ``<N> tests`` / ``<N> тестов`` claim in ``README.md``
-    and ``README_EN.md`` must equal the number of tests pytest actually
+    and ``README_RU.md`` must equal the number of tests pytest actually
     collects (``pytest --collect-only``), never a count typed by hand.
 
 Exit code 1 with a report when a claim drifts; 0 when everything matches.
@@ -26,7 +26,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-README_FILES = ("README.md", "README_EN.md")
+README_FILES = ("README.md", "README_RU.md")
 CHANGELOG_FILES = ("CHANGELOG.md", "CHANGELOG_EN.md")
 
 # "<N> tests" / "<N> тестов" / "<N> теста" — the published test-count claims.

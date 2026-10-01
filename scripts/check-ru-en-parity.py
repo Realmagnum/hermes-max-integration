@@ -98,8 +98,13 @@ def find_pairs(root: Path) -> list[tuple[Path, Path]]:
     for path in sorted(root.rglob("*.md")):
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
             continue
-        if path.name.endswith("_EN.md"):
+        if path.name.endswith("_EN.md") or path.name.endswith("_RU.md"):
             continue
+        if path.name == "README.md":
+            counterpart = path.with_name("README_RU.md")
+            if counterpart.exists():
+                pairs.append((counterpart, path))  # (ru, en)
+                continue
         counterpart = path.with_name(path.stem + "_EN.md")
         if counterpart.exists():
             pairs.append((path, counterpart))
@@ -132,6 +137,8 @@ def check_pair(ru_path: Path, en_path: Path, root: Path) -> list[str]:
             problems.append(f"RU file links to a translated file: {target}")
     for target in sorted(links(en)):
         if "_EN" in target:
+            continue
+        if en_path.name == "README.md" and target == "README_RU.md":
             continue
         variant = en_variant(target)
         if variant and (root / variant).exists():

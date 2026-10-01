@@ -1,0 +1,613 @@
+# Hermes MAX Gateway
+
+<p align="center">
+  <img src="assets/banner.jpg" alt="Hermes MAX.ru Integration" width="100%">
+</p>
+
+> 🌐 **English version:** English documentation is available in [README.md](README.md).  
+> **⚠️ Двуязычный проект:** Документация на русском языке — `README_RU.md`, английский перевод — `README.md`. При изменении этого файла **обязательно** синхронизируйте изменения с `README.md`.
+
+**Плагин-шлюз для подключения Hermes Agent к мессенджеру MAX.**  
+Голосовая транскрипция (STT ядра Hermes), интерактивные кнопки (выбор модели, подтверждение команд), отрисовка таблиц в PNG-картинки с цветными иконками, стриминг ответов, загрузка файлов, контроль доступа.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Hermes](https://img.shields.io/badge/Hermes-Agent-8A2BE2)](https://hermes-agent.nousresearch.com/docs)
+
+---
+
+## Возможности
+
+| Функция | Описание |
+|---------|----------|
+| 🟣 **MAX Messenger** | Полная интеграция шлюза с max.ru |
+| 📡 **Два режима** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
+| 🎤 **STT Голос** | Автозагрузка голосовых → транскрипция ядром Hermes (core STT) |
+| 🖼️ **Таблицы-картинки** | Отрисовка markdown-таблиц в PNG с цветными иконками статусов |
+| 📝 **Стриминг** | `edit_message` через `PUT /messages` для вывода токенов в реальном времени |
+| 🔘 **Интерактивные кнопки** | callback + link + message + request_contact/geo + модель/approval/clarify |
+| 🔗 **Link-кнопки** | Кнопки-ссылки в сообщениях (`send_buttons()` с типом `link`) |
+| 👁️ **send_action** | Расширенные статусы: typing, sending_photo/video/audio/file, read, typing_off |
+| ✂️ **Авточанкование** | Умная разбивка длинных сообщений (до 4000 символов с сохранением абзацев) |
+| ⬆️ **Загрузка файлов** | Двухшаговая загрузка: `POST /uploads` → PUT → токен → отправка |
+| 🔒 **Контроль доступа** | Белый список пользователей, групповые политики, проверка секрета вебхука |
+| 📎 **Медиа** | Рекурсивное извлечение вложений, кэш изображений/документов/аудио |
+| 🎞️ **Голосовые/Видео/Документы** | Отдельные методы `send_voice`, `send_video`, `send_document` |
+| ⚡ **Индикатор ввода** | Отображение набора текста для всех типов чатов |
+| 🔧 **Standalone-отправитель** | Отправка сообщений из cron/send_message через `_standalone_send` с нативной доставкой файлов. `hermes send "текст MEDIA:/file"` — работает без модификации ядра |
+| 🌐 **Кросс-платформенные сессии** | `/sessions` показывает сессии со ВСЕХ платформ, `/resume <id>` переключается на любую. Требуется явный opt-in (`MAX_CROSS_SESSION=true`) и доверенный владелец |
+| 🖥️ **Desktop UI Сайдбар** | Нативная боковая панель сессий в Hermes Desktop (`max-sessions-sidebar`): активные диалоги, счетчик сообщений, токены, время активности и бейджи |
+| 📦 **Unified Package** | Автоматическая установка и подключение десктопного UI-плагина вместе с платформой без ручных действий пользователя |
+| 🌍 **Локализация RU/EN** | Полная поддержка русского и английского языков в интерфейсе Desktop и документации |
+| 🧪 **Тесты** | pytest + pytest-asyncio, **729 тестов** |
+| 🔧 **Интерактивная настройка** | `hermes gateway setup` с подсказками |
+| 📋 **Слеш-команды** | 20 команд (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) через MAX API `PATCH /me/commands` |
+
+## Слеш-команды MAX
+
+Бот поддерживает **20 слеш-команд**, зарегистрированных через MAX Bot API (`PATCH /me/commands`). Аналог Telegram `setMyCommands`.
+
+### Основные команды
+
+| Команда | Описание |
+|---------|----------|
+| `/start` | Запустить бота |
+| `/new` | Новая сессия (alias: `/reset`) |
+| `/status` | Статус сессии |
+| `/model` | Выбрать модель |
+| `/resume` | Возобновить сессию |
+| `/sessions` | Список сессий |
+| `/help` | Помощь |
+| `/stop` | Остановить процессы |
+| `/config` | Конфигурация |
+| `/restart` | Перезапустить gateway |
+
+### Продвинутые команды
+
+| Команда | Описание |
+|---------|----------|
+| `/retry` | Повторить последнее сообщение |
+| `/undo [N]` | Откатить N ходов (по умолч. 1) |
+| `/title [name]` | Установить название сессии |
+| `/branch [name]` | Ветвить сессию (alias: `/fork`) |
+| `/compress` | Сжать контекст (alias: `/compact`) |
+| `/rollback [number]` | Список или восстановление чекпоинтов |
+| `/background <prompt>` | Запустить в фоне (alias: `/bg`, `/btw`) |
+| `/agents` | Активные агенты и задачи (alias: `/tasks`) |
+| `/queue <prompt>` | Очередь промптов (alias: `/q`) |
+| `/topic [off\|help\|session-id]` | Темы в Telegram DM |
+
+### Ограничения MAX
+
+- Максимум **32 команды** (Telegram: 100)
+- Команды регистрируются автоматически при старте плагина
+- Ошибки регистрации не критичны — бот работает без команд
+
+### Пример
+
+```bash
+# Проверить зарегистрированные команды через API
+curl -H "Authorization: $MAX_BOT_TOKEN" \
+  https://platform-api2.max.ru/me/commands
+```
+
+## Пример: таблицы-картинки в деле
+
+**Без** `MAX_TABLE_AS_IMAGE` (текстовый fallback):
+```
+`-------------------------`
+`| Сервер   | Статус     |`
+`| web-01   | ✓ Done     |`
+`| db-main  | ✗ Failed   |`
+`-------------------------`
+```
+
+**С** `MAX_TABLE_AS_IMAGE=true` (PNG-картинка, ~13KB):
+
+![Пример таблицы-картинки](assets/table_sample.png)
+
+Каждая ячейка статуса — цветной символ: ✓ зелёный, ✗ красный, ⚠ оранжевый, ◷ янтарный, ▶ синий.
+
+### Где это полезно
+
+| Сценарий | Что было раньше | Что стало |
+|----------|----------------|-----------|
+| 📊 **Дашборд мониторинга** | «\| Сервер \| Статус \|» текстом | Цветная таблица с иконками |
+| 📋 **Список задач** | Нечитаемые строки | Чёткие колонки с приоритетами |
+| 🏗️ **CI/CD статус** | Слитые строки | Аккуратный PNG с этапами |
+| 📈 **Отчёты** | Развалившаяся разметка | Готовая для пересылки картинка |
+| 👥 **Командные проекты** | Путаница в колонках | Понятная таблица с цветами |
+
+### Почему картинка, а не нативная таблица?
+
+**Telegram:** классические режимы разметки (`parse_mode=Markdown`, `MarkdownV2`, `HTML`) таблиц **не** поддерживают — `| A | B |` с `format=markdown` таблицу не создаёт. Таблицы появились только в Bot API 10.1 (11 июня 2026) вместе с Rich Messages и требуют отдельного метода `sendRichMessage` (`RichBlockTable`).
+
+**MAX** не поддерживает таблицы ни в Markdown, ни в HTML. Официальный список разметки (dev.max.ru/docs-api, раздел «Форматирование текста в сообщениях», сверено 2026-09-16) включает курсив, жирный, зачёркнутый, подчёркнутый, моноширинный, ссылки, упоминания, выделение, заголовки и цитаты; таблиц и fenced-блоков в нём нет.
+
+Мы перепробовали несколько подходов, прежде чем остановились на PNG:
+
+| Попытка | Результат |
+|---------|-----------|
+| ` ``` ` code fence | MAX не поддерживает — теги отображались как текст |
+| `<pre>` HTML-тег | Работает только в HTML-режиме, но тогда весь остальной markdown перестаёт парситься |
+| inline `` `code` `` | Работает как fallback, но без границ и выравнивания |
+| Простой текст с `\|` и `---` | Читаемо, но без моноширинного шрифта выглядит неаккуратно |
+| **Pillow PNG** ✅ | **Полный контроль: цвета, границы, иконки, шрифты** |
+
+**Итог:** PNG-картинка даёт то, чего у MAX нет нативно — аккуратные таблицы с цветными статусами (в Telegram для этого нужен Bot API 10.1+ и `sendRichMessage`, в MAX нативного формата нет вовсе). Плюс: картинку можно переслать, она не зависит от форматирования клиента. Минус: нельзя скопировать текст из ячейки.
+
+## Сравнение с оригиналом
+
+| | Оригинал (vladimiraldushin) | Этот плагин |
+|---|---|---|
+| Архитектура | Плагин ✅ | Плагин ✅ |
+| Long Polling | ❌ Только Webhook | ✅ Оба режима |
+| STT Голос | ❌ | ✅ Ядро Hermes |
+| Стриминг (edit_message) | ❌ | ✅ |
+| **Таблицы-картинки (PNG)** | ❌ | ✅ **Уникально** |
+| **Интерактивные кнопки** | ❌ | ✅ model picker, approval, clarify |
+| Загрузка файлов | ❌ | ✅ Двухшаговая |
+| Разбивка сообщений | ✅ | ✅ Улучшена |
+| Извлечение медиа | ✅ | ✅ Расширено |
+| Дедупликация сообщений | ❌ | ✅ 300 сек |
+| Тесты | ✅ Базовые | ✅ 729 тестов |
+| Настройка | ✅ | ✅ + табл. |
+
+## Как это работает (архитектура)
+
+```
+┌─────────┐     Long Polling / Webhook     ┌─────────────────┐
+│  MAX    │ ──────────────────────────────→ │  MaxAdapter     │
+│  Client │                                  │  (adapter.py)   │
+│  (бот)  │ ←────────────────────────────── │     ↓           │
+└─────────┘     POST /messages (текст/PNG)  │  ┌───────────┐  │
+                                            │  │ send()    │  │
+                                            │  │  ↓        │  │
+                                            │  │ tables?   │──┼── MAX_TABLE_AS_IMAGE=true
+                                            │  │  ↓   ↓    │  │    → Playwright(HTML→PNG) или Pillow → PNG
+                                            │  │ текст PN  │  │    → POST /uploads
+                                            │  │       G   │  │    → PUT → token
+                                            │  └───────────┘  │    → POST /messages
+                                            │  ┌───────────┐  │
+                                            │  │ STT (ядро) │──┼── core STT (config.yaml)
+                                            │  └───────────┘  │
+                                            └─────────────────┘
+```
+
+## Быстрый старт
+
+### 1. Установка
+
+```bash
+hermes plugins install Realmagnum/hermes-max-integration --enable
+```
+
+### 2. Получить токен
+
+Зарегистрироваться на https://business.max.ru/self (юрлицо/ИП/самозанятый РФ).
+Создать бота → модерация → **Чат-боты → Перейти → Расширенные настройки → Настроить** → скопировать токен.
+
+### 3. Настройка
+
+```bash
+hermes gateway setup
+# Выбрать: Max
+```
+
+Или вручную в `~/.hermes/.env`:
+
+```bash
+MAX_BOT_TOKEN=ваш_токен
+MAX_ALLOWED_USERS=ваш_id_в_max
+```
+
+### 4. Включить таблицы-картинки (опционально)
+
+Рекомендуемый рендер — **HTML→PNG через Playwright/Chromium** (аккуратные таблицы,
+нативные эмодзи, никакого переполнения ячеек). Без браузера плагин автоматически
+фоллбэкает на классическую отрисовку через Pillow.
+
+> **Важно:** ставьте зависимости в тот же Python, где работает шлюз Hermes
+> (venv), иначе пакет не попадёт в рантайм плагина. Windows:
+> `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
+
+```bash
+# Вариант A (рекомендуется): HTML→PNG через Playwright.
+#   Использует установленный Chrome/Chromium (system) или скачивает bundled:
+python -m pip install 'playwright>=1.40'
+python -m playwright install chromium          # ~115 МБ, один раз; либо установите Chrome/Chromium вручную
+
+# Идемпотентный скрипт вместо ручных команд (ставит только недостающее):
+python scripts/setup-playwright.py --check-only   # диагностика (exit 1, если чего-то нет)
+python scripts/setup-playwright.py                # установка недостающего
+
+# Вариант B (фоллбэк): классическая отрисовка через Pillow
+python -m pip install Pillow
+
+echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
+```
+
+**Авто-установка (опционально):** при `MAX_AUTO_INSTALL_PLAYWRIGHT=true`
+плагин сам поставит пакет и Chromium при первом рендере таблицы
+(займёт 1–2 минуты и потребует доступа в сеть; дальше рендер идёт как обычно).
+
+### 5. Перезапуск
+
+```bash
+hermes gateway restart
+```
+
+## Режимы подключения
+
+Плагин поддерживает два режима получения сообщений от MAX API. Режим определяется единственной переменной — **`MAX_WEBHOOK_URL`**:
+
+| `MAX_WEBHOOK_URL` | Режим | Механизм |
+|---|---|---|
+| Не задан (пуст) | **Long polling** (по умолчанию) | Цикличный `GET /updates?timeout=5&marker=...` |
+| Задан HTTPS URL | **Webhook** | aiohttp сервер на порту 8646, регистрация `POST /subscriptions` |
+
+Выбор происходит в коде `connect()` одной строкой: `self._use_webhook = bool(self._webhook_url)`.
+
+### Переключение Long polling → Webhook
+
+```bash
+# 1. Добавить в ~/.hermes/.env
+MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
+MAX_WEBHOOK_SECRET=my-secret
+
+# 2. Перезапустить
+sudo systemctl restart hermes-gateway
+```
+
+При старте: `_start_webhook()` → открывает `0.0.0.0:8646` → регистрирует подписку в MAX API → сообщения приходят на webhook URL.
+
+### Переключение Webhook → Long polling
+
+```bash
+# 1. Удалить или закомментировать MAX_WEBHOOK_URL (и MAX_WEBHOOK_SECRET)
+# MAX_WEBHOOK_URL=...
+# MAX_WEBHOOK_SECRET=...
+
+# 2. Перезапустить
+sudo systemctl restart hermes-gateway
+```
+
+При старте: `_start_polling()` → проверяет `GET /subscriptions`, **автоматически удаляет** старые webhook-подписки (иначе MAX продолжал бы слать сообщения на несуществующий URL) → запускает `_poll_loop`.
+
+### 🚨 Важно
+
+Если webhook-подписка была зарегистрирована **вручную** (curl'ом, не через плагин), автоочистка может её не найти. В таком случае удалите вручную:
+
+```bash
+curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
+  -H "Authorization: $MAX_BOT_TOKEN"
+```
+
+Проверить активные подписки: `GET /subscriptions` с тем же токеном.
+
+### 💬 Отображение reasoning (мысли модели)
+
+При использовании reasoning-моделей (DeepSeek R1, Claude Opus, Gemini Thinking и др.) блок с рассуждениями модели (`💭 **Reasoning:**`) добавляется к финальному ответу автоматически.
+
+Чтобы reasoning появлялся как **отдельное свежее сообщение** (а не edit последнего стриминг-сообщения), в ядре есть настройка `streaming.fresh_final_after_seconds`:
+
+```yaml
+streaming:
+  fresh_final_after_seconds: 10
+```
+
+**Важно (проверено на ядре Hermes 0.21.3, 2026-09-16):** ключ читается только из верхнеуровневой секции `streaming:` (не `display.platforms.max.*`) и применяется **только к Telegram** (`gateway/run_turn.py` принудительно выставляет `0.0` для всех остальных платформ). Для MAX этот переключатель не действует — reasoning остаётся префиксом к финальному edit'у. Если reasoning не виден в MAX, проверьте поведение streaming/reasoning в вашей версии ядра, а не задавайте этот ключ как «решение для MAX».
+
+### 🔍 Диагностика
+
+Для быстрой проверки работоспособности MAX выполните скрипт диагностики (должен быть в `scripts/diagnose.sh` репозитория плагина). Скрипт сам определяет текущий режим (webhook или long polling) и адаптирует проверки:
+
+```bash
+cd ~/.hermes/plugins/max-platform
+
+# Базовая диагностика (без отправки сообщения)
+./scripts/diagnose.sh
+
+# Полная диагностика с E2E-тестом (отправит сообщение в домашний канал)
+./scripts/diagnose.sh --send
+```
+
+Скрипт проверяет 8 пунктов: установку плагина, подключение к MAX, активность (polling или webhook), health/ошибки, подписки, токен, E2E-отправку и настройку reasoning. Exit code: `0` — всё ок, `1` — есть проблемы.
+
+## Справочник конфигурации
+
+| Переменная | Обязат. | По умолч. | Описание |
+|------------|---------|-----------|----------|
+| `MAX_BOT_TOKEN` | ✅ | — | Токен бота |
+| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост вебхука |
+| `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт вебхука |
+| `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь вебхука |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
+| `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS (включает webhook-режим) |
+| `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей |
+| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
+| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
+| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере таблицы (нужен доступ в сеть, 1–2 мин) |
+| `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume; требуется явное включение (см. ниже) |
+
+---
+
+## 🌐 Кросс-платформенные сессии
+
+**Зачем:** ядро Hermes по умолчанию показывает сессии только в пределах одной платформы — из MAX видны только MAX-сессии. Это корректно для multi-tenant, но неудобно, когда один пользователь работает с нескольких платформ.
+
+**Как работает:** адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы и форматирует ответ.
+
+| Команда | Действие | Пример вывода |
+|---------|----------|--------------|
+| `/sessions` | Последние 15 сессий со всех платформ | `1. 💻 cli — Zabbix deploy...` |
+| `/sessions search <q>` | Поиск по всем сессиям | `🔍 Sessions matching "traefik"` |
+| `/resume <id>` | Переключиться на любую сессию | (переключает без ошибки) |
+
+**Требование:** для `/resume --all` добавьте `max` в `platforms:` config.yaml:
+```yaml
+platforms:
+  max:
+    extra:
+      allow_admin_from:
+        - "95825064"  # ваш MAX user_id
+```
+
+**Отключение:** `MAX_CROSS_SESSION=false` в `.env` — вернёт стандартное поведение ядра (только MAX-сессии).
+
+---
+
+## 👁️ send_action — расширенные статусы
+
+`send_typing()` теперь делегирует `send_action()`, которая поддерживает все статусы MAX API:
+
+| Метод | action | MAX API | Описание |
+|-------|--------|---------|----------|
+| `send_typing()` | `typing` | `typing_on` | Печатает (по умолчанию) |
+| `send_action(cid, "typing_off")` | `typing_off` | `typing_off` | Скрыть индикатор |
+| `send_action(cid, "sending_photo")` | `sending_photo` | `sending_photo` | Отправляет фото |
+| `send_action(cid, "sending_video")` | `sending_video` | `sending_video` | Отправляет видео |
+| `send_action(cid, "sending_audio")` | `sending_audio` | `sending_audio` | Отправляет аудио |
+| `send_action(cid, "sending_file")` | `sending_file` | `sending_file` | Отправляет файл |
+| `send_action(cid, "read")` | `read` | `read` | Отметить как прочитано |
+
+```python
+await adapter.send_action("chat:123", "sending_file")
+```
+
+## 🔗 Link-кнопки и send_buttons()
+
+Новый публичный метод `send_buttons()` — отправка сообщений с inline-кнопками любых типов:
+
+```python
+await adapter.send_buttons(
+    chat_id="chat:123",
+    text="Выберите действие:",
+    buttons=[
+        {"type": "link", "text": "🌐 Открыть сайт", "url": "https://example.com"},
+        {"type": "callback", "text": "✅ Подтвердить", "payload": "confirm:123"},
+        {"type": "request_contact", "text": "📞 Поделиться номером"},
+    ],
+)
+```
+
+Поддерживаемые типы кнопок:
+
+| type | Параметры | Описание |
+|------|-----------|----------|
+| `callback` | `text`, `payload` (+ опц. `label`) | Inline callback с payload |
+| `link` | `text`, `url` (+ опц. `label`) | Открывает URL |
+| `message` | `text`, `payload` (+ опц. `label`) | Отправляет предзаполненное сообщение |
+| `request_contact` | `text` (+ опц. `label`) | Запрос контакта |
+| `request_geo_location` | `text` (+ опц. `label`) | Запрос геолокации |
+
+Каждая кнопка занимает отдельный ряд (по ширине сообщения). Стандартный лимит MAX — до 10 кнопок на сообщение.
+
+При 3+ кнопках они автоматически нумеруются (`1.`, `2.`, `3.`...) как в теле сообщения, так и на самих кнопках.
+
+Опциональное поле `label` содержит **полный текст описания** для fallback в теле сообщения — в отличие от `text` (который идёт на кнопку и может быть обрезан MAX на мобильных устройствах). Если `label` не указан, используется `text`.
+
+```python
+# text — короткое (на кнопку), label — полное (в описание)
+{"type": "callback", "text": "Базовый", "label": "Базовый — 500₽/мес, 10GB", "payload": "basic"}
+```
+
+Если нужно несколько кнопок в одном ряду — используйте `_post_interactive()` напрямую с готовой структурой рядов.
+
+| Исходный эмодзи | Отображается | Значение | Цвет |
+|----------------|--------------|----------|------|
+| ✅ | ✓ | Готово / Done | `#16a34a` |
+| ❌ | ✗ | Ошибка / Failed | `#dc2626` |
+| ⚠️ | ⚠ | На проверке / Warning | `#ea580c` |
+| ⏳ / ⌛ | ◷ | Ожидание / Pending | `#ca8a04` |
+| ⏳ + schedule | ▶ | Запланировано / Scheduled | `#3b82f6` |
+| 🔴 | ● | Критично (красный) | `#dc2626` |
+| 🟢 | ● | Хорошо (зелёный) | `#16a34a` |
+| 🟡 | ● | Средне (жёлтый) | `#ca8a04` |
+
+Если ни Playwright/Chromium, ни Pillow не установлены — автопереключение на текстовый `` `code` `` режим.
+
+---
+
+## 📎 Нативная доставка файлов (standalone sender)
+
+Плагин умеет отправлять файлы через `hermes send` без запущенного gateway:
+
+```bash
+# Текст + файл (работает без модификации ядра)
+hermes send --to max:USER_ID "📄 Отчёт MEDIA:/path/to/report.pdf"
+
+# Несколько файлов
+hermes send --to max:USER_ID "📦 Файлы: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xlsx"
+
+# MEDIA-only (требует опционального патча ядра — см. ниже)
+```
+
+**Как это работает:**
+
+1. Core извлекает `MEDIA:`-пути → `media_files: List[Tuple[str, bool]]`
+2. Текст сообщения отправляется отдельным `POST /messages`
+3. Для каждого файла:
+    - `POST /uploads?type=file` → URL для загрузки на CDN
+    - Multipart POST на CDN → токен файла
+    - `POST /messages` с `attachments: [{"type": "file", "payload": {"token": токен}}]`
+
+Файлы шлются как `type=file`. MAX официально поддерживает для `file` только «распространённые форматы» (например, TXT, DOC, PDF), размер — до 4 ГБ, и один `file` в сообщении допускается только в комбинации с вложением-клавиатурой (dev.max.ru/docs-api/methods/POST/uploads и POST /messages, сверено 2026-09-16).
+
+⚠️ **Ограничение MAX CDN:** Расширения `.exe`, `.apk`, `.bat`, `.msi` и другие потенциально опасные блокируются MAX на стороне CDN (HTTP 415 — "File extension is forbidden"); при неподдерживаемом расширении сервер возвращает ту же ошибку. Это ограничение платформы, не обходится из плагина, и «доставка любого разумного расширения» не гарантируется — ориентируйтесь на список поддерживаемых форматов MAX.
+
+Для отправки файлов **внутри сессии** (через gateway) используйте `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — они используют адаптер с ретраем при `attachment.not.ready`.
+
+### Опциональное улучшение: MEDIA-only в core
+
+По умолчанию `hermes send "MEDIA:/file"` (без текста) блокируется ядром:
+
+```
+send_message MEDIA delivery is currently only supported for telegram, discord...
+```
+
+Это лечится опциональным скриптом, который добавляет MAX в список поддерживаемых платформ в `tools/send_message_tool.py`:
+
+```bash
+python3 scripts/apply-core-fix.py       # применить
+python3 scripts/apply-core-fix.py --revert  # откатить
+```
+
+⚠️ **Совместимость с версией ядра (проверено на Hermes 0.21.3, 2026-09-16).** Скрипт ищет в `tools/send_message_tool.py` маркеры `# --- Non-media platforms ---` и `if media_files and not message.strip()`. В ядре 0.21.3 этот участок переработан (появился реестр `_PLUGIN_STANDALONE_MEDIA`), маркеров нет, и скрипт завершается с `❌ Could not find insertion marker in core file.` — ни `apply`, ни `--revert` не срабатывают. Прогон на копии core подтвердил: рабочая установка не меняется, но и медиа-доставка не включается. Перед применением сверьте разметку с вашей версией ядра; при несовпадении скрипт нужно адаптировать (или дождаться нативной поддержки MAX в ядре).
+
+После применения:
+```bash
+hermes send --to max:USER_ID "MEDIA:/tmp/image.png"     # ✅ работает
+hermes send --to max:USER_ID "текст MEDIA:/file.pdf"     # ✅ и так работало
+```
+
+## Документация
+
+- [Настройка](docs/setup.md) — .env, webhook, security, deployment
+- [Возможности](docs/features.md) — STT, таблицы, стриминг, кнопки, файлы
+- [API](docs/api.md) — форматы MAX API, callbacks, загрузка файлов
+- [Диагностика](docs/troubleshooting.md) — ошибки, diagnose.sh, логи
+- [Проверка внешних утверждений](docs/external-claims.md) — сверка с docs MAX/Telegram, источники и дата
+
+## Решение проблем
+
+### Бот не отвечает
+
+```bash
+hermes gateway status
+curl -H "Authorization: ***" https://platform-api.max.ru/me
+curl http://localhost:8646/health
+```
+
+### Таблицы не стали картинками
+
+```bash
+# Проверить что включено
+grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
+
+# Диагностика рендера: playwright-пакет и Chromium на месте?
+python scripts/setup-playwright.py --check-only
+#   MISSING → python scripts/setup-playwright.py  (ставит недостающее)
+#   либо вручную: python -m pip install 'playwright>=1.40'
+#                 python -m playwright install chromium
+
+# Проверить Pillow (фоллбэк-рендер)
+pip list | grep -i pillow
+
+# Проверить логи
+grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
+```
+
+### SSL ошибки с MAX API
+
+Плагин не отключает проверку TLS. Установите доверенную цепочку сертификатов MAX в системное хранилище или образ выполнения.
+
+### Голос не транскрибируется
+
+STT выполняет **ядро Hermes** (не плагин). Проверьте:
+
+```bash
+# 1. Секция stt в конфиге ядра (провайдер, язык)
+grep -A4 "^stt:" ~/.hermes/config.yaml
+# 2. Категория STT в интерактивной настройке
+hermes tools
+```
+
+Для русского языка задайте в `config.yaml`:
+
+```yaml
+stt:
+  enabled: true
+  language: ru      # дефолт ядра — "en"
+  provider: local   # или openai (gpt-transcribe), groq, xai...
+```
+
+> Аудио скачивает и кэширует адаптер плагина; транскрибирует ядро. При первом использовании провайдера `local` модель (~150 МБ) скачивается автоматически.
+
+## Структура проекта
+
+```
+hermes-max-integration/
+├── plugin.yaml              # Метаданные плагина
+├── __init__.py              # register() — точка входа
+├── pyproject.toml           # Python-пакет
+├── adapter.py               # MaxAdapter (~2600 строк)
+├── mixins/                  # Слои адаптера: buttons, sessions, webhook, media, tables
+├── scripts/
+│   └── apply-core-fix.py      # Опциональный патч core для MEDIA-only
+├── skills/
+│   └── max-gateway/
+│       └── SKILL.md         # Навык для AI-агента
+├── tests/                   # pytest: 729 тестов
+├── AGENTS.md                # Инструкции для AI-агентов
+├── after-install.md         # Пост-установка
+├── cliff.toml               # git-cliff config (EN)
+├── cliff-ru.toml            # git-cliff config (RU)
+├── README.md                # Английская версия
+├── README_RU.md             # Русская версия
+└── .github/workflows/ci.yml # CI/CD
+```
+
+**Примечание:** сгенерированные PNG-таблицы кэшируются в `~/.hermes/table_images/`;
+ключ кэша включает движок рендера (Playwright/Pillow), так что при переключении
+движка старые картинки не подставляются.
+
+## Безопасность
+
+| Мера | Детали |
+|------|--------|
+| 🛡️ **SSRF Защита** | URL загрузок проверяются по белому списку `*.max.ru` / `*.oneme.ru` |
+| 🔐 **Токен** | `Authorization` не передаётся при HTTP-редиректах |
+| 🔑 **Секрет вебхука** | Сравнение через `secrets.compare_digest` (защита от timing) |
+| 🔊 **Приватность голоса** | Аудио-кэш с правами `0700` |
+| 🧹 **Чистка ошибок** | Токены и URL удалены из сообщений об ошибках |
+| 🔍 **CI** | `bandit` SAST + `pip-audit` при каждом пуше |
+
+Полный аудит и исправления: коммит `e87ee64`.
+
+## История проекта
+
+Проект прошёл две стадии становления.
+
+**Первая версия** была написана с нуля под конкретную задачу: связать Hermes Agent с мессенджером MAX. В ней появились голосовая транскрипция, двухшаговая загрузка файлов, интерактивные кнопки, стриминг ответов — всё то, чего не было в других реализациях.
+
+**Позднее** в поле зрения попал более зрелый проект [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) — с продуманной архитектурой плагинов, вебхуками, тестами. Вместо того чтобы тянуть две параллельные ветки, было принято решение переработать плагин на его основе:
+
+- Архитектура, подписки (webhook/long polling), система обновлений — из upstream
+- Весь наработанный функционал первой версии (STT, таблицы-картинки, кнопки, стриминг, загрузка) — портирован и расширен
+- Сверху добавлено то, чего нет ни в одной из исходных веток: отрисовка таблиц в PNG, улучшенный выбор моделей, отдельный отправитель для cron, групповые политики
+
+**В итоге** получился гибрид: надёжный фундамент от upstream плюс функционал, которого нет больше нигде.
+
+## Лицензия
+
+MIT — см. [LICENSE](LICENSE)
+
+## Благодарности
+
+- [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) — архитектурная основа v2.0 (подписки, вебхуки, структура плагина)
+- Оригинальная разработка v1.0 — Realmagnum (STT, таблицы-картинки, кнопки, стриминг, загрузка файлов)
+- [Hermes Agent](https://hermes-agent.nousresearch.com/docs) — фреймворк агента
