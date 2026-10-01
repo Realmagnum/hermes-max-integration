@@ -19,7 +19,7 @@
 ## 2. MAX API — host and authorization
 
 - **Host.** Since **July 19, 2026** requests must go to `https://platform-api2.max.ru` instead of `platform-api.max.ru`, and the MinCifry root certificate must be added to the trust store (dev.max.ru/docs-api/changelog-api).
-  - The plugin still hardcodes `MAX_API_BASE = "https://platform-api.max.ru"` (`adapter.py:65`, `mixins/buttons.py:16`, `mixins/media_upload.py:22`, `mixins/standalone.py:19`) — recorded as a code follow-up, outside DOC-10.
+  - The `MAX_API_BASE` constant has been updated to `platform-api2.max.ru` across all plugin modules. The plugin bundles the MinCifry CA certificates in `assets/certs/mincifry_bundle.pem` and configures SSLContext automatically for httpx and aiohttp.
 - **Authorization.** Token-in-query is no longer supported; the `Authorization: <token>` header is required. The plugin already uses the header (`adapter.py:345` et al.) — compliant.
 - **Token.** Issued when the bot is created at `business.max.ru/self` ("Чат-боты") or in the "MAX for business" mini-app.
 
@@ -80,8 +80,7 @@ Official requirements (dev.max.ru/docs-api/methods/POST/subscriptions):
 
 ## 8. Follow-ups (outside DOC-10)
 
-1. Move `MAX_API_BASE` to `platform-api2.max.ru` in `adapter.py`/`mixins/*` and ensure the MinCifry certificate is trusted.
-2. Adapt `scripts/apply-core-fix.py` to the 0.21.3 core layout (or replace it with a supported mechanism).
+1. Adapt `scripts/apply-core-fix.py` to the 0.21.3 core layout (or replace it with a supported mechanism).
 
 ## 9. Verifiability
 

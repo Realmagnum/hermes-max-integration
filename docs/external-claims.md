@@ -19,7 +19,7 @@
 ## 2. MAX API — хост и авторизация
 
 - **Хост.** С **19 июля 2026** запросы нужно направлять на `https://platform-api2.max.ru` вместо `platform-api.max.ru`, а также добавить корневой сертификат Минцифры в список доверенных (dev.max.ru/docs-api/changelog-api).
-  - В коде плагина константа всё ещё `MAX_API_BASE = "https://platform-api.max.ru"` (`adapter.py:65`, `mixins/buttons.py:16`, `mixins/media_upload.py:22`, `mixins/standalone.py:19`) — расхождение зафиксировано как follow-up (код, вне DOC-10).
+  - Константа `MAX_API_BASE` обновлена на `platform-api2.max.ru` во всех модулях плагина. Плагин поставляет бандл сертификатов Минцифры в `assets/certs/mincifry_bundle.pem` и автоматически конфигурирует SSLContext для httpx и aiohttp.
 - **Авторизация.** Передача токена через query-параметры больше не поддерживается; требуется заголовок `Authorization: <token>`. Плагин уже использует заголовок (`adapter.py:345` и далее) — соответствует.
 - **Токен.** Выдаётся при создании бота на `business.max.ru/self` (раздел «Чат-боты») либо в мини-приложении «MAX для бизнеса».
 
@@ -80,8 +80,7 @@
 
 ## 8. Follow-up (вне объёма DOC-10)
 
-1. Обновить `MAX_API_BASE` на `platform-api2.max.ru` в `adapter.py`/`mixins/*` и убедиться, что сертификат Минцифры в доверенных.
-2. Адаптировать `scripts/apply-core-fix.py` под layout ядра 0.21.3 (или заменить на поддерживаемый механизм).
+1. Адаптировать `scripts/apply-core-fix.py` под layout ядра 0.21.3 (или заменить на поддерживаемый механизм).
 
 ## 9. Проверяемость
 
