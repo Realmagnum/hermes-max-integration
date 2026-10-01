@@ -2,7 +2,7 @@
 name: max-gateway
 description: "Install and configure Hermes Agent access through Max messenger (voice transcription by the Hermes core, Hermes Desktop sidebar integration)."
 version: 2.10.2
-author: Alexander / Hermes Agent community
+author: Realmagnum / Hermes Agent community
 license: MIT
 metadata:
   hermes:

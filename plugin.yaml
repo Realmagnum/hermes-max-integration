@@ -7,7 +7,7 @@ description: >
   session management and native Hermes Desktop sessions sidebar integration.
   Supports both long-polling and webhook. Downloads and caches voice messages;
   transcription is provided by the Hermes core STT pipeline (config.yaml → stt).
-author: Alexander / Hermes Agent community
+author: Realmagnum / Hermes Agent community
 license: MIT
 homepage: https://github.com/Realmagnum/hermes-max-integration
 

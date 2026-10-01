@@ -8,7 +8,7 @@ description = "Hermes Agent MAX messenger adapter with STT voice transcription"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Alexander / Hermes Agent community"}
+    {name = "Realmagnum / Hermes Agent community"}
 ]
 dependencies = [
     "aiohttp>=3.9",
