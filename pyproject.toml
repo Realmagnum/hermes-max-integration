@@ -52,7 +52,7 @@ build-backend = "setuptools.build_meta"
 # `assets/` directories trigger "Multiple top-level packages discovered".
 # Declare the distribution contents explicitly instead.
 [tool.setuptools]
-py-modules = ["adapter"]
+py-modules = ["adapter", "ssl_support"]
 
 [tool.setuptools.packages.find]
 include = ["mixins*"]
@@ -60,4 +60,5 @@ namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
