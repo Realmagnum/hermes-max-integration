@@ -291,7 +291,7 @@ echo ""
 
 if [ "$FAIL" -gt 0 ]; then
     echo -e "${RED}Some checks failed. Check ~/.hermes/logs/gateway.log for details.${NC}"
-    echo "For troubleshooting: https://gitea.rmg7.com/agent/hermes-max-integration"
+    echo "For troubleshooting: https://github.com/Realmagnum/hermes-max-integration"
     exit 1
 else
     echo -e "${GREEN}All checks passed!${NC}"
