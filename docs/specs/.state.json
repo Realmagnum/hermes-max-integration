@@ -11,15 +11,15 @@
       }
     },
     "01-sec-audit": {
-      "status": "IN_PROGRESS",
+      "status": "COMPLETED",
       "specs": {
-        "SEC-AUTH-01": {"status": "PENDING"},
-        "SEC-AUTH-02": {"status": "PENDING"},
-        "SEC-TOKEN-01": {"status": "PENDING"},
-        "SEC-SSRF-01": {"status": "PENDING"},
-        "SEC-WEBHOOK-01": {"status": "PENDING"},
-        "SEC-SESSION-01": {"status": "PENDING"},
-        "SEC-LIMIT-01": {"status": "PENDING"}
+        "SEC-AUTH-01": {"status": "DONE", "verified_by": "pytest -q tests/test_callback_auth.py"},
+        "SEC-AUTH-02": {"status": "DONE", "verified_by": "pytest -q tests/test_callback_auth.py"},
+        "SEC-TOKEN-01": {"status": "DONE", "verified_by": "pytest -q tests/test_download_token_leak.py"},
+        "SEC-SSRF-01": {"status": "DONE", "verified_by": "pytest -q tests/test_ssrf_download.py"},
+        "SEC-WEBHOOK-01": {"status": "DONE", "verified_by": "pytest -q tests/test_webhook_security.py", "commit": "e1484c4"},
+        "SEC-SESSION-01": {"status": "DONE", "verified_by": "pytest -q tests/test_cross_session.py"},
+        "SEC-LIMIT-01": {"status": "DONE", "verified_by": "pytest -q tests/test_inbound_media_limits.py"}
       }
     },
     "02-code-transport": {
@@ -34,23 +34,23 @@
       }
     },
     "03-model-picker": {
-      "status": "PENDING",
+      "status": "COMPLETED",
       "specs": {
-        "PICKER-TRANS-01": {"status": "PENDING"},
-        "PICKER-TRANS-02": {"status": "PENDING"},
-        "PICKER-PAGE-01": {"status": "PENDING"},
-        "PICKER-BACK-01": {"status": "PENDING"},
-        "PICKER-DONE-01": {"status": "PENDING"}
+        "PICKER-TRANS-01": {"status": "DONE", "verified_by": "pytest -q tests/test_model_picker.py", "commit": "882f91f"},
+        "PICKER-TRANS-02": {"status": "DONE", "verified_by": "pytest -q tests/test_model_picker.py"},
+        "PICKER-PAGE-01": {"status": "DONE", "verified_by": "pytest -q tests/test_model_picker.py"},
+        "PICKER-BACK-01": {"status": "DONE", "verified_by": "pytest -q tests/test_model_picker.py"},
+        "PICKER-DONE-01": {"status": "DONE", "verified_by": "pytest -q tests/test_model_picker.py"}
       }
     },
     "04-native-media": {
-      "status": "PENDING",
+      "status": "COMPLETED",
       "specs": {
-        "MEDIA-CONTRACT-01": {"status": "PENDING"},
-        "MEDIA-PARSE-01": {"status": "PENDING"},
-        "MEDIA-VALID-01": {"status": "PENDING"},
-        "MEDIA-UPLOAD-01": {"status": "PENDING"},
-        "MEDIA-SEND-01": {"status": "PENDING"}
+        "MEDIA-CONTRACT-01": {"status": "DONE", "verified_by": "pytest -q tests/test_plugin_media_handler_contract.py", "commit": "a0d706f"},
+        "MEDIA-PARSE-01": {"status": "DONE", "verified_by": "pytest -q tests/test_plugin_media_handler.py", "commit": "a0d706f"},
+        "MEDIA-VALID-01": {"status": "DONE", "verified_by": "pytest -q tests/test_plugin_media_handler.py", "commit": "a0d706f"},
+        "MEDIA-UPLOAD-01": {"status": "DONE", "verified_by": "pytest -q tests/test_file_send.py", "commit": "a0d706f"},
+        "MEDIA-SEND-01": {"status": "DONE", "verified_by": "pytest -q tests/test_file_send.py", "commit": "a0d706f"}
       }
     },
     "05-locales-desktop": {
