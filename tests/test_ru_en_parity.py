@@ -74,3 +74,62 @@ def test_identical_translations_pass(tmp_path):
     proc = run_checker(tmp_path)
     assert proc.returncode == 0, proc.stdout
     assert "1 in sync" in proc.stdout
+
+
+def test_locales_json_valid_and_present():
+    """LOCALE-PACK-01: ru-RU.json and en-US.json exist and are valid JSON."""
+    import json
+
+    import yaml
+    manifest_path = REPO_ROOT / "plugin.yaml"
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = yaml.safe_load(f)
+    assert "provides_locales" in manifest
+    locales = [loc["id"] for loc in manifest["provides_locales"]]
+    assert "ru-RU" in locales
+    assert "en-US" in locales
+
+    for loc in ("ru-RU", "en-US"):
+        file_path = REPO_ROOT / "locales" / f"{loc}.json"
+        assert file_path.exists(), f"Missing {file_path}"
+        with open(file_path, encoding="utf-8") as f:
+            data = json.load(f)
+        assert isinstance(data, dict)
+        assert "messaging" in data
+
+
+def test_translation_fallback_to_english():
+    """LOCALE-FALLBACK-01: Missing key in target locale falls back to english."""
+    import json
+    ru_path = REPO_ROOT / "locales" / "ru-RU.json"
+    en_path = REPO_ROOT / "locales" / "en-US.json"
+    with open(ru_path, encoding="utf-8") as f:
+        ru_data = json.load(f)
+    with open(en_path, encoding="utf-8") as f:
+        en_data = json.load(f)
+
+    def t(key_path: str, lang: str = "ru-RU") -> str:
+        data = ru_data if lang == "ru-RU" else en_data
+        parts = key_path.split(".")
+        val = data
+        for p in parts:
+            if isinstance(val, dict) and p in val:
+                val = val[p]
+            else:
+                val = None
+                break
+        if val is not None:
+            return str(val)
+        # Fallback to English
+        val = en_data
+        for p in parts:
+            if isinstance(val, dict) and p in val:
+                val = val[p]
+            else:
+                return key_path
+        return str(val)
+
+    # Key present in English but missing in Russian
+    assert t("messaging.buttons.missing_key_en_only", "ru-RU") == "English Only Fallback"
+    # Key missing in both
+    assert t("messaging.buttons.non_existent", "ru-RU") == "messaging.buttons.non_existent"

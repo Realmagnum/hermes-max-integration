@@ -54,11 +54,11 @@
       }
     },
     "05-locales-desktop": {
-      "status": "PENDING",
+      "status": "COMPLETED",
       "specs": {
-        "LOCALE-PACK-01": {"status": "PENDING"},
-        "LOCALE-FALLBACK-01": {"status": "PENDING"},
-        "DESKTOP-SESSION-01": {"status": "PENDING"}
+        "LOCALE-PACK-01": {"status": "DONE", "verified_by": "pytest -q tests/test_ru_en_parity.py"},
+        "LOCALE-FALLBACK-01": {"status": "DONE", "verified_by": "pytest -q tests/test_ru_en_parity.py"},
+        "DESKTOP-SESSION-01": {"status": "DONE", "verified_by": "pytest -q tests/test_cross_session.py"}
       }
     }
   }

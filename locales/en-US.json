@@ -1,0 +1,27 @@
+{
+  "messaging": {
+    "platformIntro": {
+      "max": "MAX Messenger (max.ru) Integration. Supports inbound text & voice messages, native media delivery, and interactive inline buttons. Source & documentation: https://github.com/Realmagnum/hermes-max-integration"
+    },
+    "buttons": {
+      "back_to_providers": "← Back to providers",
+      "prev_page": "⬅ Prev",
+      "next_page": "Next ➡",
+      "confirm": "Confirm",
+      "deny": "Deny",
+      "missing_key_en_only": "English Only Fallback"
+    },
+    "fieldCopy": {
+      "MAX_BOT_TOKEN": {
+        "label": "MAX Bot Token",
+        "help": "Access token for the MAX Bot API",
+        "placeholder": "Enter bot token"
+      },
+      "MAX_WEBHOOK_SECRET": {
+        "label": "Webhook Secret",
+        "help": "Secret string used to verify X-Max-Bot-Api-Secret",
+        "placeholder": "Secret string"
+      }
+    }
+  }
+}

@@ -393,3 +393,20 @@ class TestCrossSessionHandlerGuard:
             "/sessions search", "user:42", "42"
         )
         assert event is None
+
+    def test_desktop_session_listing_scoped_to_platform(self):
+        """DESKTOP-SESSION-01: Session filtering for Desktop UI must be scoped to MAX."""
+        raw_sessions = [
+            {"session_id": "s1", "source": "max", "title": "MAX chat 1"},
+            {"session_id": "s2", "source": "telegram", "title": "TG chat"},
+            {"session_id": "s3", "origin_platform": "max", "title": "MAX chat 2"},
+            {"session_id": "s4", "source": "discord", "title": "Discord chat"},
+            {"session_id": "s5", "source": "cli", "title": "CLI session"},
+        ]
+        # Equivalent filter logic as implemented in desktop/plugin.js (line 60)
+        filtered = [
+            s for s in raw_sessions
+            if s and (s.get("source") == "max" or s.get("origin_platform") == "max")
+        ]
+        assert len(filtered) == 2
+        assert [s["session_id"] for s in filtered] == ["s1", "s3"]

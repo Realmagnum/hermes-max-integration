@@ -1,0 +1,26 @@
+{
+  "messaging": {
+    "platformIntro": {
+      "max": "Интеграция с мессенджером MAX (max.ru). Поддержка входящих текстовых и голосовых сообщений, нативной отправки медиа и inline-кнопок. Документация и исходный код: https://github.com/Realmagnum/hermes-max-integration"
+    },
+    "buttons": {
+      "back_to_providers": "← Назад к провайдерам",
+      "prev_page": "⬅ Пред",
+      "next_page": "След ➡",
+      "confirm": "Подтвердить",
+      "deny": "Отклонить"
+    },
+    "fieldCopy": {
+      "MAX_BOT_TOKEN": {
+        "label": "Токен бота MAX",
+        "help": "Токен доступа к MAX Bot API",
+        "placeholder": "Вставьте токен бота"
+      },
+      "MAX_WEBHOOK_SECRET": {
+        "label": "Секрет вебхука",
+        "help": "Секретный ключ для проверки заголовка X-Max-Bot-Api-Secret",
+        "placeholder": "Секретная строка"
+      }
+    }
+  }
+}
