@@ -304,6 +304,35 @@ class TestModelCallback:
         assert len(back_buttons) == 1
 
     @pytest.mark.asyncio
+    async def test_provider_selection_deletes_old_message(self):
+        """PICKER-TRANS-01: Selecting provider deletes provider message and sets model_msg_id."""
+        a = self._make_adapter()
+        a.delete_message = AsyncMock(return_value=True)
+
+        providers = [
+            {
+                "slug": "p1",
+                "name": "P1",
+                "models": ["m1", "m2"],
+                "is_current": False,
+            },
+        ]
+
+        a._model_picker_state["user:42"] = _picker_state(
+            provider_msg_id="mid-provider-1", providers=providers,
+        )
+
+        payload = _callback("model:provider:p1", mid="mid-provider-1")
+        await a._on_callback(payload)
+
+        # Provider message should be deleted
+        a.delete_message.assert_called_once_with("user:42", "mid-provider-1")
+
+        state = a._model_picker_state["user:42"]
+        assert state["provider_msg_id"] == ""
+        assert state["model_msg_id"] == "mid-models"
+
+    @pytest.mark.asyncio
     async def test_page_navigation(self):
         """Test page navigation buttons."""
         a = self._make_adapter()

@@ -3169,7 +3169,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                     state["model_msg_id"] = result.message_id
                     self._model_picker_state[str(chat_id)] = state
         else:
-            # Initial display: send new message with models (text + buttons together)
+            # Initial display: delete provider message, then send new message with models
+            provider_msg_id = state.get("provider_msg_id", "")
+            if provider_msg_id:
+                await self.delete_message(chat_id, provider_msg_id)
+                state["provider_msg_id"] = ""
+
             model_msg_result = await self._post_interactive(chat_id, text, buttons)
             # Store model message ID for pagination (this message has both text and buttons)
             if model_msg_result.success:
