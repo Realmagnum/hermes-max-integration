@@ -1,0 +1,65 @@
+{
+  "updated_at": "2026-10-03T12:25:00Z",
+  "pipeline_branch": "feature/microspec-pipeline",
+  "groups": {
+    "06-build-ci": {
+      "status": "COMPLETED",
+      "specs": {
+        "BUILD-INSTALL-01": {"status": "DONE", "verified_by": "pip install --dry-run -e ."},
+        "BUILD-ENV-01": {"status": "DONE", "verified_by": "pytest --collect-only -q (729 tests)"},
+        "BUILD-GATE-01": {"status": "DONE", "verified_by": "ruff check + bandit -lll", "commit": "b900226"}
+      }
+    },
+    "01-sec-audit": {
+      "status": "IN_PROGRESS",
+      "specs": {
+        "SEC-AUTH-01": {"status": "PENDING"},
+        "SEC-AUTH-02": {"status": "PENDING"},
+        "SEC-TOKEN-01": {"status": "PENDING"},
+        "SEC-SSRF-01": {"status": "PENDING"},
+        "SEC-WEBHOOK-01": {"status": "PENDING"},
+        "SEC-SESSION-01": {"status": "PENDING"},
+        "SEC-LIMIT-01": {"status": "PENDING"}
+      }
+    },
+    "02-code-transport": {
+      "status": "PENDING",
+      "specs": {
+        "CODE-POLL-01": {"status": "PENDING"},
+        "CODE-STREAM-01": {"status": "PENDING"},
+        "CODE-STREAM-02": {"status": "PENDING"},
+        "CODE-MODEL-01": {"status": "PENDING"},
+        "CODE-HEALTH-01": {"status": "PENDING"},
+        "CODE-QUEUE-01": {"status": "PENDING"}
+      }
+    },
+    "03-model-picker": {
+      "status": "PENDING",
+      "specs": {
+        "PICKER-TRANS-01": {"status": "PENDING"},
+        "PICKER-TRANS-02": {"status": "PENDING"},
+        "PICKER-PAGE-01": {"status": "PENDING"},
+        "PICKER-BACK-01": {"status": "PENDING"},
+        "PICKER-DONE-01": {"status": "PENDING"}
+      }
+    },
+    "04-native-media": {
+      "status": "PENDING",
+      "specs": {
+        "MEDIA-CONTRACT-01": {"status": "PENDING"},
+        "MEDIA-PARSE-01": {"status": "PENDING"},
+        "MEDIA-VALID-01": {"status": "PENDING"},
+        "MEDIA-UPLOAD-01": {"status": "PENDING"},
+        "MEDIA-SEND-01": {"status": "PENDING"}
+      }
+    },
+    "05-locales-desktop": {
+      "status": "PENDING",
+      "specs": {
+        "LOCALE-PACK-01": {"status": "PENDING"},
+        "LOCALE-FALLBACK-01": {"status": "PENDING"},
+        "DESKTOP-SESSION-01": {"status": "PENDING"}
+      }
+    }
+  }
+}
