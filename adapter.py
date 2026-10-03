@@ -63,11 +63,24 @@ from .mixins.media_upload import (  # noqa: F401 — re-export (tests use adapte
     _ALLOWED_UPLOAD_HOSTS,
     MediaUploadMixin,
 )
+from .mixins.plugin_media_handler import extract_plugin_media_request
 from .mixins.sessions import SessionsMixin
 from .mixins.standalone import (  # noqa: F401 — re-export (tests use adapter._standalone_get_token)
     _standalone_get_token,
     _standalone_send,
 )
+
+
+async def _max_send_message_handler(args: dict, chat_id: str, platform_name: str, pconfig: Any) -> dict:
+    """Plugin-owned send_message handler for MAX with native media upload."""
+    caption, media_files, force_document = extract_plugin_media_request(args)
+    return await _standalone_send(
+        pconfig,
+        chat_id,
+        caption,
+        media_files=media_files,
+        force_document=force_document,
+    )
 from .mixins.table_renderer import TableRendererMixin
 from .mixins.webhook import (  # noqa: F401 — re-export (tests use adapter._verify_raw_secret)
     WebhookMixin,
@@ -3555,6 +3568,7 @@ def register(ctx) -> None:
         env_enablement_fn=_env_enablement,
         apply_yaml_config_fn=_apply_yaml_config,
         cron_deliver_env_var="MAX_HOME_CHANNEL",
+        send_message_handler=_max_send_message_handler,
         standalone_sender_fn=_standalone_send,
         allowed_users_env="MAX_ALLOWED_USERS",
         allow_all_env="MAX_ALLOW_ALL_USERS",

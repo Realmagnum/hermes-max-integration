@@ -121,8 +121,10 @@ async def _standalone_send(
 
                 # Step 1: get upload URL
                 # For audio/video: use proper type so /uploads returns a token
-                # For file/image: use type=file for reliability
-                _upload_type = _attach_type if _attach_type in ("audio", "video") else "file"
+                # MAX requires the upload type to match the attachment type.
+                # Images must use type=image; otherwise the CDN token is later
+                # attached as type=image although it was issued for type=file.
+                _upload_type = _attach_type
                 try:
                     resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": _upload_type}, headers=headers)
                     if resp.status_code != 200:
