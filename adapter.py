@@ -2534,8 +2534,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             return SendResult(success=False, error="Not connected")
         try:
             await self.send_action(chat_id, "sending_photo")
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — sending action failure must not block message delivery
+            logger.debug("Failed to send action 'sending_photo': %s", exc)
         parts = chat_id.split(":", 1)
         target_type = parts[0] if len(parts) > 1 else "user"
         target_id = parts[1] if len(parts) > 1 else chat_id
@@ -2593,8 +2593,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
 
         try:
             await self.send_action(chat_id, "sending_photo")
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — sending action failure must not block message delivery
+            logger.debug("Failed to send action 'sending_photo': %s", exc)
 
         # Upload all images concurrently
         tokens: list[str] = []
