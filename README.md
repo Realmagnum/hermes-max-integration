@@ -453,28 +453,37 @@ hermes send --to max:USER_ID "📦 Файлы: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xls
 
 Для отправки файлов **внутри сессии** (через gateway) используйте `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — они используют адаптер с ретраем при `attachment.not.ready`.
 
-### Опциональное улучшение: MEDIA-only в core
+### Нативная отправка файлов (`hermes send`)
 
-По умолчанию `hermes send "MEDIA:/file"` (без текста) блокируется ядром:
-
-```
-send_message MEDIA delivery is currently only supported for telegram, discord...
-```
-
-Это лечится опциональным скриптом, который добавляет MAX в список поддерживаемых платформ в `tools/send_message_tool.py`:
+Плагин регистрирует собственный `send_message_handler`, обеспечивающий отправку файлов без патчей ядра Hermes Agent:
 
 ```bash
-python3 scripts/apply-core-fix.py       # применить
-python3 scripts/apply-core-fix.py --revert  # откатить
+# Текст + файл
+hermes send --to max:USER_ID "📄 Отчёт MEDIA:/path/to/report.pdf"
+
+# Несколько файлов
+hermes send --to max:USER_ID "📦 Файлы: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xlsx"
+
+# MEDIA-only (без текста)
+hermes send --to max:USER_ID "MEDIA:/tmp/image.png"
 ```
 
-⚠️ **Совместимость с версией ядра (проверено на Hermes 0.21.3, 2026-09-16).** Скрипт ищет в `tools/send_message_tool.py` маркеры `# --- Non-media platforms ---` и `if media_files and not message.strip()`. В ядре 0.21.3 этот участок переработан (появился реестр `_PLUGIN_STANDALONE_MEDIA`), маркеров нет, и скрипт завершается с `❌ Could not find insertion marker in core file.` — ни `apply`, ни `--revert` не срабатывают. Прогон на копии core подтвердил: рабочая установка не меняется, но и медиа-доставка не включается. Перед применением сверьте разметку с вашей версией ядра; при несовпадении скрипт нужно адаптировать (или дождаться нативной поддержки MAX в ядре).
+**Поддерживаемые директивы:**
+- `MEDIA:/path/to/file` — путь к локальному файлу для вложения.
+- `[[as_document]]` — принудительная отправка изображения как сырого файла документа (`type=file`).
+- `[[audio_as_voice]]` — отправка аудиофайла в качестве голосового сообщения.
 
-После применения:
-```bash
-hermes send --to max:USER_ID "MEDIA:/tmp/image.png"     # ✅ работает
-hermes send --to max:USER_ID "текст MEDIA:/file.pdf"     # ✅ и так работало
-```
+**Как это работает:**
+
+1. Плагин парсит текст и извлекает `MEDIA:`-пути с учётом модификаторов (`[[as_document]]`, `[[audio_as_voice]]`).
+2. Текст сообщения отправляется отдельным `POST /messages`.
+3. Для каждого файла:
+    - Загрузка на CDN MAX через `POST /uploads?type=image|file|audio`.
+    - `POST /messages` с полученным вложением.
+
+⚠️ **Ограничение MAX CDN:** Расширения `.exe`, `.apk`, `.bat`, `.msi` и другие потенциально опасные блокируются MAX на стороне CDN (HTTP 415 — "File extension is forbidden"); при неподдерживаемом расширении сервер возвращает ту же ошибку. Это ограничение платформы, не обходится из плагина, и «доставка любого разумного расширения» не гарантируется — ориентируйтесь на список поддерживаемых форматов MAX.
+
+Для отправки файлов **внутри сессии** (через gateway) используйте `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — они используют адаптер с ретраем при `attachment.not.ready`.
 
 ## Документация
 

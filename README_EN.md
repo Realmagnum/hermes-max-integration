@@ -453,28 +453,37 @@ All files are sent as `type=file`. MAX officially supports only "common formats"
 
 For **in-session** file delivery (via gateway), use `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — these use the adapter with retry on `attachment.not.ready`.
 
-### Optional: MEDIA-only core support
+### Native file sending (`hermes send`)
 
-By default `hermes send "MEDIA:/file"` (no text) is blocked by core:
-
-```
-send_message MEDIA delivery is currently only supported for telegram, discord...
-```
-
-Fix with the optional script that adds MAX to the supported platform list in `tools/send_message_tool.py`:
+The plugin registers its own `send_message_handler`, providing native media delivery without Hermes Agent core patches:
 
 ```bash
-python3 scripts/apply-core-fix.py       # apply
-python3 scripts/apply-core-fix.py --revert  # revert
+# Text + file
+hermes send --to max:USER_ID "📄 Report MEDIA:/path/to/report.pdf"
+
+# Multiple files
+hermes send --to max:USER_ID "📦 Files: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xlsx"
+
+# MEDIA-only (without text)
+hermes send --to max:USER_ID "MEDIA:/tmp/image.png"
 ```
 
-⚠️ **Core-version compatibility (verified on Hermes 0.21.3, 2026-09-16).** The script looks for the markers `# --- Non-media platforms ---` and `if media_files and not message.strip()` in `tools/send_message_tool.py`. Core 0.21.3 reworked that section (it now has a `_PLUGIN_STANDALONE_MEDIA` registry), the markers are gone, and the script exits with `❌ Could not find insertion marker in core file.` — neither apply nor `--revert` takes effect. A run against a copy of core confirmed the live install is not modified, but media-only delivery is not enabled either. Check the markers against your core version before applying; if they differ, the script needs adapting (or wait for native MAX support in core).
+**Supported directives:**
+- `MEDIA:/path/to/file` — local file path to attach.
+- `[[as_document]]` — force sending image as raw document file (`type=file`).
+- `[[audio_as_voice]]` — send audio file as voice message.
 
-After applying:
-```bash
-hermes send --to max:USER_ID "MEDIA:/tmp/image.png"      # ✅ works
-hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
-```
+**How it works:**
+
+1. The plugin parses the message text and extracts `MEDIA:` paths respecting modifiers (`[[as_document]]`, `[[audio_as_voice]]`).
+2. Message text is sent via a separate `POST /messages`.
+3. For each file:
+    - Upload to MAX CDN via `POST /uploads?type=image|file|audio`.
+    - `POST /messages` with the resulting attachment.
+
+⚠️ **MAX CDN Limitation:** Executable extensions such as `.exe`, `.apk`, `.bat`, `.msi` are rejected by MAX CDN with HTTP 415.
+
+For **in-session** file delivery (via gateway), use `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — these use the adapter with retry on `attachment.not.ready`.
 
 ## Documentation
 

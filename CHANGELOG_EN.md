@@ -2,6 +2,18 @@
 
 All notable changes to the hermes-max-integration plugin.
 
+## [2.10.2] — 2026-10-03
+
+### Added
+- **Plugin-owned Native Media Delivery (`send_message_handler`):** Implemented native delivery for `MEDIA:<path>` attachments from cron and `hermes send` without modifying Hermes Agent core code (`mixins/plugin_media_handler.py`). Supports `[[as_document]]` and `[[audio_as_voice]]` directives with path validation and strict attachment typing (`type=image` for images, `type=file` for documents).
+- **Declarative Language Packs (`provides_locales`):** Added `locales/ru-RU.json` and `locales/en-US.json` localization dictionaries for Hermes Desktop and Web UIs, declared in `plugin.yaml`.
+- **MAX Sessions Desktop UI:** Integrated MAX messenger session management interface for the Hermes Desktop app (`desktop/plugin.js`) with native styling and platform-scoped isolation.
+
+### Fixed
+- **Model Picker Message Cleanup:** Provider selection menu message (`provider_msg_id`) is now automatically deleted when displaying model options, eliminating leftover menus in chat.
+- **Webhook Test Port Isolation:** Webhook security tests (`tests/test_webhook_security.py`) now dynamically allocate ephemeral ports, preventing address collisions with running gateway instances (port 8646).
+- **Quality Gates & Linting:** Resolved `ruff BLE001` / `S110` exception handling warnings during chat action dispatch in `send_action`.
+
 ## [2.10.1] — 2026-09-29
 
 ### Fixed
