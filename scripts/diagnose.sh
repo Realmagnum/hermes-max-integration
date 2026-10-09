@@ -166,22 +166,22 @@ if [ -n "${MAX_BOT_TOKEN:-}" ]; then
         "$MAX_API/subscriptions" 2>/dev/null || echo "")
     if [ "$MODE" = "webhook" ]; then
         webhook_path="${MAX_WEBHOOK_URL:-unknown}"
-        if echo "$subs" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('subscriptions',[])))" 2>/dev/null | grep -q "^[1-9]"; then
-            has_target=$(echo "$subs" | python3 -c "
+        if python3 -c "import sys,json; d=json.loads(sys.argv[1]); sys.exit(0 if len(d.get('subscriptions',[])) > 0 else 1)" "$subs" 2>/dev/null; then
+            has_target=$(python3 -c "
 import sys,json
-d=json.load(sys.stdin)
-target='$webhook_path'
+d=json.loads(sys.argv[1])
+target=sys.argv[2]
 for s in d.get('subscriptions',[]):
     if target in s.get('url',''):
         print('found')
-" 2>/dev/null)
+" "$subs" "$webhook_path" 2>/dev/null)
             if [ -n "$has_target" ]; then
-                urls=$(echo "$subs" | python3 -c "
+                urls=$(python3 -c "
 import sys,json
-d=json.load(sys.stdin)
+d=json.loads(sys.argv[1])
 for s in d.get('subscriptions',[]):
     print(s.get('url',''))
-" 2>/dev/null)
+" "$subs" 2>/dev/null)
                 echo -e "       URLs:"
                 echo "$urls" | sed 's/^/         /'
                 check 5 "$desc" "pass"
@@ -194,7 +194,7 @@ for s in d.get('subscriptions',[]):
             check 5 "$desc (no active subscriptions)" "fail"
         fi
     else  # long polling
-        sub_count=$(echo "$subs" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('subscriptions',[])))" 2>/dev/null || echo "0")
+        sub_count=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(len(d.get('subscriptions',[])))" "$subs" 2>/dev/null || echo "0")
         if [ "$sub_count" = "0" ]; then
             check 5 "$desc (no stale subscriptions — good)" "pass"
         else
@@ -212,7 +212,7 @@ if [ -n "${MAX_BOT_TOKEN:-}" ]; then
     me=$(curl -s --max-time 10 \
         -H "Authorization: $MAX_BOT_TOKEN" \
         "$MAX_API/me" 2>/dev/null || echo "")
-    username=$(echo "$me" | python3 -c "import sys,json; print(json.load(sys.stdin).get('username',''))" 2>/dev/null || echo "")
+    username=$(python3 -c "import sys,json; print(json.loads(sys.argv[1]).get('username',''))" "$me" 2>/dev/null || echo "")
     if [ -n "$username" ]; then
         echo -e "       Bot: @$username"
         check 6 "$desc" "pass"
@@ -244,14 +244,14 @@ if [ "${1:-}" = "--send" ]; then
             -H "Authorization: $MAX_BOT_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"text":"✅ Diagnostics: bot OK","format":"markdown"}' 2>/dev/null || echo "{}")
-        mid=$(echo "$result" | python3 -c "
+        mid=$(python3 -c "
 import sys,json
 try:
-    d=json.load(sys.stdin)
+    d=json.loads(sys.argv[1])
     m=d.get('message',{})
     print(m.get('body',{}).get('mid','') or d.get('message_id',''))
 except: print('')
-" 2>/dev/null)
+" "$result" 2>/dev/null)
         if [ -n "$mid" ]; then
             echo -e "       mid: $mid"
             check 7 "$desc" "pass"

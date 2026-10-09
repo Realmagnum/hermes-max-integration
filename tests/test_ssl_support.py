@@ -1,10 +1,6 @@
 """Tests for MinCifry SSL certificates bundle and SSLContext generation."""
 
-from pathlib import Path
 import ssl
-
-import httpx
-import pytest
 
 from ssl_support import get_max_ssl_context, get_mincifry_bundle_path
 

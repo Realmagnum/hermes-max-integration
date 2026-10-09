@@ -49,7 +49,7 @@
 - **Webhook без секрета не стартует (fail-closed):** обязателен `MAX_WEBHOOK_SECRET`; заголовок проверяется до чтения тела. Dev-исключение — `MAX_WEBHOOK_INSECURE_DEV=true` только на loopback-хосте.
 - **КРИТИЧНО: Вебхук и long polling взаимоисключающи.** Если существует подписка вебхука, MAX API направляет ВСЕ обновления на URL вебхука, и `/updates` возвращает пустой ответ. Даже после удаления `MAX_WEBHOOK_URL` из `.env` и перезапуска в режиме long-polling, устаревшая подписка вебхука сохраняется в MAX API и блокирует доставку сообщений. **Всегда удаляйте старую подписку вебхука при переключении режимов:**
   ```bash
-  curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=..." -H "Authorization: $MAX_BOT_TOKEN"
+  curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=..." -H "Authorization: <token>"
   ```
   Плагин теперь имеет автоочистку при запуске (с v2.1.4+), но ручная очистка может всё ещё потребоваться, если вебхук был зарегистрирован извне.
 - `POST /messages` принимает `user_id` или `chat_id`; текст сообщения до 4000 символов, `format` может быть `markdown` или `html`.

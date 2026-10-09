@@ -38,7 +38,7 @@ Voice transcription (STT by the Hermes core), interactive buttons (model picker,
 | 🖥️ **Desktop UI Sidebar** | Native sessions sidebar in Hermes Desktop (`max-sessions-sidebar`): active dialogs, message counts, tokens, activity timestamps, and badges |
 | 📦 **Unified Package** | Automatic installation and registration of the desktop UI plugin alongside the platform without manual steps |
 | 🌍 **RU/EN Localization** | Full Russian and English language support across the Desktop UI and documentation |
-| 🧪 **Tested** | pytest + pytest-asyncio, **731 tests** |
+| 🧪 **Tested** | pytest + pytest-asyncio, **734 tests** |
 | 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
 | 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
 
@@ -97,7 +97,7 @@ The bot supports **20 slash commands**, registered via MAX Bot API (`PATCH /me/c
 
 ```bash
 # Check registered commands via API
-curl -H "Authorization: $MAX_BOT_TOKEN" \
+curl -H "Authorization: <token>" \
   https://platform-api2.max.ru/me/commands
 ```
 
@@ -160,7 +160,7 @@ We tried several approaches before settling on PNG:
 | Message chunking | ✅ | ✅ Improved |
 | Media extraction | ✅ | ✅ Extended |
 | Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 731 tests |
+| Tests | ✅ Basic | ✅ 734 tests |
 | Interactive setup | ✅ | ✅ + tables |
 
 ## Quick Start
@@ -541,7 +541,7 @@ hermes-max-integration/
 ├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
 │                            #   release.sh, setup-playwright.py
 ├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
-├── tests/                   # pytest: 731 tests
+├── tests/                   # pytest: 734 tests
 ├── AGENTS.md                # Instructions for AI agents
 ├── after-install.md         # Post-install guide
 ├── cliff.toml               # git-cliff config (EN)
@@ -584,7 +584,7 @@ The project evolved through three major stages:
    - Added native Hermes Desktop UI integration (sessions sidebar).
    - Built an advanced dual-engine table renderer (Playwright/Chromium with Pillow fallback).
    - Enforced rigorous security hardening (SSRF mitigation, constant-time secret comparison, token leakage protection).
-   - Expanded test coverage to **731 tests**.
+   - Expanded test coverage to **734 tests**.
 
 **Today, no more than 25% of the codebase traces back to the borrowed v2.0 code** — primarily raw MAX API signatures. The project has evolved into a fully autonomous, production-grade integration with unique capabilities and enterprise-level reliability.
 

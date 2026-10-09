@@ -2,6 +2,7 @@ name: max-platform
 label: Max
 kind: platform
 version: 2.10.2
+requires_hermes: ">=0.20"
 description: >
   MAX messenger (max.ru) gateway adapter for Hermes Agent with cross-platform
   session management and native Hermes Desktop sessions sidebar integration.

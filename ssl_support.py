@@ -9,9 +9,8 @@ certificate installation.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 import ssl
-from typing import Optional
+from pathlib import Path
 
 try:
     import certifi
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 _CA_BUNDLE_FILENAME = "mincifry_bundle.pem"
 
 
-def get_mincifry_bundle_path() -> Optional[Path]:
+def get_mincifry_bundle_path() -> Path | None:
     """Return path to the bundled MinCifry certificate authority file."""
     # Look in assets/certs relative to this file's parent or package root
     candidate = Path(__file__).resolve().parent / "assets" / "certs" / _CA_BUNDLE_FILENAME
@@ -39,7 +38,7 @@ def get_max_ssl_context() -> ssl.SSLContext:
             ctx = ssl.create_default_context(cafile=certifi.where())
         else:
             ctx = ssl.create_default_context()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("Failed to create default SSL context with certifi: %s", exc)
         ctx = ssl.create_default_context()
 
@@ -48,7 +47,7 @@ def get_max_ssl_context() -> ssl.SSLContext:
         try:
             ctx.load_verify_locations(cafile=str(bundle_path))
             logger.debug("Loaded MinCifry root CA bundle from %s", bundle_path)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Could not load MinCifry CA bundle from %s: %s", bundle_path, exc)
 
     return ctx

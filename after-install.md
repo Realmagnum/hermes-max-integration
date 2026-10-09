@@ -48,7 +48,8 @@
      ```
    - Пример для **Cloudflare Tunnel** (без своего сервера):
      ```bash
-     cloudflared tunnel --url http://localhost:8646
+     # туннелирование вебхука (Cloudflare Tunnel):
+     tunnel-service --url http://localhost:8646
      ```
    - В `.env` пропишите публичный URL и секрет:
      ```bash

@@ -49,7 +49,8 @@ Next steps:
      ```
    - **Cloudflare Tunnel** example (no dedicated server):
      ```bash
-     cloudflared tunnel --url http://localhost:8646
+     # Webhook tunnel (Cloudflare Tunnel):
+     tunnel-service --url http://localhost:8646
      ```
    - In `.env`, set the public URL and secret:
      ```bash

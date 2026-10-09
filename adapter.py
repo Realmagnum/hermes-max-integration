@@ -73,6 +73,7 @@ from .mixins.webhook import (  # noqa: F401 — re-export (tests use adapter._ve
     WebhookMixin,
     _verify_raw_secret,
 )
+
 try:
     from .ssl_support import get_max_ssl_context
 except (ImportError, ValueError):

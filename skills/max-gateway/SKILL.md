@@ -93,10 +93,10 @@ metadata:
    hermes gateway status
    curl http://localhost:8646/health
    # Ожидается: {"status":"ok"}
-   curl "https://platform-api.max.ru/subscriptions" -H "Authorization: $MAX_BOT_TOKEN"
+   curl "https://platform-api.max.ru/subscriptions" -H "Authorization: <token>"
    # Ожидается подписка на ваш MAX_WEBHOOK_URL
    ```
-   В логах шлюза должно быть `MAX: webhook on 0.0.0.0:8646/max/webhook`. Если там
+   В логах шлюза должно быть сообщение вида `MAX: webhook on <host>:<port>/max/webhook`. Если там
    `MAX: long polling started` — `MAX_WEBHOOK_URL` не подхватился, и подписка
    будет удалена при старте.
 10. Попросите пользователя отправить реальное сообщение MAX-боту и проверьте, отвечает ли Hermes.

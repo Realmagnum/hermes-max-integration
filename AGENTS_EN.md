@@ -49,7 +49,7 @@ When a user gives you this repository and asks to connect Hermes to Max:
 - **A secretless webhook does not start (fail closed):** `MAX_WEBHOOK_SECRET` is required, and the header is verified before the body is read. Dev exception — `MAX_WEBHOOK_INSECURE_DEV=true` on a loopback host only.
 - **CRITICAL: Webhook and long polling are mutually exclusive.** If a webhook subscription exists, MAX API routes ALL updates to the webhook URL and `/updates` returns empty. Even after removing `MAX_WEBHOOK_URL` from .env and restarting in long-polling mode, the stale webhook subscription persists in MAX API and blocks message delivery. **Always delete the old webhook subscription when switching modes:**
   ```bash
-  curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=..." -H "Authorization: $MAX_BOT_TOKEN"
+  curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=..." -H "Authorization: <token>"
   ```
   The plugin now has auto-cleanup on startup (since v2.1.4+), but manual cleanup may still be needed if the webhook was registered externally.
 - `POST /messages` accepts `user_id` or `chat_id`; message `text` is up to 4000 characters and `format` can be `markdown` or `html`.

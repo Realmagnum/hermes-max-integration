@@ -94,10 +94,10 @@ If these docs changed, follow the current official docs instead of this skill.
    hermes gateway status
    curl http://localhost:8646/health
    # Expected: {"status":"ok"}
-   curl "https://platform-api.max.ru/subscriptions" -H "Authorization: $MAX_BOT_TOKEN"
+   curl "https://platform-api.max.ru/subscriptions" -H "Authorization: <token>"
    # Expected: a subscription pointing at your MAX_WEBHOOK_URL
    ```
-   The gateway log must contain `MAX: webhook on 0.0.0.0:8646/max/webhook`. If it
+   The gateway log must contain a message like `MAX: webhook on <host>:<port>/max/webhook`. If it
    says `MAX: long polling started`, `MAX_WEBHOOK_URL` was not picked up and the
    subscription will be deleted on startup.
 10. Ask the user to send a real message to the Max bot and verify Hermes answers.

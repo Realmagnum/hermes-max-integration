@@ -8,8 +8,9 @@ Validates:
 4. Presence of GitHub repository link in platformIntro
 """
 
-import yaml
 from pathlib import Path
+
+import yaml
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
