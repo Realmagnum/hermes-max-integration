@@ -1,247 +1,242 @@
-# Диагностика
+# Troubleshooting
+
+## Safe diagnostics
+
+Start with read-only checks. Never place bot tokens in shell arguments or publish them in logs. `--send` performs a real outbound message and must only be used with an approved recipient.
 
 ## diagnose.sh
 
-Автоматизированный скрипт для проверки работоспособности MAX.
+Automated script for checking MAX functionality.
 
-### Запуск
+### Running
 
 ```bash
 cd ~/.hermes/plugins/max-platform
 
-# Базовая диагностика (без отправки сообщения)
+# Basic diagnostics (without sending message)
 ./scripts/diagnose.sh
 
-# Диагностика с исходящим API smoke-тестом (не полный E2E)
+# Diagnostics with outbound API smoke test (not full E2E)
 ./scripts/diagnose.sh --send
 ```
 
-### Что проверяет
+### What it checks
 
-| Пункт | Описание |
-|-------|----------|
-| 1 | Установка плагина |
-| 2 | Подключение к MAX API |
-| 3 | Активность (polling или webhook) |
+| Item | Description |
+|------|-------------|
+| 1 | Plugin installation |
+| 2 | MAX API connection |
+| 3 | Activity (polling or webhook) |
 | 4 | Health check |
-| 5 | Webhook подписки |
-| 6 | Валидация токена |
-| 7 | E2E отправка сообщения |
-| 8 | Настройка reasoning |
+| 5 | Webhook subscriptions |
+| 6 | Token validation |
+| 7 | E2E message send |
+| 8 | Reasoning setup |
 
 ### Exit code
 
-- `0` — всё ок
-- `1` — есть проблемы
+- `0` — all good
+- `1` — issues found
 
-## Топ-10 ошибок
+## Top 10 Errors
 
 ### 1. 401 Invalid token
 
-**Симптомы:**
-- Нет `MAX: connected` в логах
-- Нет активности
+**Symptoms:**
+- No `MAX: connected` in logs
+- No activity
 
-**Причина:** Неверный или истёкший токен
+**Cause:** Invalid or expired token
 
-**Решение:**
+**Solution:**
 ```bash
-# Проверить токен
-curl -s -X GET "https://platform-api.max.ru/me" \
+# Check token
+curl -s -X GET "https://platform-api2.max.ru/me" \
   -H "Authorization: $(grep MAX_BOT_TOKEN ~/.hermes/.env | cut -d= -f2-)"
 
-# Перегенерировать токен в MAX Partners → Чат-боты → Настроить → Токен
-# Обновить в ~/.hermes/.env
+# Regenerate token in MAX Partners → Chat-bots → Configure → Token
+# Update in ~/.hermes/.env
 ```
 
 ### 2. Webhook blocks polling
 
-**Симптомы:**
-- Long polling не работает
-- `GET /updates` возвращает пустоту
+**Symptoms:**
+- Long polling not working
+- `GET /updates` returns empty
 
-**Причина:** Активная webhook-подписка
+**Cause:** Active webhook subscription
 
-**Решение:**
+**Solution:**
 ```bash
-# Удалить подписку
-curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
-  -H "Authorization: ваш_токен"
+# Delete subscription
+curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=<URL>" \
+  -H "Authorization: your_token"
 
-# Проверить подписки
-curl -H "Authorization: ваш_токен" \
-  https://platform-api.max.ru/subscriptions
+# Check subscriptions
+curl -H "Authorization: your_token" \
+  https://platform-api2.max.ru/subscriptions
 ```
 
-### 3. STT возвращает пустоту
+### 3. STT returns empty
 
-**Симптомы:**
-- Голосовые сообщения не транскрибируются
-- В чат приходит `🎙️ ""` либо агент видит `[voice message could not be transcribed automatically; the audio is available at: …]`
-- В логах ядра: `Voice transcription failed for <path>: <error>`
+**Symptoms:**
+- Voice messages are not transcribed
+- The chat gets `🎙️ ""`, or the agent sees `[voice message could not be transcribed automatically; the audio is available at: …]`
+- Core logs: `Voice transcription failed for <path>: <error>`
 
-**Причина:** транскрибирует ядро Hermes (не плагин): STT выключен (`stt.enabled`), не
-задан язык, у выбранного провайдера нет ключа либо не установлен faster-whisper для
-провайдера `local`.
+**Cause:** transcription is done by the Hermes core (not the plugin): STT is disabled
+(`stt.enabled`), the language is not set, the selected provider has no API key, or
+faster-whisper is missing for the `local` provider.
 
-**Решение:**
+**Solution:**
 ```bash
-# 1. Проверить секцию stt: enabled, language, provider
+# 1. Check the stt section: enabled, language, provider
 grep -A8 "^stt:" ~/.hermes/config.yaml
 
-# 2. Настроить интерактивно (категория 🎙️ Speech-to-Text)
+# 2. Configure interactively (the 🎙️ Speech-to-Text category)
 hermes tools
 
-# 3. Для provider: local — поставить пакет в Python шлюза Hermes
+# 3. For provider: local — install the package into the Hermes gateway Python
 python -m pip install faster-whisper
 
-# 4. Убедиться, что аудио скачалось адаптером
+# 4. Make sure the adapter actually downloaded the audio
 ls -la ~/.hermes/cache/audio/
 
-# 5. Ошибки ядра по транскрибации
+# 5. Core transcription errors
 grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
 ```
 
-Отдельный stt-venv, `scripts/transcribe_audio.py` и переменные `MAX_STT_*` не
-используются: плагин только скачивает и кэширует аудио, а настройки STT живут в
-`config.yaml` ядра. Для русского языка задайте `stt.language: ru` (дефолт ядра — `"en"`).
+A dedicated stt-venv, `scripts/transcribe_audio.py` and the `MAX_STT_*` variables are not
+used: the plugin only downloads and caches audio, while STT settings live in the core
+`config.yaml`. For Russian set `stt.language: ru` (the core default is `"en"`).
 
-### 4. Таблицы не рендерятся
+### 4. Tables not rendering
 
-**Симптомы:**
-- `MAX_TABLE_AS_IMAGE=true` установлен
-- Таблицы приходят текстом
+**Symptoms:**
+- `MAX_TABLE_AS_IMAGE=true` set
+- Tables arrive as text
 
-**Причина:** нет Playwright/Chromium (основной рендер HTML→PNG) и/или нет Pillow
-(фоллбэк). Оба должны быть установлены в Python шлюза Hermes (venv).
+**Cause:** Playwright/Chromium missing (primary HTML→PNG renderer) and/or Pillow
+missing (fallback). Both must be installed into the Hermes gateway Python (venv).
 
-**Решение:**
+**Solution:**
 ```bash
-# Каталог плагина (активный профиль Hermes) и Python его venv:
+# Plugin directory (active Hermes profile) and the interpreter of its venv:
 cd "${HERMES_HOME:-$HOME/.hermes}/plugins/max-platform"
 HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
 
-# Диагностика: что отсутствует?
+# Diagnostics: what is missing?
 "$HERMES_PY" scripts/setup-playwright.py --check-only
 
-# Установить недостающее (идемпотентно):
+# Install what's missing (idempotent):
 "$HERMES_PY" scripts/setup-playwright.py
-# либо вручную:
+# or manually:
 "$HERMES_PY" -m pip install 'playwright>=1.40'
 "$HERMES_PY" -m playwright install chromium
 
-# Фоллбэк-рендер без браузера:
+# Fallback renderer without a browser:
 "$HERMES_PY" -m pip install Pillow
 
 hermes gateway restart
 ```
 
-**Альтернатива:** `MAX_AUTO_INSTALL_PLAYWRIGHT=true` — плагин сам поставит
-пакет и Chromium при первом рендере таблицы (нужен доступ в сеть).
+**Alternative:** `MAX_AUTO_INSTALL_PLAYWRIGHT=true` — the plugin installs the
+package and Chromium itself on the first table render (needs network access).
 
-### 5. Reasoning не отображается
+### 5. Reasoning not displayed
 
-**Симптомы:**
-- Reasoning-модель используется
-- Блок рассуждений не виден
+**Symptoms:**
+- A reasoning-capable model is selected, but reasoning does not appear.
 
-**Причина:** Быстрая модель или неправильная настройка
+**Cause:** The model may not emit reasoning, or the final MAX message edit may fail. `streaming.fresh_final_after_seconds` is a Core setting for Telegram only; setting it under `max:` does not fix MAX.
 
-**Решение:**
-```bash
-# Проверить модель
-grep 'default:' ~/.hermes/config.yaml | head -1
-
-# Проверить настройку
-grep -A3 'max:' ~/.hermes/config.yaml | grep fresh_final
-# Должно быть: fresh_final_after_seconds: 10
-```
+**Solution:** Check the selected model and the gateway logs for edit failures. MAX includes reasoning in the final message edit when the model emits it; do not configure `fresh_final_after_seconds` as a MAX workaround.
 
 ### 6. SSL fails silently
 
-**Симптомы:**
-- Webhook не работает
-- Нет ошибок в логах
+**Symptoms:**
+- Webhook not working
+- No errors in logs
 
-**Причина:** CA MAX API отсутствует в стандартных бандлах Python/ОС.
+**Cause:** The MAX API CA is missing from the standard Python/OS bundles.
 
-**Решение:** плагин не предоставляет переключателя для отключения проверки SSL — переменной `MAX_INSECURE_SSL` в коде нет (`adapter.py`), и такой способ «лечения» неприменим. Добавьте CA в доверенные:
+**Solution:** the plugin offers no switch to disable SSL verification — there is no `MAX_INSECURE_SSL` variable in the code (`adapter.py`), so that "fix" does not apply. Add the CA to the trusted stores:
 
 ```bash
-# Вариант 1: системное хранилище (пример для Debian/Ubuntu)
+# Option 1: system store (Debian/Ubuntu example)
 sudo cp max-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
 
-# Вариант 2: только для процесса Hermes
+# Option 2: the Hermes process only
 # SSL_CERT_FILE=/path/to/ca-bundle.crt hermes gateway restart
 
-# Проверка цепочки до API
-curl -v https://platform-api.max.ru/me 2>&1 | grep -i "SSL\|certificate"
+# Verify the chain to the API
+curl -v https://platform-api2.max.ru/me 2>&1 | grep -i "SSL\|certificate"
 ```
 
 ### 7. MAX API auth format error
 
-**Симптомы:**
+**Symptoms:**
 - 401 Malformed access token
 
-**Причина:** Использование `Bearer <token>` вместо raw token
+**Cause:** Using `Bearer <token>` instead of raw token
 
-**Решение:**
+**Solution:**
 ```bash
-# Неправильно
+# Incorrect
 Authorization: Bearer <token>
 
-# Правильно
+# Correct
 Authorization: <token>
 ```
 
-### 8. Callback не приходит
+### 8. Callback not received
 
-**Симптомы:**
-- Кнопки отображаются
-- Callback не обрабатывается
+**Symptoms:**
+- Buttons displayed
+- Callback not handled
 
-**Причина:** Неправильный chat_id в callback
+**Cause:** Wrong chat_id in callback
 
-**Решение:**
+**Solution:**
 ```python
-# Проверить код обработки callback
+# Check callback handling code
 chat_id = message.get("recipient", {}).get("chat_id")
 ```
 
-### 9. Сообщения дублируются
+### 9. Messages duplicated
 
-**Симптомы:**
-- Одно сообщение → два ответа
+**Symptoms:**
+- One message → two responses
 
-**Причина:** Webhook + polling одновременно
+**Cause:** Webhook + polling simultaneously
 
-**Решение:**
+**Solution:**
 ```bash
-# Убедиться что только один режим активен
-# Проверить подписки
-curl -H "Authorization: ваш_токен" \
-  https://platform-api.max.ru/subscriptions
+# Ensure only one mode is active
+# Check subscriptions
+curl -H "Authorization: your_token" \
+  https://platform-api2.max.ru/subscriptions
 ```
 
-### 10. Gateway не перезапускается
+### 10. Gateway won't restart
 
-**Симптомы:**
-- `hermes gateway restart` зависает
-- Gateway не запускается
+**Symptoms:**
+- `hermes gateway restart` hangs
+- Gateway won't start
 
-**Причина:** Блокировка изнутри gateway
+**Cause:** Blocked from inside gateway
 
-**Решение:**
+**Solution:**
 ```bash
-# Использовать внешний терминал
+# Use external terminal
 sudo systemctl restart hermes-gateway
 
-# Или из sandbox
+# Or from sandbox
 ```
 
-## Логи
+## Logs
 
-Перед проверкой сверяйте окружение и режим:
+Before checking, confirm the environment and mode:
 
 ```bash
 printf 'HERMES_HOME=%s\n' "${HERMES_HOME:-$HOME/.hermes}"
@@ -250,57 +245,57 @@ command -v python
 python -c 'import sys; print(sys.executable)'
 ```
 
-`/health` существует только в webhook-режиме и проверяет локальный HTTP endpoint. `GET /me` проверяет только API smoke. Полный E2E требует реального входящего сообщения MAX, обработки Hermes core и исходящего ответа; подтвердите все три этапа по логам и в MAX.
+`/health` exists only in webhook mode and checks the local HTTP endpoint. `GET /me` checks only the API smoke path. Full E2E requires a real inbound MAX message, Hermes core processing, and an outbound reply; confirm all three in logs and in MAX.
 
-### Где искать
+### Where to find
 
 **Linux systemd:**
 ```bash
 journalctl -u hermes-gateway -f
 ```
 
-Для user service используйте `journalctl --user -u hermes-gateway -f`. На macOS `journalctl` и `systemctl` отсутствуют: смотрите файл, указанный вашим launchd/процесс-менеджером, или запускайте gateway в foreground.
+For a user service use `journalctl --user -u hermes-gateway -f`. macOS has no `journalctl` or `systemctl`; inspect the file configured by launchd/your process manager or run the gateway in the foreground.
 
-**Файл:**
+**File:**
 ```bash
 tail -f ~/.hermes/logs/gateway.log
 ```
 
-### Полезные команды
+### Useful commands
 
 ```bash
-# Последние ошибки
+# Recent errors
 journalctl -u hermes-gateway -p err -n 50
 
-# Фильтр по MAX
+# Filter by MAX
 journalctl -u hermes-gateway -g "MAX:" -f
 
-# Время старта
+# Start time
 journalctl -u hermes-gateway --since "10 minutes ago"
 ```
 
 ## Webhook vs Polling
 
-### Конфликты
+### Conflicts
 
-**Вебхук и long polling взаимоисключаемы.** Если существует webhook-подписка, MAX API направляет ВСЕ обновления на URL вебхука.
+**Webhook and long polling are mutually exclusive.** If webhook subscription exists, MAX API sends ALL updates to webhook URL.
 
-### Миграция
+### Migration
 
 **Webhook → Polling:**
-1. Удалить `MAX_WEBHOOK_URL` из `.env`
-2. Перезапустить gateway
-3. Плагин автоматически удалит webhook-подписку
+1. Remove `MAX_WEBHOOK_URL` from `.env`
+2. Restart gateway
+3. Plugin automatically removes webhook subscriptions
 
 **Polling → Webhook:**
-1. Добавить `MAX_WEBHOOK_URL` в `.env`
-2. Перезапустить gateway
-3. Плагин автоматически зарегистрирует webhook
+1. Add `MAX_WEBHOOK_URL` to `.env`
+2. Restart gateway
+3. Plugin automatically registers webhook
 
-### Ручная очистка
+### Manual Cleanup
 
-Если автоочистка не сработала:
+If auto-cleanup doesn't work:
 ```bash
-curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
-  -H "Authorization: ваш_токен"
+curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=<URL>" \
+  -H "Authorization: your_token"
 ```

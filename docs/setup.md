@@ -1,120 +1,122 @@
-# Настройка
+# Setup
 
-## Переменные окружения
+This version currently has **735 tests**; the count is checked by `python scripts/check-doc-claims.py`.
 
-| Переменная | Обязательная | По умолчанию | Описание |
-|------------|--------------|--------------|----------|
-| `MAX_BOT_TOKEN` | ✅ | — | Токен бота MAX |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Хост webhook |
-| `MAX_WEBHOOK_PORT` | ❌ | `8646` | Порт webhook |
-| `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Путь webhook |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Секрет для `X-Max-Bot-Api-Secret` |
-| `MAX_WEBHOOK_URL` | ❌ | — | Публичный HTTPS URL (включает webhook-режим) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Белый список пользователей (через запятую) |
-| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Разрешить всех пользователей |
-| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | ID пользователей, разрешённых в группах |
-| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | ID групп, разрешённых для бота |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Отрисовка таблиц как PNG (HTML→PNG через Playwright, фоллбэк — Pillow) |
-| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Авто-установка Playwright + Chromium при первом рендере |
-| `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
-| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
-| `MAX_CROSS_SESSION` | ❌ | `false` | Кросс-платформенные /sessions и /resume; требуется явный opt-in |
-| `MAX_CROSS_SESSION_USERS` | ❌ | — | Владельцы, которым доступны межплатформенные сессии |
-| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Политика групп: `allowlist` или `open` |
-| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета только на loopback для разработки |
-| `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Минимальный интервал streaming-edit одного сообщения |
-| `MAX_DEDUP_TTL` | ❌ | `300` | TTL дедупликации входящих событий, секунд |
-| `MAX_DEDUP_MAX` | ❌ | `4096` | Максимум ключей дедупликации |
-| `MAX_QUEUE_MAXSIZE` | ❌ | `100` | Максимальный размер очереди входящих событий |
-| `MAX_MAX_CONCURRENCY` | ❌ | `8` | Параллелизм обработки входящих событий |
-| `MAX_OVERLOAD_POLICY` | ❌ | `drop-oldest` | Политика очереди: `drop-oldest` или `drop-newest` |
-| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Строгий operator allowlist download-hosts |
-| `MAX_TRUSTED_DOWNLOAD_HOSTS` | ❌ | `.max.ru,.oneme.ru` | HTTPS-хосты, которым допустим `Authorization` |
-| `MAX_INBOUND_MEDIA_MAX_BYTES` | ❌ | `52428800` | Лимит одного входящего вложения, байт |
-| `MAX_INBOUND_MEDIA_TOTAL_BYTES` | ❌ | `104857600` | Суммарный лимит вложений update, байт |
-| `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | ❌ | `10` | Лимит числа вложений update |
-| `MAX_INBOUND_MEDIA_TIMEOUT` | ❌ | `30` | Таймаут download входящего медиа, секунд |
-| `MAX_INBOUND_MEDIA_CONCURRENCY` | ❌ | `4` | Параллелизм download входящего медиа |
+## Environment Variables
 
-## Внутренние константы
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MAX_BOT_TOKEN` | ✅ | — | MAX bot token |
+| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook host |
+| `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook port |
+| `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook path |
+| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for `X-Max-Bot-Api-Secret` |
+| `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
+| `MAX_ALLOWED_USERS` | ❌ | — | User whitelist (comma-separated) |
+| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
+| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | Users allowed in groups |
+| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Groups allowed for bot |
+| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG (HTML→PNG via Playwright, Pillow fallback) |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first render |
+| `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
+| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; requires explicit opt-in |
+| `MAX_CROSS_SESSION_USERS` | ❌ | — | Owners allowed to use cross-platform sessions |
+| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `allowlist` or `open` |
+| `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook only on loopback for development |
+| `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Minimum interval between streaming edits of one message |
+| `MAX_DEDUP_TTL` | ❌ | `300` | Incoming-event deduplication TTL in seconds |
+| `MAX_DEDUP_MAX` | ❌ | `4096` | Maximum number of deduplication keys |
+| `MAX_QUEUE_MAXSIZE` | ❌ | `100` | Maximum incoming-event queue size |
+| `MAX_MAX_CONCURRENCY` | ❌ | `8` | Incoming-event handling concurrency |
+| `MAX_OVERLOAD_POLICY` | ❌ | `drop-oldest` | Queue policy: `drop-oldest` or `drop-newest` |
+| `MAX_DOWNLOAD_ALLOWED_HOSTS` | ❌ | — | Strict operator download-host allowlist |
+| `MAX_TRUSTED_DOWNLOAD_HOSTS` | ❌ | `.max.ru,.oneme.ru` | HTTPS hosts eligible for `Authorization` |
+| `MAX_INBOUND_MEDIA_MAX_BYTES` | ❌ | `52428800` | Per-inbound-attachment byte limit |
+| `MAX_INBOUND_MEDIA_TOTAL_BYTES` | ❌ | `104857600` | Per-update aggregate attachment byte limit |
+| `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | ❌ | `10` | Per-update attachment count limit |
+| `MAX_INBOUND_MEDIA_TIMEOUT` | ❌ | `30` | Inbound-media download timeout in seconds |
+| `MAX_INBOUND_MEDIA_CONCURRENCY` | ❌ | `4` | Inbound-media download concurrency |
 
-| Константа | Значение | Назначение |
+## Internal Constants
+
+| Constant | Value | Purpose |
 |---|---|---|
-| API base URL | `platform-api.max.ru` | Адрес MAX API; не является настройкой окружения |
-| Message length limit | `4000` | Максимальная длина одного текстового сообщения |
-| Outbound file limit | `50 * 1024 * 1024` | Лимит исходящего файла |
-| Webhook body limit | `1_048_576` | Максимальный размер тела webhook |
-| Poll timeout | `POLL_TIMEOUT` | Базовый timeout polling |
-| Table column cap | `38` | Лимит столбцов текстовой таблицы |
-| Table PNG width | `1200` | Ширина canvas PNG-таблицы |
+| API base URL | `platform-api2.max.ru` | MAX API address; not an environment setting |
+| Message length limit | `4000` | Maximum text length in one message |
+| Outbound file limit | `50 * 1024 * 1024` | Outbound file limit |
+| Webhook body limit | `1_048_576` | Maximum webhook request-body size |
+| Poll timeout | `POLL_TIMEOUT` | Base polling timeout |
+| Table column cap | `38` | Text-table column limit |
+| Table PNG width | `1200` | PNG-table canvas width |
 
-## Ключи в блоке `platforms.max`
+## Keys in the `platforms.max` block
 
-Ключи YAML передаются в адаптер как `extra`; значения окружения имеют приоритет.
+YAML keys are promoted to adapter `extra`; environment values take precedence.
 
-| Ключ в блоке `platforms.max` | Эквивалент окружения | Назначение |
+| Key in the `platforms.max` block | Environment equivalent | Purpose |
 |---|---|---|
-| `token` | `MAX_BOT_TOKEN` | Токен бота |
-| `host` | `MAX_WEBHOOK_HOST` | Хост webhook |
-| `port` | `MAX_WEBHOOK_PORT` | Порт webhook |
-| `path` | `MAX_WEBHOOK_PATH` | Путь webhook |
-| `webhook_secret` | `MAX_WEBHOOK_SECRET` | Секрет webhook |
-| `webhook_url` | `MAX_WEBHOOK_URL` | Публичный URL webhook |
-| `webhook_insecure_dev` | `MAX_WEBHOOK_INSECURE_DEV` | Разрешить secretless webhook только на loopback для разработки |
-| `allowed_users` | `MAX_ALLOWED_USERS` | Пользовательский allowlist |
-| `allow_all_users` | `MAX_ALLOW_ALL_USERS` | Явно разрешить всех пользователей |
-| `group_policy` | `MAX_GROUP_POLICY` | Политика групп: `allowlist` или `open` |
-| `group_allow_from` | `MAX_GROUP_ALLOWED_USERS` | Разрешённые пользователи в группах |
-| `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Разрешённые группы |
-| `cross_session` | `MAX_CROSS_SESSION` | Включить межплатформенные сессии |
-| `cross_session_users` | `MAX_CROSS_SESSION_USERS` | Владельцы, допущенные к межплатформенным сессиям |
-| `home_channel` | `MAX_HOME_CHANNEL` | Адресат cron/send_message |
-| `table_as_image` | `MAX_TABLE_AS_IMAGE` | Рендерить markdown-таблицы как PNG |
-| `edit_throttle` | `MAX_EDIT_THROTTLE` | Минимальный интервал streaming-edit |
-| `dedup_ttl` | `MAX_DEDUP_TTL` | TTL дедупликации входящих событий |
-| `overload_policy` | `MAX_OVERLOAD_POLICY` | Поведение очереди при перегрузке |
-| `download_allowed_hosts` | `MAX_DOWNLOAD_ALLOWED_HOSTS` | Строгий операторский allowlist download-hosts |
-| `trusted_download_hosts` | `MAX_TRUSTED_DOWNLOAD_HOSTS` | HTTPS-хосты, которым допустим `Authorization` |
-| `inbound_media_max_bytes` | `MAX_INBOUND_MEDIA_MAX_BYTES` | Лимит одного входящего вложения |
-| `inbound_media_total_bytes` | `MAX_INBOUND_MEDIA_TOTAL_BYTES` | Суммарный лимит вложений update |
-| `inbound_media_max_attachments` | `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | Лимит числа вложений update |
-| `inbound_media_timeout` | `MAX_INBOUND_MEDIA_TIMEOUT` | Таймаут download входящего медиа |
-| `inbound_media_concurrency` | `MAX_INBOUND_MEDIA_CONCURRENCY` | Параллелизм download входящего медиа |
+| `token` | `MAX_BOT_TOKEN` | Bot token |
+| `host` | `MAX_WEBHOOK_HOST` | Webhook host |
+| `port` | `MAX_WEBHOOK_PORT` | Webhook port |
+| `path` | `MAX_WEBHOOK_PATH` | Webhook path |
+| `webhook_secret` | `MAX_WEBHOOK_SECRET` | Webhook secret |
+| `webhook_url` | `MAX_WEBHOOK_URL` | Public webhook URL |
+| `webhook_insecure_dev` | `MAX_WEBHOOK_INSECURE_DEV` | Allow secretless webhook only on loopback for development |
+| `allowed_users` | `MAX_ALLOWED_USERS` | User allowlist |
+| `allow_all_users` | `MAX_ALLOW_ALL_USERS` | Explicitly allow all users |
+| `group_policy` | `MAX_GROUP_POLICY` | Group policy: `allowlist` or `open` |
+| `group_allow_from` | `MAX_GROUP_ALLOWED_USERS` | Allowed group users |
+| `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Allowed groups |
+| `cross_session` | `MAX_CROSS_SESSION` | Enable cross-platform sessions |
+| `cross_session_users` | `MAX_CROSS_SESSION_USERS` | Owners allowed to use cross-platform sessions |
+| `home_channel` | `MAX_HOME_CHANNEL` | cron/send_message target |
+| `table_as_image` | `MAX_TABLE_AS_IMAGE` | Render markdown tables as PNG |
+| `edit_throttle` | `MAX_EDIT_THROTTLE` | Minimum streaming-edit interval |
+| `dedup_ttl` | `MAX_DEDUP_TTL` | Incoming-event deduplication TTL |
+| `overload_policy` | `MAX_OVERLOAD_POLICY` | Queue behavior under overload |
+| `download_allowed_hosts` | `MAX_DOWNLOAD_ALLOWED_HOSTS` | Strict operator download-host allowlist |
+| `trusted_download_hosts` | `MAX_TRUSTED_DOWNLOAD_HOSTS` | HTTPS hosts eligible for `Authorization` |
+| `inbound_media_max_bytes` | `MAX_INBOUND_MEDIA_MAX_BYTES` | Per-inbound-attachment limit |
+| `inbound_media_total_bytes` | `MAX_INBOUND_MEDIA_TOTAL_BYTES` | Per-update aggregate attachment limit |
+| `inbound_media_max_attachments` | `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | Per-update attachment count limit |
+| `inbound_media_timeout` | `MAX_INBOUND_MEDIA_TIMEOUT` | Inbound-media download timeout |
+| `inbound_media_concurrency` | `MAX_INBOUND_MEDIA_CONCURRENCY` | Inbound-media download concurrency |
 
-## Режимы подключения
+## Connection Modes
 
-Плагин поддерживает два режима получения сообщений от MAX API. Режим определяется единственной переменной — **`MAX_WEBHOOK_URL`**:
+The plugin supports two modes for receiving messages from MAX API. The mode is determined by a single variable — **`MAX_WEBHOOK_URL`**:
 
-| `MAX_WEBHOOK_URL` | Режим | Механизм |
+| `MAX_WEBHOOK_URL` | Mode | Mechanism |
 |---|---|---|
-| Не задан (пуст) | **Long polling** (по умолчанию) | Цикличный `GET /updates?timeout=5&marker=...` |
-| Задан HTTPS URL | **Webhook** | aiohttp сервер на порту 8646, регистрация `POST /subscriptions` |
+| Not set (empty) | **Long polling** (default) | Cyclic `GET /updates?timeout=5&marker=...` |
+| Set to HTTPS URL | **Webhook** | aiohttp server on port 8646, registration `POST /subscriptions` |
 
-Выбор происходит в коде `connect()` одной строкой: `self._use_webhook = bool(self._webhook_url)`.
+Selection happens in `connect()` with one line: `self._use_webhook = bool(self._webhook_url)`.
 
-### Long polling (по умолчанию)
+### Long polling (default)
 
 ```bash
-# Просто установить токен
-MAX_BOT_TOKEN=ваш_токен
+# Just set the token
+MAX_BOT_TOKEN=your_token
 ```
 
-Long polling идеален для:
-- Локальной разработки
-- Тестирования
-- Случаев, когда нет публичного HTTPS
+Long polling is ideal for:
+- Local development
+- Testing
+- Cases without public HTTPS
 
 ### Webhook
 
 ```bash
-MAX_BOT_TOKEN=ваш_токен
+MAX_BOT_TOKEN=your_token
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
 MAX_WEBHOOK_SECRET=your-secret
 ```
 
-Webhook требуется для production. Нужен публичный HTTPS URL.
+For production, MAX recommends webhook. A public HTTPS URL is required.
 
-> **Официально (dev.max.ru/docs-api, сверено 2026-09-16):** MAX принимает события только через Webhook; Long Polling ограничен по скорости и сроку хранения событий и «не подходит для production-окружения». С 25 мая 2026 не поддерживаются HTTP-webhook и самоподписанные сертификаты, endpoint обязан слушать **порт 443** (порт в URL не указывается) и отдавать HTTP 200 за 30 секунд. Плагин по умолчанию биндится на `8646` — наружу его публикует reverse proxy на 443 (см. примеры ниже).
+> **Official (dev.max.ru/docs-api, checked 2026-09-16):** MAX delivers events via Webhook only; Long Polling is rate-limited and retention-bound and "is not suitable for a production environment". Since May 25, 2026 HTTP webhooks and self-signed certificates are unsupported, the endpoint must listen on **port 443** (the port must not appear in the URL) and return HTTP 200 within 30 seconds. The plugin binds to `8646` by default, so a reverse proxy must publish it on 443 (see examples below).
 
 ## Webhook Setup
 
@@ -141,13 +143,13 @@ http:
           - url: "http://localhost:8646"
 ```
 
-### Регистрация webhook
+### Register webhook
 
-Плагин автоматически регистрирует webhook при старте. Для ручной регистрации:
+The plugin automatically registers webhook on startup. For manual registration:
 
 ```bash
-curl -X POST "https://platform-api.max.ru/subscriptions" \
-  -H "Authorization: ваш_токен" \
+curl -X POST "https://platform-api2.max.ru/subscriptions" \
+  -H "Authorization: your_token" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://your-domain.com/max/webhook",
@@ -156,77 +158,80 @@ curl -X POST "https://platform-api.max.ru/subscriptions" \
   }'
 ```
 
-Проверить подписки:
+Check subscriptions:
 
 ```bash
-curl -H "Authorization: ваш_токен" \
-  https://platform-api.max.ru/subscriptions
+curl -H "Authorization: your_token" \
+  https://platform-api2.max.ru/subscriptions
 ```
 
-## Переключение режимов
+## Mode Switching
 
 ### Long polling → Webhook
 
 ```bash
-# 1. Добавить в ~/.hermes/.env
+# 1. Add to ~/.hermes/.env
 MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
 MAX_WEBHOOK_SECRET=your-secret
 
-# 2. Перезапустить
-sudo systemctl restart hermes-gateway
+# 2. Apply the configuration and restart the gateway using your approved service-management workflow.
+# Restarting a production gateway affects live traffic.
 ```
 
-При старте: `_start_webhook()` → открывает `0.0.0.0:8646` → регистрирует подписку в MAX API.
+On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers subscription in MAX API.
 
 ### Webhook → Long polling
 
+Before switching, inspect current MAX subscriptions. Polling startup attempts to remove stale webhook subscriptions; this is an external state change. Obtain approval before switching a production bot or restarting its gateway.
+
 ```bash
-# 1. Удалить или закомментировать MAX_WEBHOOK_URL (и MAX_WEBHOOK_SECRET)
+# 1. Remove or comment MAX_WEBHOOK_URL (and MAX_WEBHOOK_SECRET)
 # MAX_WEBHOOK_URL=...
 # MAX_WEBHOOK_SECRET=...
 
-# 2. Перезапустить
-sudo systemctl restart hermes-gateway
+# 2. Apply the configuration and restart the gateway using your approved service-management workflow.
+# Restarting a production gateway affects live traffic.
 ```
 
-При старте: `_start_polling()` → проверяет `GET /subscriptions`, **автоматически удаляет** старые webhook-подписки → запускает `_poll_loop`.
+On startup: `_start_polling()` checks `GET /subscriptions`, attempts to remove its stale webhook subscriptions, then starts `_poll_loop`.
 
-### 🚨 Важно
 
-Если webhook-подписка была зарегистрирована **вручную** (curl'ом, не через плагин), автоочистка может её не найти. Удалите вручную:
+### 🚨 Important
+
+If a webhook subscription was registered **manually**, auto-cleanup may not find it. Inspect first and delete only with explicit authorization:
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
-  -H "Authorization: ваш_токен"
+curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=<URL>" \
+  -H "Authorization: your_token"
 ```
 
 ## Security
 
 ### Webhook Secret
 
-Секрет отправляется MAX как сырое значение заголовка `X-Max-Bot-Api-Secret`, а не как HMAC-подпись. Плагин использует `secrets.compare_digest()` для timing-safe сравнения.
+Secret is sent by MAX as raw value in `X-Max-Bot-Api-Secret` header, not as HMAC signature. Plugin uses `secrets.compare_digest()` for timing-safe comparison.
 
 ### Access Control
 
-**Белый список пользователей:**
+**User whitelist:**
 
 ```bash
 MAX_ALLOWED_USERS=123456789,987654321
 ```
 
-**Разрешить всех:**
+**Allow all:**
 
 ```bash
 MAX_ALLOW_ALL_USERS=true
 ```
 
-**Групповые политики:**
+**Group policies:**
 
 ```bash
-# Закрытая группа — только разрешённые пользователи
+# Closed group — only allowed users
 MAX_GROUP_POLICY=closed
 
-# Белый список для группы
+# Whitelist for group
 MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
 ```
@@ -236,17 +241,17 @@ MAX_GROUP_ALLOWED_CHATS=-1001234567890
 ### Systemd
 
 ```bash
-sudo systemctl enable hermes-gateway
-sudo systemctl start hermes-gateway
-sudo systemctl status hermes-gateway
+# Use your deployment's approved service manager. enable/start change service state;
+# confirm the target host and change window before running them.
+systemctl status hermes-gateway
 ```
 
-### Проверка
+### Check
 
 ```bash
 # Health check
 curl http://localhost:8646/health
 
-# Статус плагина
+# Plugin status
 hermes gateway status
 ```

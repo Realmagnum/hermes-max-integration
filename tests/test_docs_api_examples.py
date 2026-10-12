@@ -1,4 +1,4 @@
-"""Executable checks for the API examples in docs/api.md and docs/api_EN.md.
+"""Executable checks for the API examples in docs/api.md and docs/api_RU.md.
 
 Two things are verified:
 
@@ -34,7 +34,7 @@ def _blocks_by_name(path: Path) -> list[dict]:
 # ── 1. Document fixtures ──────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("name", ["api.md", "api_EN.md"])
+@pytest.mark.parametrize("name", ["api.md", "api_RU.md"])
 def test_every_json_block_parses(name):
     blocks = _json_blocks(_DOCS / name)
     assert blocks, f"no ```json blocks found in {name}"
@@ -44,7 +44,7 @@ def test_every_json_block_parses(name):
 
 def test_ru_and_en_fixtures_are_identical():
     ru = [json.dumps(b, sort_keys=True, ensure_ascii=False) for b in _blocks_by_name(_DOCS / "api.md")]
-    en = [json.dumps(b, sort_keys=True, ensure_ascii=False) for b in _blocks_by_name(_DOCS / "api_EN.md")]
+    en = [json.dumps(b, sort_keys=True, ensure_ascii=False) for b in _blocks_by_name(_DOCS / "api_RU.md")]
     assert ru == en
 
 

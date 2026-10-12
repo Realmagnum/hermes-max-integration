@@ -1,146 +1,125 @@
-# Честная модель безопасности
+# Honest security model
 
-Этот документ описывает **что плагин реально защищает, а что нет**. Он актуализирован
-по результатам аудита и закрытия уязвимостей в релизе v2.10.0 и намеренно не содержит
-обещаний абсолютной безопасности.
+This document describes **what the plugin actually protects and what it does not**. It reflects the available audit notes and regression tests; it does not promise absolute security.
 
-## Статус и область
+## Status and scope
 
-| Параметр | Значение |
+| Parameter | Value |
 |---|---|
-| Область | плагин `hermes-max-integration` (adapter.py, mixins/, скрипты, документация) |
-| База аудита | commit `b004c573318f1d5e521255531d1943cc8a8b8b90` (`main`) |
-| Бэклог находок | `BACKLOG.md` (задачи аудита SEC-01…SEC-07, CODE-01…CODE-08) |
-| Документ обновлён | 2026-10-01, релиз v2.10.2 (все задачи SEC-01…07 закрыты в v2.10.0) |
-| Что проверялось | статический анализ кода, изолированные тесты, регрессионный сьют pytest (729 тестов) |
-| Что НЕ проверялось | production E2E с реальными пользователями, правила внешних платформ, история коммитов до форка |
+| Scope | the `hermes-max-integration` plugin (adapter.py, mixins/, scripts, documentation) |
+| Audit baseline | commit `b004c573318f1d5e521255531d1943cc8a8b8b90` (`main`) |
+| Findings backlog | `BACKLOG.md` (audit items SEC-01…SEC-07, CODE-01…CODE-08) |
+| Document updated | 2026-10-12; verify release and test counts against the current checkout before relying on them |
+| What was checked | static code analysis, isolated tests, pytest regression suite (see current CI for counts) |
+| What was NOT checked | production E2E with real users, external platform rules, commit history prior to fork |
 
-Обозначения достоверности (как в бэклоге): **S** — статическое сопоставление кода и
-документов, **R** — изолированное выполнение с моками (не полный плагин), **E** —
-реальная локальная команда, **V** — гипотеза или внешний контракт, требующий проверки.
+Evidence markers (as in the backlog): **S** — static code/document comparison, **R** — isolated execution with mocks (not the complete plugin), **E** — actual local command, **V** — hypothesis or external contract requiring verification.
 
-> Все задачи аудита безопасности **SEC-01…SEC-07** и надежности **CODE-01…CODE-08** закрыты в релизе v2.10.0 и покрыты регрессионными тестами.
+> Audit status and test counts are historical evidence, not a guarantee that the current branch has been audited. Check the current backlog and CI before deployment.
 
-## Модель доверия
+## Trust model
 
-| Сторона | Что предполагается | Ограничение |
+| Party | Assumed | Limitation |
 |---|---|---|
-| MAX Bot API | источник событий `message_created`, `message_callback`, `bot_started` | подлинность события подтверждается только секретом вебхука; в long polling — доверием к API |
-| Пользователь/чат | идентификаторы берутся из события | авторизуются по белому списку; callback-запросы защищены жесткой привязкой владельца (SEC-01) |
-| Ядро Hermes | получает текст и медиа и выполняет инструменты | плагин не является границей безопасности ядра |
-| Сеть | любой URL вложения, пришедший в событии | строгий DNS-пиннинг и блокировка приватных IP (SEC-02/SEC-03) |
-| Хост шлюза | доверенный | файловая система, `.env` и порт вебхука защищаются вами, а не плагином |
+| MAX Bot API | source of `message_created`, `message_callback`, `bot_started` events | event authenticity is confirmed only by the webhook secret; in long polling it relies on trusting the API |
+| User/chat | identifiers come from the event | authorized via allowlists; callback queries protected with strict owner binding (SEC-01) |
+| Hermes core | receives text and media and runs tools | the plugin is not a security boundary for the core |
+| Network | any attachment URL contained in an event | strict DNS pinning and private IP rejection (SEC-02/SEC-03) |
+| Gateway host | trusted | the filesystem, `.env` and the webhook port are protected by you, not by the plugin |
 
-## Безопасные значения по умолчанию и что нужно переопределить
+## Safe defaults and what you must override
 
-| Настройка | По умолчанию | Риск | Что ставить |
+| Setting | Default | Risk | Set it to |
 |---|---|---|---|
-| `MAX_ALLOW_ALL_USERS` | `false` | — | оставить `false` |
-| `MAX_ALLOWED_USERS` | пусто | ⚠️ пустой список закрывает доступ (fail-closed, SEC-05/SEC-06) | указать свой MAX user_id |
-| `MAX_CROSS_SESSION` | `false` | ⚠️ межплатформенные сессии выключены по умолчанию (SEC-05) | `false` (включать только для доверенных `MAX_CROSS_SESSION_USERS`) |
-| `MAX_WEBHOOK_SECRET` | пусто | ⚠️ без секрета вебхук не запускается (fail-closed, SEC-04) | обязателен в webhook-режиме + сетевые ограничения |
-| `MAX_WEBHOOK_HOST` | `0.0.0.0` | ⚠️ порт слушает все интерфейсы | `127.0.0.1` за reverse proxy |
-| `MAX_GROUP_POLICY` | `allowlist` | ⚠️ политика объединяется по AND, пустой список закрыт (SEC-06) | `allowlist` с заполнением списков либо `closed` |
-| `MAX_TABLE_AS_IMAGE` | `false` | — | по необходимости |
-| `MAX_AUTO_INSTALL_PLAYWRIGHT` | `false` | ⚠️ при `true` плагин в рантайме ставит пакет и браузер из сети | оставить `false`, если установка из сети не контролируется |
-| `MAX_WEBHOOK_INSECURE_DEV` | `false` | ⚠️ разрешает запуск вебхука без секрета только на loopback (127.0.0.1) | `false` для продакшена, `true` только для локальной разработки |
+| `MAX_ALLOW_ALL_USERS` | `false` | — | leave `false` |
+| `MAX_ALLOWED_USERS` | empty | ⚠️ empty list closes access (fail-closed, SEC-05/SEC-06) | set your own MAX user_id |
+| `MAX_CROSS_SESSION` | `false` | ⚠️ cross-platform sessions disabled by default (SEC-05) | `false` (enable only for trusted `MAX_CROSS_SESSION_USERS`) |
+| `MAX_WEBHOOK_SECRET` | empty | ⚠️ webhook will not start without secret (fail-closed, SEC-04) | mandatory in webhook mode, plus network restrictions |
+| `MAX_WEBHOOK_HOST` | `0.0.0.0` | ⚠️ the port listens on every interface | `127.0.0.1` behind a reverse proxy |
+| `MAX_GROUP_POLICY` | `allowlist` | ⚠️ policy uses AND semantics, empty list is closed (SEC-06) | `allowlist` with populated lists or `closed` |
+| `MAX_TABLE_AS_IMAGE` | `false` | — | as needed |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | `false` | ⚠️ when `true` the plugin installs a package and browser from the network at runtime | keep `false` unless network installation is controlled |
+| `MAX_WEBHOOK_INSECURE_DEV` | `false` | ⚠️ allows running webhook without secret only on loopback (127.0.0.1) | `false` for production, `true` for local development only |
 
-### Минимальная конфигурация для одного владельца
+### Minimal single-owner configuration
 
 ```bash
 # ~/.hermes/.env
-MAX_BOT_TOKEN=<токен бота>
-MAX_ALLOWED_USERS=<ваш MAX user_id>          # обязательно, иначе доступ закрыт (fail-closed)
-MAX_CROSS_SESSION=false                       # сессии других платформ изолированы
-MAX_WEBHOOK_SECRET=<длинная случайная строка> # обязательно в webhook-режиме
-MAX_WEBHOOK_HOST=127.0.0.1                    # если перед шлюзом стоит reverse proxy
+MAX_BOT_TOKEN=<bot token>
+MAX_ALLOWED_USERS=<your MAX user_id>          # mandatory — otherwise access is closed (fail-closed)
+MAX_CROSS_SESSION=false                       # session history from other platforms isolated
+MAX_WEBHOOK_SECRET=<long random string>       # mandatory in webhook mode
+MAX_WEBHOOK_HOST=127.0.0.1                    # when a reverse proxy fronts the gateway
 ```
 
-При такой конфигурации к боту имеет доступ один пользователь, входящих портов нет
-(long polling), а история сессий других платформ не раскрывается. Дополнительно
-ограничьте доступ к самому хосту: `.env` с токеном читается только владельцем.
+With this configuration exactly one user can reach the bot, no inbound ports are open (long polling), and session history from other platforms is not exposed. Also restrict access to the host itself: the `.env` holding the token must be owner-readable only.
 
 ## Webhook, ingress, firewall
 
-- **Long polling (по умолчанию)** не требует входящих портов — это минимальная
-  поверхность атаки. Если публичный ingress не нужен, оставляйте polling.
-- **Webhook** требует публичного HTTPS: MAX подключается только на 443. TLS
-  терминируется на reverse proxy (Caddy/Nginx/Traefik/Cloudflare Tunnel), а
-  слушатель плагина биндится на `127.0.0.1:8646`.
-- **Секрет вебхука** MAX присылает как сырое значение заголовка
-  `X-Max-Bot-Api-Secret` (не HMAC-подпись); плагин сравнивает его через
-  `secrets.compare_digest`. Без секрета обработчик завершается с кодом 403
-  до чтения тела запроса (SEC-04).
-- **Firewall**: порт `8646` не должен быть доступен извне. Разрешайте входящие 443
-  только на reverse proxy, остальное — закрыто.
-- **Встроенный rate limit** вебхука — 30 запросов / 10 секунд на IP, в памяти
-  процесса: сбрасывается при перезапуске и не различает клиентов за прокси. Это
-  защита от всплесков, а не от целенаправленной атаки.
-- **`/health`** отдаётся без аутентификации и подтверждает только то, что процесс
-  поднят. Готовность к приёму трафика проверяется через `/ready` (CODE-05).
+- **Long polling (default)** requires no inbound ports — the smallest attack surface. If you do not need a public ingress, keep polling.
+- **Webhook** requires public HTTPS: MAX connects to port 443 only. TLS terminates on a reverse proxy (Caddy/Nginx/Traefik/Cloudflare Tunnel) while the plugin listener binds to `127.0.0.1:8646`.
+- **Webhook secret** is sent by MAX as the raw value of the `X-Max-Bot-Api-Secret` header (not an HMAC signature); the plugin compares it with `secrets.compare_digest`. Without a valid secret, the handler responds with 403 before parsing the request body (SEC-04).
+- **Firewall**: port `8646` must not be reachable from outside. Allow inbound 443 to the reverse proxy only; deny the rest.
+- **Built-in rate limiting** for the webhook is 30 requests / 10 seconds per IP, in process memory: it resets on restart and does not distinguish clients behind a proxy. It guards against bursts, not against a targeted attack.
+- **`/health`** is served without authentication and only proves the process is up. Readiness to receive traffic is verified via `/ready` (CODE-05).
 
-## Что реализовано — и насколько это проверено
+## What is implemented — and how well it was verified
 
-| Защита | Состояние | Ограничение |
+| Protection | State | Limitation |
 |---|---|---|
-| Allowlist пользователей | S/R | строгая изоляция: пустой список закрывает доступ (fail-closed, SEC-05/SEC-06), проверено тестами |
-| Проверка URL входящих медиа (`_validate_download_url`) | S/R | строгий DNS-пиннинг (блокировка private/loopback/link-local IP и защита от DNS rebinding, SEC-03) |
-| Белый список хостов для исходящих загрузок | S | применяется к отправке медиа на MAX (`*.max.ru`, `*.oneme.ru`), изоляция download-клиента |
-| Изоляция токена при загрузке медиа | S/R | download-клиент без Authorization; токен не отправляется на сторонние URL (SEC-02) |
-| Сравнение секрета в постоянном времени | S | `secrets.compare_digest`, fail-closed проверка до чтения тела запроса (SEC-04) |
-| Права каталогов кэша | S | аудио-кэш и каталог PNG-таблиц создаются с `mode=0o700` |
-| Очистка логов | S | из URL удаляются userinfo и query-строка (`_safe_url_for_log`), токен не пишется в логи |
-| Лимит входящих медиа | S/R | лимиты размера вложения (`MAX_INBOUND_MEDIA_MAX_BYTES`), суммы (`MAX_INBOUND_MEDIA_TOTAL_BYTES`), таймаут (SEC-07) |
-| CI-проверки и тесты | E | 729 тестов (pytest, ruff, bandit, pip-audit); покрытие adapter.py, mixins/ и scripts/ |
+| User allowlist | S/R | strict isolation: empty list denies access (fail-closed, SEC-05/SEC-06), verified by tests |
+| Inbound media URL validation (`_validate_download_url`) | S/R | strict DNS pinning (blocks private/loopback/link-local IPs and guards against DNS rebinding, SEC-03) |
+| Host allowlist for outbound uploads | S | applies to sending media to MAX (`*.max.ru`, `*.oneme.ru`), isolated download client |
+| Token isolation during media download | S/R | download client without Authorization; token is not transmitted to external URLs (SEC-02) |
+| Constant-time secret comparison | S | `secrets.compare_digest`, fail-closed check before reading request body (SEC-04) |
+| Cache directory permissions | S | audio cache and PNG table directory created with `mode=0o700` |
+| Log sanitization | S | userinfo and query strings stripped from URLs (`_safe_url_for_log`), token is never logged |
+| Incoming media limits | S/R | limits on attachment size (`MAX_INBOUND_MEDIA_MAX_BYTES`), total size (`MAX_INBOUND_MEDIA_TOTAL_BYTES`), timeout (SEC-07) |
+| CI checks and tests | E | see current CI for pytest, ruff, bandit and pip-audit status; counts vary by revision |
 
-## Закрытые проблемы безопасности (бэклог SEC-01…07)
+## Resolved security issues (backlog SEC-01…07)
 
-Полные формулировки и критерии приёмки — в `BACKLOG.md`.
+Full statements and acceptance criteria: `BACKLOG.md`.
 
-| ID | Результат закрытия в v2.10.0 |
+| ID | Resolution in v2.10.0 |
 |---|---|
-| SEC-01 | Реализована универсальная авторизация callback query с привязкой owner_user_id, scoped chat и TTL |
-| SEC-02 | Изолирован download-клиент, токен бота не передаётся на произвольные URL вложений |
-| SEC-03 | Внедрён строгий DNS-пиннинг с валидацией IP-адресов до соединения против SSRF и DNS rebinding |
-| SEC-04 | Вебхук работает по модели fail-closed: обязателен валидный секрет до чтения тела запроса |
-| SEC-05 | Доступ к /sessions и /resume ограничен доверенными владельцами (`MAX_CROSS_SESSION=false` по умолчанию) |
-| SEC-06 | Семантика групповых allowlist переведена на fail-closed и объединение списков через AND |
-| SEC-07 | Введены жесткие лимиты на размер входящих вложений, суммарный объем медиа, число файлов и таймаут |
+| SEC-01 | Implemented universal callback query authorization bound to owner_user_id, scoped chat and TTL |
+| SEC-02 | Isolated download client, bot token is never forwarded to arbitrary attachment URLs |
+| SEC-03 | Enforced strict DNS pinning with pre-connect IP address validation against SSRF and DNS rebinding |
+| SEC-04 | Webhook operates fail-closed: valid secret mandatory before parsing request body |
+| SEC-05 | Access to /sessions and /resume restricted to trusted owners (`MAX_CROSS_SESSION=false` by default) |
+| SEC-06 | Group allowlist semantics transitioned to fail-closed and AND-based combination |
+| SEC-07 | Strict limits enforced for incoming attachment size, total media volume, attachment count and timeout |
 
-Благодаря закрытию задач SEC-01…07 режимы использования следующие:
+These audit findings describe changes at the stated revisions. Re-check current implementation before treating them as present-day guarantees.
 
-- **поддерживается**: персональное использование, работа в группах с белым списком пользователей и чатов, защищённый webhook с секретом за reverse proxy;
-- **требует внимания**: публичный webhook без reverse proxy и firewall, предоставление доступа к боту недоверенным лицам.
+## Cache, data, logs
 
-## Кэш, данные, логи
-
-| Объект | Где | Что учесть |
+| Object | Location | What to consider |
 |---|---|---|
-| Аудио-кэш | `$HERMES_HOME/cache/audio/` (`~/.hermes/cache/audio/`), каталог `0o700` | голосовые сообщения хранятся до очистки вручную; это приватные данные |
-| PNG-таблицы | `~/.hermes/table_images/` | кэш рендера, ключ включает движок |
-| Дедупликация сообщений | в памяти процесса (5 минут) | не персистентно, сбрасывается при перезапуске |
-| Сессии | ядро Hermes (SessionDB) | `/sessions` изолированы от других платформ по умолчанию (SEC-05) |
-| Логи | журнал шлюза Hermes | URL логируются без query и userinfo; содержимое сообщений не редактируется |
-| Сеть | MAX API + PyPI (при авто-установке Playwright) | сетевых обращений, кроме MAX API и загрузки зависимостей, плагин не делает |
+| Audio cache | `$HERMES_HOME/cache/audio/` (`~/.hermes/cache/audio/`), directory `0o700` | voice messages stay until removed manually; this is private data |
+| PNG tables | `~/.hermes/table_images/` | render cache whose key includes the engine |
+| Message dedup | process memory (5 minutes) | not persistent, resets on restart |
+| Sessions | Hermes core (SessionDB) | `/sessions` isolated from other platforms by default (SEC-05) |
+| Logs | Hermes gateway log | URLs are logged without query and userinfo; message content is not redacted |
+| Network | MAX API + PyPI (when Playwright auto-install is on) | the plugin makes no network calls other than the MAX API and dependency downloads |
 
-## Проведённые аудиты: дата, commit, область
+## Audits performed: date, commit, scope
 
-| Дата | Commit | Область | Что это доказывает |
+| Date | Commit | Scope | What it proves |
 |---|---|---|---|
-| 2026-07-17 | `e87ee64` | исправление 10 уязвимостей по «полному аудиту» (adapter.py и связанный код) | что перечисленные в том отчёте проблемы были исправлены |
-| 2026-07-17 | `6e0f77a`, `beb4af2` | STT-конвейер, раздел Security в README, CHANGELOG v2.1.1 | сопутствующие изменения |
-| 2026-07-18 | `70eb490`, `d9626b5` | закрытие 5 MEDIUM/LOW, аннотация `nosec B104` для bind-all | точечные исправления |
-| 2026-08-17 | `e632014` | редиректы загрузок выключены, SSRF-guard входящих URL, предупреждение о пустом секрете, 11 тестов | текущее поведение загрузок |
-| 2026-09-15 | `abd2f0f` | бэклог аудита базы `b004c573`: 7 SEC, 8 CODE, 4 BUILD, 10 DOC | фиксация задач аудита |
-| 2026-09-16 | `b0ea511` | сверка документации и начальные тесты (DOC-05, DOC-10) | честное описание промежуточного состояния |
-| 2026-09-29 | `ad920e6` | Релиз v2.10.0: устранение всех уязвимостей SEC-01…SEC-07, внедрение CODE-01…CODE-08, 720 тестов | закрытие всех задач аудита |
-| 2026-10-01 | `bcbf769` | Релиз v2.10.2: Desktop UI сайдбар (max-sessions-sidebar), исправление file:// URL, 729 тестов | десктопная интеграция и стабилизация |
+| 2026-07-17 | `e87ee64` | fixes for 10 vulnerabilities from a "full audit" (adapter.py and related code) | that the issues listed in that report were fixed |
+| 2026-07-17 | `6e0f77a`, `beb4af2` | STT pipeline, README Security section, CHANGELOG v2.1.1 | accompanying changes |
+| 2026-07-18 | `70eb490`, `d9626b5` | 5 remaining MEDIUM/LOW fixes, `nosec B104` annotation for bind-all | targeted fixes |
+| 2026-08-17 | `e632014` | downloads no longer follow redirects, SSRF guard for inbound URLs, warning on an empty secret, 11 tests | current download behaviour |
+| 2026-09-15 | `abd2f0f` | audit backlog of baseline `b004c573`: 7 SEC, 8 CODE, 4 BUILD, 10 DOC | audit backlog recording |
+| 2026-09-16 | `b0ea511` | documentation alignment and initial tests (DOC-05, DOC-10) | accurate description of intermediate state |
+| 2026-09-29 | `ad920e6` | Release v2.10.0: closed all vulnerabilities SEC-01…SEC-07, implemented CODE-01…CODE-08 | resolved at that revision; not a present-day security guarantee |
+| 2026-10-01 | `bcbf769` | Release v2.10.2: Desktop UI sidebar (max-sessions-sidebar), file:// URL handling | desktop integration and stabilization at that revision |
 
-Полный набор тестов `pytest` (729 тестов), Ruff, Bandit и pip-audit выполняются регулярно в CI.
+## Disclaimer
 
-## Отказ от гарантий
-
-- Ни этот документ, ни прошлые аудиты не являются гарантией отсутствия уязвимостей.
-- Все реализованные механизмы защиты проверены статическим анализом и полным набором из 729 тестов.
-- Ответственность за ingress, секреты, firewall, доступ к хосту и содержимое `.env` лежит на владельце развёртывания.
-- Соблюдайте рекомендации по безопасной конфигурации при развёртывании в рабочих средах.
+- Neither this document nor past audits guarantee the complete absence of vulnerabilities.
+- Security statements apply only to the cited revisions and checked evidence.
+- Responsibility for ingress, secrets, firewall, host access, and `.env` contents remains with the deployment owner.
+- Follow safe configuration practices when deploying in production environments.

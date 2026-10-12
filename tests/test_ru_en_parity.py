@@ -1,7 +1,7 @@
 """RU/EN documentation parity (DOC-07).
 
-The repository is bilingual by policy (AGENTS.md): Russian is the source
-language and every `*.md` file needs an `*_EN.md` counterpart with the same
+The repository is bilingual by policy (AGENTS.md): English is the primary
+language and every `*.md` file needs an `*_RU.md` counterpart with the same
 structure. `scripts/check-ru-en-parity.py` enforces the language-independent
 invariants (heading tree, table shapes, fence languages, env tokens, locale
 scope of links); these tests make the check run in CI and prove it bites.
@@ -30,15 +30,15 @@ def test_repository_documentation_is_in_ru_en_parity():
 
 
 def test_checker_flags_each_kind_of_drift(tmp_path):
-    ru = tmp_path / "README_RU.md"
-    en = tmp_path / "README.md"
+    ru = tmp_path / "sample_RU.md"
+    en = tmp_path / "sample.md"
     ru.write_text(
         "# Заголовок\n\n"
         "## Раздел\n\n"
         "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
         "```bash\necho MAX_BOT_TOKEN\n```\n\n"
-        "- [Настройка](docs/setup.md)\n"
-        "- [API](docs/api_EN.md)\n",
+        "- [Настройка](docs/setup_RU.md)\n"
+        "- [API](docs/api.md)\n",
         encoding="utf-8",
     )
     en.write_text(
@@ -46,13 +46,18 @@ def test_checker_flags_each_kind_of_drift(tmp_path):
         "## Section\n\n"
         "### Extra Subsection\n\n"
         "| A | B | C |\n|---|---|---|\n| 1 | 2 |\n\n"
-        "```python\nprint('MAX_BOT_TOKEN', 'HERMES_HOME')\n```\n\n"
-        "- [Setup](docs/setup.md)\n",
+        "```python\nprint(\"MAX_BOT_TOKEN\", \"HERMES_HOME\")\n```\n\n"
+        "- [Setup](docs/setup.md)\n"
+        "- [Russian](https://example.org/ru)\n",
         encoding="utf-8",
     )
     (tmp_path / "docs").mkdir()
-    for name in ("setup.md", "setup_EN.md", "api_EN.md"):
+    for name in ("setup.md", "setup_RU.md", "api.md", "api_RU.md"):
         (tmp_path / "docs" / name).write_text("# Stub\n", encoding="utf-8")
+    (tmp_path / "docs" / "setup.md").write_text("# Setup\n", encoding="utf-8")
+    (tmp_path / "docs" / "setup_RU.md").write_text("# Настройка\n", encoding="utf-8")
+    (tmp_path / "docs" / "api.md").write_text("# API\n", encoding="utf-8")
+    (tmp_path / "docs" / "api_RU.md").write_text("# API\n", encoding="utf-8")
 
     proc = run_checker(tmp_path)
     assert proc.returncode == 1, proc.stdout
@@ -61,16 +66,26 @@ def test_checker_flags_each_kind_of_drift(tmp_path):
         "table shapes differ",
         "code-fence languages differ",
         "env tokens differ",
-        "RU file links to a translated file",
-        "EN file links to a Russian-only file",
+        "RU file links to English file with RU counterpart",
     ):
         assert expected in proc.stdout, f"checker missed: {expected}\n{proc.stdout}"
 
 
+def test_structure_exempt_pair_still_checks_locale_links(tmp_path):
+    (tmp_path / "README.md").write_text("# Title\n\n[Guide](guide.md)\n", encoding="utf-8")
+    (tmp_path / "README_RU.md").write_text("# Заголовок\n\n[Guide](guide.md)\n", encoding="utf-8")
+    (tmp_path / "guide.md").write_text("# Guide\n", encoding="utf-8")
+    (tmp_path / "guide_RU.md").write_text("# Руководство\n", encoding="utf-8")
+
+    proc = run_checker(tmp_path)
+    assert proc.returncode == 1, proc.stdout
+    assert "README_RU.md: RU file links to English file with RU counterpart" in proc.stdout
+
+
 def test_identical_translations_pass(tmp_path):
     body = "# Заголовок\n\n## Раздел\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"
-    (tmp_path / "README_RU.md").write_text(body, encoding="utf-8")
-    (tmp_path / "README.md").write_text(body, encoding="utf-8")
+    (tmp_path / "sample_RU.md").write_text(body, encoding="utf-8")
+    (tmp_path / "sample.md").write_text(body, encoding="utf-8")
     proc = run_checker(tmp_path)
     assert proc.returncode == 0, proc.stdout
-    assert "1 in sync" in proc.stdout
+    assert "1 structural" in proc.stdout

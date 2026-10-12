@@ -1,69 +1,29 @@
-# Инструкции для AI-агентов, работающих с этим репозиторием
+# Instructions for AI Agents Working With This Repository
 
-## Языковая политика
+## Language Policy
 
-> **⚠️ Двуязычный проект:** Все `*.md` файлы документации пишутся на **русском языке** (основной). Для каждого файла должен существовать перевод на английский в формате `*_EN.md`. Любое изменение в оригинале **обязательно** синхронизируется с переводом. Английская версия — точный перевод русской, с идентичной структурой и содержанием.
+`README.md` and un-suffixed `name.md` files are the English primary documents. Russian counterparts use `name_RU.md`, including `README_RU.md`. Keep facts, identifiers, and procedures synchronized; see `docs/document_writing.md`.
 
-Этот репозиторий содержит плагин платформы Hermes Agent, добавляющий мессенджер MAX как канал шлюза (транскрипция голоса выполняется ядром Hermes).
+This repository contains a Hermes Agent platform plugin for MAX. Hermes Core, not the plugin, performs voice transcription.
 
-Когда пользователь даёт вам этот репозиторий и просит подключить Hermes к MAX:
+## Project map and documentation
 
-1. **Не выдумывайте** шаги настройки MAX-бота. Используйте проверенные источники в `README_RU.md` (русский) или `README.md` (английский); при наличии открывайте официальные страницы на `https://dev.max.ru/` и отдавайте предпочтение актуальной официальной документации.
-2. Сначала установите Hermes, если он отсутствует: https://hermes-agent.nousresearch.com/docs
-3. Установите этот плагин:
-   ```bash
-   hermes plugins install Realmagnum/hermes-max-integration --enable
-   ```
-4. Убедитесь, что `aiohttp` и `httpx` установлены в том же окружении Python, где работает Hermes.
-5. Помогите пользователю получить `MAX_BOT_TOKEN` от Max для партнёров.
-   Актуальный путь: `Чат-боты → Перейти → Расширенные настройки → Настроить → Токен` после модерации бота.
-6. Обращайтесь с `MAX_BOT_TOKEN` и `MAX_WEBHOOK_SECRET` как с секретами. Не выводите их обратно в чат.
-7. Выберите режим — он определяется **только** наличием `MAX_WEBHOOK_URL` (`adapter.py:226,230`):
-   - **long-polling** (по умолчанию, HTTPS не нужен) — задайте только `MAX_BOT_TOKEN` и перезапустите.
-     ⚠️ При старте в этом режиме адаптер удаляет существующие подписки вебхука (`adapter.py:418–450`).
-   - **webhook** — обязательны **оба** параметра: `MAX_WEBHOOK_URL` (публичный HTTPS-URL на локальный `http://127.0.0.1:8646/max/webhook`) и `MAX_WEBHOOK_SECRET` (5–256 символов, тот же, что в подписке; без него endpoint принимает события от любого отправителя, `mixins/webhook.py:63–68`).
-   Без `MAX_WEBHOOK_URL` плагин молча останется в long-polling и удалит вашу ручную подписку.
-8. В режиме вебхука адаптер регистрирует подписку сам при старте (`mixins/webhook.py:129–147`). Ручной curl нужен только для подписки, созданной извне; тогда URL, секрет и `update_types` должны совпадать с авторегистрацией:
-   ```bash
-   curl -X POST "https://platform-api2.max.ru/subscriptions" \
-     -H "Authorization: $MAX_BOT_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
-   ```
-   Проверьте активный режим: в логах `MAX: webhook on ...`, а не `MAX: long polling started`; `GET /subscriptions` показывает ваш `MAX_WEBHOOK_URL`.
-9. Перезапустите шлюз Hermes и проверьте:
-   ```bash
-   hermes gateway restart
-   hermes gateway status
-   curl http://localhost:8646/health
-   ```
-10. STT (транскрипция голоса) обеспечивается **ядром Hermes** (≥ 0.20.0): адаптер плагина только скачивает и кэширует аудио, а ядро транскрибирует его по конфигу `stt` в `config.yaml`. Отдельная настройка в плагине не нужна, `MAX_STT_ENABLED` удалён.
-    - Провайдеры ядра: `local` (faster-whisper, бесплатно), `groq`, `openai` (whisper-1 / gpt-transcribe), `mistral`, `xai`, `elevenlabs`
-    - Настройка: `hermes tools` → категория STT, либо вручную `config.yaml` → `stt.language` (для русского — `ru`; дефолт `"en"`)
-11. Когда агент получает голосовое сообщение (`[Audio: /path/to/file.ogg]`), ядро уже транскрибировало его — просто отвечайте на содержимое.
+At the beginning of code work, run `tree docs`. If `tree` is unavailable, use `find docs -maxdepth 2 -type f | sort`. Treat the tree as navigation only and open relevant documents explicitly. Before editing documentation, read `docs/document_writing.md`.
 
-**Важные текущие факты о MAX API** (проверено 2026-07-21):
-- Запросы к Bot API используют заголовок `Authorization: ***`; токен в параметрах запроса больше не поддерживается.
-- Вебхук требует общедоступного HTTPS; HTTP и самоподписанные сертификаты не поддерживаются для вебхуков.
-- Секрет вебхука отправляется MAX как сырое значение заголовка `X-Max-Bot-Api-Secret`, а не как HMAC-подпись.
-- **Webhook без секрета не стартует (fail-closed):** обязателен `MAX_WEBHOOK_SECRET`; заголовок проверяется до чтения тела. Dev-исключение — `MAX_WEBHOOK_INSECURE_DEV=true` только на loopback-хосте.
-- **КРИТИЧНО: Вебхук и long polling взаимоисключающи.** Если существует подписка вебхука, MAX API направляет ВСЕ обновления на URL вебхука, и `/updates` возвращает пустой ответ. Даже после удаления `MAX_WEBHOOK_URL` из `.env` и перезапуска в режиме long-polling, устаревшая подписка вебхука сохраняется в MAX API и блокирует доставку сообщений. **Всегда удаляйте старую подписку вебхука при переключении режимов:**
-  ```bash
-  curl -X DELETE "https://platform-api2.max.ru/subscriptions?url=..." -H "Authorization: <token>"
-  ```
-  Плагин теперь имеет автоочистку при запуске (с v2.1.4+), но ручная очистка может всё ещё потребоваться, если вебхук был зарегистрирован извне.
-- `POST /messages` принимает `user_id` или `chat_id`; текст сообщения до 4000 символов, `format` может быть `markdown` или `html`.
-- Этот плагин поддерживает **оба** режима: long-polling (по умолчанию, HTTPS не нужен) и вебхук (требуется HTTPS). Long-polling идеален для разработки и тестирования.
-- **Обновления колбэков (`message_callback`)** содержат объект `message`; chat_id для маршрутизации находится в `message.recipient.chat_id`, НЕ в `chat.chat_id` или верхнеуровневом `chat_id`.
+Key documents: `docs/architecture.md` (components/data flow), `docs/setup.md` (configuration), `docs/security.md` (security boundaries), `docs/api.md` (wire contracts), `docs/features.md` (behavior), `docs/troubleshooting.md` (diagnostics), and `docs/external-claims.md` (dated external claims).
 
-**STT-специфично:**
-- Голосовые сообщения от MAX приходят как аудиовложения с `payload.url` для прямой загрузки.
-- Адаптер скачивает и кэширует их; транскрипцию выполняет ядро Hermes (core STT, `config.yaml` → `stt`).
-- Модель/провайдер/язык задаются в ядре, не в плагине.
+When helping install or troubleshoot this plugin, inspect the current checkout and read `docs/setup.md`, `docs/security.md`, and `docs/troubleshooting.md` first. Confirm MAX API behavior against current official documentation before relying on external claims. Never print or embed `MAX_BOT_TOKEN` or `MAX_WEBHOOK_SECRET` in chat, logs, shell arguments, or examples.
 
-**Таблицы как изображения (`MAX_TABLE_AS_IMAGE=true`):**
-- Markdown-таблицы (`| A | B |\n|---|---|`) рендерятся как PNG-изображения, сгенерированные Pillow.
-- Эмодзи статусов (✅❌⚠️⏳) заменяются на Unicode-символы (✓✗⚠◷▶) в семантических цветах.
-- Изображения загружаются через двухшаговое API (`POST /uploads` → PUT → токен → POST /messages`).
-- Если Pillow не установлен, используется текстовый рендеринг в `` `code` ``.
-- Сгенерированные PNG кэшируются в `~/.hermes/table_images/`.
+## Operating modes
+
+The adapter supports polling and webhook delivery. Before changing modes, inspect current subscription state: startup behavior may remove existing webhook subscriptions when polling is selected. Webhook setup requires the configured public endpoint and secret; verify exact validation and startup behavior in the current `mixins/webhook.py` and `adapter.py`, rather than relying on line numbers or historical notes.
+
+Do not run commands that delete or modify subscriptions without explicit authorization. A diagnostic that sends a message (`--send`) has an external side effect; use only with an approved recipient.
+
+## Development invariants
+
+- Keep package-relative imports and verify plugin-loader behavior, not only direct imports from the repository working directory.
+- Treat callback payloads and media URLs as untrusted. Preserve owner authorization, SSRF/DNS protections, download limits, and the rule against forwarding `Authorization` to unrelated origins.
+- Voice transcription belongs to Hermes Core; verify current Core compatibility and configuration before advising users.
+- Confirm versions, defaults, and test counts from source and automated checks; do not trust historical changelog or line-number claims.
+- Run documentation checkers and relevant tests; an unrun check is not a pass.

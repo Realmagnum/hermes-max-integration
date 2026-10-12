@@ -1,6 +1,6 @@
 ---
 name: max-gateway
-description: "Установка и настройка доступа Hermes Agent через мессенджер MAX (транскрипция голоса — ядром Hermes, интеграция с сайдбаром Hermes Desktop)."
+description: "Install and configure Hermes Agent access through Max messenger (voice transcription by the Hermes core, Hermes Desktop sidebar integration)."
 version: 2.10.2
 author: Realmagnum / Hermes Agent community
 license: MIT
@@ -9,132 +9,42 @@ metadata:
     tags: [hermes, gateway, messaging, max, chatbot, voice]
 ---
 
-# Шлюз MAX для Hermes
+# Max Gateway for Hermes
 
-Используйте этот навык, когда пользователь хочет управлять Hermes Agent через мессенджер MAX (включая нативный сайдбар сессий Hermes Desktop).
+Use this skill when asked to install, configure, or troubleshoot this MAX adapter. This is a procedural guide; `docs/architecture.md` describes stable system behavior and trust boundaries.
 
-## Официальные факты, которым доверять в первую очередь
+## Before acting
 
-Проверено 2026-06-22:
-- Подключение партнёрской платформы MAX: https://dev.max.ru/docs/maxbusiness/connection
-- Создание чат-бота и расположение токена: https://dev.max.ru/docs/chatbots/bots-create
-- Настройка разработчика и предупреждение о токене: https://dev.max.ru/docs/chatbots/bots-coding/prepare
-- Обзор API: https://dev.max.ru/docs-api
-- Подписки вебхуков: https://dev.max.ru/docs-api/methods/POST/subscriptions
-- Отправка сообщений: https://dev.max.ru/docs-api/methods/POST/messages
+1. Inspect the current repository and read `docs/setup.md`, `docs/security.md`, and `docs/troubleshooting.md`.
+2. For MAX API details, follow current official documentation linked from `docs/external-claims.md`; re-check dated claims when they matter.
+3. Do not ask for or expose bot tokens or webhook secrets. Never place secret values in shell arguments or examples.
+4. Distinguish read-only inspection from consequential operations. Restarting a gateway, deleting subscriptions, or sending test messages requires user approval.
 
-Если эти документы изменились, следуйте текущей официальной документации вместо этого навыка.
+## Installation
 
-## Процедура
+1. Confirm Hermes is installed and identify the Python environment used by its gateway.
+2. Install dependencies only into that environment, following the current `pyproject.toml` and Hermes package guidance.
+3. Install/enable the plugin using the supported Hermes plugin command or the local checkout.
+4. Obtain `MAX_BOT_TOKEN` through MAX's current official bot-creation process and store it in Hermes' protected `.env` or secret manager.
+5. Verify package loading and adapter registration without printing secrets.
 
-1. Проверьте, установлен ли Hermes: `hermes --version`
-2. Установите зависимости плагина в тот же Python, где работает шлюз Hermes
-   (venv ядра; путь берём из shebang `hermes`):
-   ```bash
-   HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
-   "$HERMES_PY" -m pip install aiohttp httpx
-   ```
-3. Установите и включите плагин:
-   ```bash
-   hermes plugins install Realmagnum/hermes-max-integration --enable
-   ```
-   Или из локального пути:
-   ```bash
-   hermes plugins install /path/to/hermes-max-integration-plugin --enable
-   ```
-4. Помогите пользователю получить токен MAX-бота.
-   Официальный путь после модерации:
-   `Чат-боты → Перейти → Расширенные настройки → Настроить → Токен`
-5. Сохраните токен как `MAX_BOT_TOKEN` в `.env` Hermes. Не выводите токен обратно.
-6. Выберите режим получения обновлений. Режим определяется **только** наличием
-   `MAX_WEBHOOK_URL` (`adapter.py:226,230`):
+## Configure delivery mode
 
-   **Long polling (проще, HTTPS не нужен):**
-   - Задайте только `MAX_BOT_TOKEN` и перезапустите.
-   - ⚠️ При старте в этом режиме адаптер **удаляет** любые существующие
-     подписки вебхука в MAX API (`adapter.py:418–450`): вебхук и long polling
-     взаимоисключающи.
+The adapter supports polling and webhooks. Confirm the current mode-selection logic in `adapter.py` before changing configuration. In polling mode, startup can remove existing webhook subscriptions; inspect current subscriptions first and never delete one without explicit approval.
 
-   **Webhook (продакшен) — обязательны оба параметра:**
-   - `MAX_WEBHOOK_URL` — публичный HTTPS-URL; без него адаптер молча останется
-     в long polling и при первом же запуске удалит вашу ручную подписку.
-   - `MAX_WEBHOOK_SECRET` — тот же секрет, что регистрируется в MAX API; без
-     него endpoint принимает события от любого отправителя
-     (`mixins/webhook.py:63–68`). 5–256 символов.
-   ```bash
-   MAX_WEBHOOK_URL=https://max.example.com/max/webhook
-   MAX_WEBHOOK_SECRET=my-secret-abc123
-   MAX_WEBHOOK_HOST=0.0.0.0
-   MAX_WEBHOOK_PORT=8646
-   MAX_WEBHOOK_PATH=/max/webhook
-   ```
-7. Поднимите публичный HTTPS-туннель/обратный прокси на `http://127.0.0.1:8646`
-   (MAX API обращается только к HTTPS на порт 443). Пример Caddy:
-   ```caddyfile
-   max.example.com {
-       reverse_proxy 127.0.0.1:8646
-   }
-   ```
-8. Перезапустите шлюз — адаптер сам зарегистрирует подписку с URL и секретом из
-   шага 6 (`mixins/webhook.py:129–147`). Ручной curl нужен только если подписка
-   создана извне: тогда URL, секрет и `update_types` должны совпадать с
-   авторегистрацией, иначе секрет не будет совпадать с `MAX_WEBHOOK_SECRET`:
-   ```bash
-   curl -X POST "https://platform-api.max.ru/subscriptions" \
-     -H "Authorization: $MAX_BOT_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d "{\"url\":\"$MAX_WEBHOOK_URL\",\"update_types\":[\"message_created\",\"message_callback\",\"bot_started\",\"bot_added\"],\"secret\":\"$MAX_WEBHOOK_SECRET\"}"
-   ```
-   ⚠️ Ручная подписка при незаданном `MAX_WEBHOOK_URL` бесполезна: плагин
-   стартует в long polling и удаляет её.
-9. Проверьте, что активен именно webhook-режим:
-   ```bash
-   hermes gateway restart
-   hermes gateway status
-   curl http://localhost:8646/health
-   # Ожидается: {"status":"ok"}
-   curl "https://platform-api.max.ru/subscriptions" -H "Authorization: <token>"
-   # Ожидается подписка на ваш MAX_WEBHOOK_URL
-   ```
-   В логах шлюза должно быть сообщение вида `MAX: webhook on <host>:<port>/max/webhook`. Если там
-   `MAX: long polling started` — `MAX_WEBHOOK_URL` не подхватился, и подписка
-   будет удалена при старте.
-10. Попросите пользователя отправить реальное сообщение MAX-боту и проверьте, отвечает ли Hermes.
+For webhook mode, verify the endpoint is reachable over the required public HTTPS path, configure the matching `MAX_WEBHOOK_URL` and `MAX_WEBHOOK_SECRET`, and confirm fail-closed secret validation in `mixins/webhook.py`. Preserve TLS verification and do not expose the internal listener unnecessarily. Confirm startup registration behavior in the current source before creating subscriptions manually.
 
-## Голосовые сообщения (STT)
+## Verify safely
 
-Транскрипция выполняется **ядром Hermes** (≥ 0.20.0) — плагин только скачивает и кэширует аудио:
+1. Prefer `hermes gateway status`, local health checks, and redacted logs.
+2. Confirm the intended polling/webhook mode and subscription state without changing it.
+3. A `--send` smoke test sends a real message; use only after the user approves the recipient and content.
+4. After approved changes, read back status and logs to verify the actual result.
 
-1. Адаптер автоматически скачивает голосовые в кэш аудио ядра (`$HERMES_HOME/cache/audio/`, по умолчанию `~/.hermes/cache/audio/`); ядро транскрибирует их по конфигу `stt`
-2. Провайдеры ядра: `local` (faster-whisper, бесплатно), `groq`, `openai` (whisper-1, gpt-transcribe), `mistral`, `xai`, `elevenlabs`
-3. Настройка: `hermes tools` → категория STT, либо `config.yaml` → `stt` (для русского — `stt.language: ru`)
-4. Транскрипт подставляется в сообщение агента; при `stt.echo_transcripts` ядро дополнительно присылает эхо `🎙️ "<текст>"`
+## Voice and media
 
-### Проблемы STT
+Voice transcription is provided by Hermes Core, not by this plugin. Check Core's current STT documentation/configuration. For media delivery or table rendering, inspect `docs/features.md` and the current implementation; do not assume optional browser/image dependencies are installed.
 
-- Секция `stt` в `config.yaml`: `enabled`, `provider`, `language`, `echo_transcripts`
-- Модель `local` скачивается автоматически при первом использовании (~150 МБ)
-- Если транскрипт не приходит, проверьте по порядку:
-  ```bash
-  grep -A8 "^stt:" ~/.hermes/config.yaml    # enabled / language / provider
-  ls -la ~/.hermes/cache/audio/             # аудио вообще скачалось?
-  grep -i "transcri" ~/.hermes/logs/gateway.log | tail -20
-  ```
-  В логе ядра ищите `Voice transcription failed for <path>: <error>` (ошибка провайдера) и маркер `[voice message could not be transcribed automatically; the audio is available at: …]`
-- Подробнее: README_RU.md → «Голос не транскрибируется», `docs/troubleshooting.md`
+## Troubleshooting
 
-## Проблемы (общие)
-
-- Используйте `Authorization: ***`, а не параметры запроса и не `Bearer <token>`.
-- Вебхук должен быть HTTPS с доверенным сертификатом.
-- Если настроен `secret`, MAX отправляет его как сырое значение в `X-Max-Bot-Api-Secret`; сравнивайте напрямую с constant-time сравнением.
-- **Секрет обязателен для вебхука (fail-closed).** Без `MAX_WEBHOOK_SECRET` адаптер отказывается запускать вебхук (`webhook_secret_required`) — незащищённый endpoint позволил бы подделать `user_id`. Заголовок проверяется до чтения тела. Для отладки без секрета используйте long polling или `MAX_WEBHOOK_INSECURE_DEV=true` только с `MAX_WEBHOOK_HOST=127.0.0.1`.
-- **🚨 КРИТИЧНО: Вебхук и Long Polling взаимоисключающи.** Если в MAX API существует подписка вебхука, `/updates` возвращает пустой ответ, и ВСЕ сообщения идут на URL вебхука. Даже после удаления `MAX_WEBHOOK_URL` из .env и перезапуска, устаревшая подписка сохраняется в MAX API и молча блокирует доставку сообщений.
-  - **Исправление:** Удалите старую подписку:
-    ```bash
-    curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" -H "Authorization: ***"
-    ```
-  - **Авто-исправление (v2.1.4+):** Плагин теперь автоматически очищает устаревшие подписки вебхуков при запуске в режиме long-polling.
-  - **Предотвращение:** Не устанавливайте `MAX_WEBHOOK_URL` в .env, если у вас нет работающего обратного прокси перед портом 8646. При переключении режимов всегда сначала очищайте старую подписку. Если шаг 6 процедуры выполнен (заданы `MAX_WEBHOOK_URL` и `MAX_WEBHOOK_SECRET`), автоочистка не срабатывает — адаптер работает в webhook-режиме.
-- Держите туннель/шлюз работающими при использовании MAX.
-- MAX API требует юрисдикции Российской Федерации для регистрации бота.
+Start with `docs/troubleshooting.md`. Preserve owner-scoped authorization, download limits, SSRF protections, and the rule against forwarding `Authorization` to unrelated origins. If current source or official API behavior differs from these notes, update the documentation pair after verification.

@@ -1,599 +1,99 @@
 # Hermes MAX Gateway
 
 <p align="center">
-  <img src="assets/banner.jpg" alt="Hermes MAX.ru Integration" width="100%">
+  <img src="assets/banner.jpg" alt="Hermes MAX messenger integration" width="100%">
 </p>
 
-> 🇷🇺 **Русская версия:** Документация на русском языке доступна в [README_RU.md](README_RU.md).  
-> **⚠️ Bilingual Project:** English documentation is in `README.md`, Russian translation is in `README_RU.md`. When modifying this file, **always** sync changes with `README_RU.md`.
+> Русская документация: [README_RU.md](README_RU.md). Этот файл — основная английская версия; синхронизируйте факты и ссылки в обеих версиях.
 
-**Hermes Agent gateway plugin for MAX messenger (max.ru).**  
-Voice transcription (STT by the Hermes core), interactive buttons (model picker, approval, clarify), table-as-image rendering (PNG with colored icons), streaming responses, file upload, access control.
+Hermes Agent platform plugin for the MAX messenger. It provides polling and webhook transports, streaming and chunked replies, interactive callbacks, media handling, access controls, table images, and an optional Hermes Desktop sessions sidebar. Voice transcription is provided by Hermes Core STT, not by this plugin.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Hermes](https://img.shields.io/badge/Hermes-Agent-8A2BE2)](https://hermes-agent.nousresearch.com/docs)
-
----
+[![Hermes Agent](https://img.shields.io/badge/Hermes-Agent-8A2BE2)](https://hermes-agent.nousresearch.com/docs)
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| 🟣 **Max Messenger** | Full gateway integration with max.ru |
-| 📡 **Dual Mode** | Long polling (`GET /updates`) + Webhook (`POST /max/webhook`) |
-| 🎤 **STT Voice** | Auto-download voice → transcription by the Hermes core (core STT) |
-| 🖼️ **Tables as Images** | Render markdown tables as Pillow-generated PNGs with colored status icons |
-| 📝 **Streaming** | `edit_message` via `PUT /messages` for live token streaming |
-| 🔘 **Interactive Buttons** | Model picker (`/model`), exec approval, slash confirm, clarify |
-| 🔗 **Link Buttons** | Link buttons in messages (`send_buttons()` with type `link`) |
-| 👁️ **send_action** | Extended statuses: typing, sending_photo/video/audio/file, read, typing_off |
-| ✂️ **Auto-chunking** | Smart 4000-char message splitting preserving paragraphs |
-| ⬆️ **File Upload** | Two-step upload: `POST /uploads` → PUT → token → send |
-| 🔒 **Access Control** | Per-user allowlist, group policies, webhook secret verification |
-| 📎 **Media** | Recursive attachment extraction, image/document/audio caching |
-| 🎞️ **Voice/Video/Docs** | Dedicated `send_voice`, `send_video`, `send_document` methods |
-| ⚡ **Typing Indicator** | Shows "user is typing" for all chat types |
-| 🔧 **Standalone Sender** | Cron/send_message via `_standalone_send` with native file delivery. `hermes send "text MEDIA:/file"` works without core mod |
-| 🌐 **Cross-Platform Sessions** | `/sessions` shows sessions across ALL platforms, `/resume <id>` switches to any. Requires explicit opt-in (`MAX_CROSS_SESSION=true`) and a trusted owner |
-| 🖥️ **Desktop UI Sidebar** | Native sessions sidebar in Hermes Desktop (`max-sessions-sidebar`): active dialogs, message counts, tokens, activity timestamps, and badges |
-| 📦 **Unified Package** | Automatic installation and registration of the desktop UI plugin alongside the platform without manual steps |
-| 🌍 **RU/EN Localization** | Full Russian and English language support across the Desktop UI and documentation |
-| 🧪 **Tested** | pytest + pytest-asyncio, **734 tests** |
-| 🔧 **Interactive Setup** | `hermes gateway setup` with prompts |
-| 📋 **Slash Commands** | 20 commands (`/start`, `/new`, `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`, `/retry`, `/undo`, `/title`, `/branch`, `/compress`, `/rollback`, `/background`, `/agents`, `/queue`, `/topic`) via MAX API `PATCH /me/commands` |
+- MAX platform adapter with long polling or HTTPS webhook transport.
+- Streaming replies, lossless message chunking, and chat actions.
+- Interactive callbacks and buttons; model selection, execution approval, slash confirmation, and clarify flows.
+- Media download and upload, native image/video/audio/document methods, and standalone `hermes send` integration.
+- Optional Markdown-table rendering to PNG (Playwright/Chromium, Pillow fallback).
+- User/group access policies, webhook secret validation, and callback-owner authorization.
+- Optional owner-authorized cross-platform `/sessions` and `/resume`.
+- Optional Hermes Desktop sessions sidebar with RU/EN UI localization.
+- Voice messages enter Hermes Core’s STT pipeline; transcription is configured in Core, not in this plugin.
+- `hermes gateway setup` integration and MAX slash-command registration.
 
-## Navigation
+## Documentation map
 
-- 🚀 [Quick Start](#quick-start) and [Setup Guide](docs/setup_EN.md)
-- ✨ [Plugin Features](docs/features_EN.md) and [Slash Commands](#max-slash-commands)
-- 📊 [Image Tables](#tables-as-images-in-action) (Playwright / Pillow)
-- ⚙️ [Configuration Reference](#configuration-reference) (.env variables)
-- 📖 [Project History](#project-history) — three development stages
-- 🛡️ [Security](docs/security_EN.md) and [External Claims Verification](docs/external-claims_EN.md)
-- 🔧 [Troubleshooting](docs/troubleshooting_EN.md)
-- 📡 [API Specification](docs/api_EN.md)
+For a compact document map, run `tree docs`. Read `docs/architecture.md` for component relationships; `docs/setup.md` for setup/configuration; `docs/security.md` for security boundaries; `docs/api.md` for wire/API contracts; `docs/features.md` for feature behavior; `docs/troubleshooting.md` for diagnostics; and `docs/external-claims.md` for dated external evidence. Documentation rules are in `docs/document_writing.md`.
 
-## MAX Slash Commands
+Project documents use English `name.md` with Russian `name_RU.md` counterparts. `README.md` is English and `README_RU.md` is Russian.
 
-The bot supports **20 slash commands**, registered via MAX Bot API (`PATCH /me/commands`). Analogous to Telegram `setMyCommands`.
-
-### Core Commands
-
-| Command | Description |
-|---------|-------------|
-| `/start` | Start the bot |
-| `/new` | New session (alias: `/reset`) |
-| `/status` | Session status |
-| `/model` | Select model |
-| `/resume` | Resume session |
-| `/sessions` | List sessions |
-| `/help` | Help |
-| `/stop` | Stop processes |
-| `/config` | Configuration |
-| `/restart` | Restart gateway |
-
-### Advanced Commands
-
-| Command | Description |
-|---------|-------------|
-| `/retry` | Retry last message |
-| `/undo [N]` | Undo N turns (default 1) |
-| `/title [name]` | Set session title |
-| `/branch [name]` | Branch session (alias: `/fork`) |
-| `/compress` | Compress context (alias: `/compact`) |
-| `/rollback [number]` | List or restore checkpoints |
-| `/background <prompt>` | Run in background (alias: `/bg`, `/btw`) |
-| `/agents` | Active agents and tasks (alias: `/tasks`) |
-| `/queue <prompt>` | Queue prompts (alias: `/q`) |
-| `/topic [off\|help\|session-id]` | Telegram DM topics |
-
-### MAX Limitations
-
-- Maximum **32 commands** (Telegram: 100)
-- Commands are registered automatically on plugin start
-- Registration failures are non-fatal — bot works without commands
-
-### Example
-
-```bash
-# Check registered commands via API
-curl -H "Authorization: <token>" \
-  https://platform-api2.max.ru/me/commands
-```
-
-## Tables as Images in Action
-
-**Without** `MAX_TABLE_AS_IMAGE` (text fallback):
-```
-`-------------------------`
-`| Server   | Status     |`
-`| web-01   | ✓ Done     |`
-`| db-main  | ✗ Failed   |`
-`-------------------------`
-```
-
-**With** `MAX_TABLE_AS_IMAGE=true` (PNG image, ~13KB):
-
-![Example table image](assets/table_sample.png)
-
-Each status cell gets a colored icon: ✓ green, ✗ red, ⚠ orange, ◷ amber, ▶ blue.
-
-### Use Cases
-
-| Scenario | Before | After |
-|----------|--------|-------|
-| 📊 **Monitoring dashboard** | Raw pipe text | Clean table with status icons |
-| 📋 **Task list** | Hard to read | Clear columns with priorities |
-| 🏗️ **CI/CD pipeline** | Broken layout | PNG with stages ready to share |
-| 📈 **Reports** | Collapsed columns | Well-formatted table image |
-| 👥 **Team projects** | Visual noise | Color-coded progress table |
-
-### Why images instead of native tables?
-
-**Telegram:** the classic parse modes (`parse_mode=Markdown`, `MarkdownV2`, `HTML`) do **not** support tables — `| A | B |` with `format=markdown` does not create one. Tables arrived only with Bot API 10.1 (June 11, 2026) as part of Rich Messages, via the separate `sendRichMessage` method (`RichBlockTable`).
-
-**MAX** supports tables in neither Markdown nor HTML. The official formatting list (dev.max.ru/docs-api, "Форматирование текста в сообщениях", checked 2026-09-16) covers italic, bold, strikethrough, underline, monospace, links, mentions, highlight, headings and quotes; tables and fenced blocks are not in it.
-
-We tried several approaches before settling on PNG:
-
-| Attempt | Result |
-|---------|--------|
-| `` ``` `` fenced code block | MAX doesn't support it — fences rendered as literal text |
-| `<pre>` HTML tag | Only works in HTML mode, which breaks markdown in the rest of the message |
-| inline `` `code` `` | Works as a fallback, but no borders or alignment |
-| Plain text with `\|` and `---` | Readable but looks messy without monospace |
-| **Pillow PNG** ✅ | **Full control: colors, borders, icons, fonts** |
-
-**Bottom line:** PNG images provide what MAX has no native format for — clean tables with colored status badges (Telegram needs Bot API 10.1+ and `sendRichMessage` for the same result). Bonus: images can be forwarded and don't depend on the client's markdown parser. Trade-off: cell text is not copyable.
-
-## Comparison with Upstream
-
-| | Upstream (vladimiraldushin) | This plugin |
-|---|---|---|
-| Architecture | Plugin ✅ | Plugin ✅ |
-| Long Polling | ❌ Webhook only | ✅ Both modes |
-| STT Voice | ❌ | ✅ Hermes core |
-| Streaming (edit_message) | ❌ | ✅ |
-| **Tables as Images (PNG)** | ❌ | ✅ **Unique** |
-| **Interactive Buttons** | ❌ | ✅ model picker, approval, clarify |
-| File upload | ❌ | ✅ Two-step |
-| Message chunking | ✅ | ✅ Improved |
-| Media extraction | ✅ | ✅ Extended |
-| Message dedup | ❌ | ✅ 300s window |
-| Tests | ✅ Basic | ✅ 734 tests |
-| Interactive setup | ✅ | ✅ + tables |
-
-## Quick Start
-
-### 1. Install
+## Quick start
 
 ```bash
 hermes plugins install Realmagnum/hermes-max-integration --enable
-```
-
-### 2. Get a bot token
-
-Register at https://business.max.ru/self (requires Russian legal entity / sole proprietor).
-Create a bot → pass moderation → **Чат-боты → Перейти → Расширенные настройки → Настроить** → copy token.
-
-### 3. Configure
-
-```bash
 hermes gateway setup
-# Choose: Max
 ```
 
-Or manually in `~/.hermes/.env`:
+Create a MAX bot and obtain its token using the current official [MAX documentation](https://dev.max.ru/). `hermes gateway setup` guides token and access configuration. By default, the plugin uses long polling. To use a webhook, configure `MAX_WEBHOOK_URL` and `MAX_WEBHOOK_SECRET`, expose the configured path through public HTTPS, then restart the gateway. **Before changing modes, check existing MAX subscriptions:** polling startup attempts to remove stale webhook subscriptions.
+
+See `docs/setup.md` before changing a production gateway. Never commit bot tokens or webhook secrets.
+
+## Configuration
+
+For the complete environment-variable reference, defaults, and `platforms.max` YAML keys, see `docs/setup.md`.
+
+## Slash commands
+
+The plugin registers 20 commands with MAX when possible; registration failure is non-fatal. MAX allows up to 32 commands.
+
+Core: `/start`, `/new` (`/reset`), `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`.
+
+Additional: `/retry`, `/undo [N]`, `/title [name]`, `/branch` (`/fork`), `/compress` (`/compact`), `/rollback [number]`, `/background` (`/bg`, `/btw`), `/agents` (`/tasks`), `/queue` (`/q`), `/topic`.
+
+## Optional table images
+
+Telegram Bot API 10.1+ offers tables through the separate `sendRichMessage` API; this plugin targets MAX, which has no equivalent table message format in its current API contract.
+
+Reasoning-display configuration in Hermes Core uses `streaming:
+  fresh_final_after_seconds`, but Core currently applies that option only to Telegram, not MAX. Check `docs/features.md` before using it as a workaround.
+
+Set `MAX_TABLE_AS_IMAGE=true` to render Markdown tables as PNG. Playwright/Chromium is preferred; Pillow is the fallback. Install optional dependencies in the same Python environment as the Hermes gateway. See `docs/features.md` and `docs/troubleshooting.md`.
+
+## Troubleshooting and checks
+
+See `docs/troubleshooting.md`. `scripts/diagnose.sh --send` sends a real outbound test message; use it only when the recipient is explicitly approved.
 
 ```bash
-MAX_BOT_TOKEN=your_token_here
-MAX_ALLOWED_USERS=your_max_user_id
+python scripts/check_docs_links.py
+python scripts/check-ru-en-parity.py
+python scripts/check-doc-claims.py
+python scripts/check-config-reference.py
+python -m pytest tests/ -q
 ```
 
-### 4. Enable table images (optional)
+## Project layout
 
-The recommended renderer is **HTML→PNG via Playwright/Chromium** (clean tables,
-native emoji, no cell overflow). Without a browser the plugin automatically
-falls back to classic Pillow rendering.
-
-> **Important:** install dependencies into the same Python the Hermes gateway
-> runs in (its venv), otherwise the package won't reach the plugin runtime.
-> Windows: `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
-
-```bash
-# Variant A (recommended): HTML→PNG via Playwright.
-#   Uses system Chrome/Chromium (channel="chrome") or downloads bundled:
-python -m pip install 'playwright>=1.40'
-python -m playwright install chromium          # ~115 MB, one-time; or install Chrome/Chromium manually
-
-# Idempotent helper script instead of manual commands (installs only what's missing):
-python scripts/setup-playwright.py --check-only   # diagnostics (exit 1 if anything missing)
-python scripts/setup-playwright.py                # install what's missing
-
-# Variant B (fallback): classic rendering via Pillow
-python -m pip install Pillow
-
-echo 'MAX_TABLE_AS_IMAGE=true' >> ~/.hermes/.env
+```text
+adapter.py                  MAX gateway adapter and lifecycle
+mixins/                      Webhook, media, buttons, callbacks, sessions, table rendering
+desktop/plugin.js            Hermes Desktop sessions sidebar companion
+locales/                     Plugin and desktop locale manifests
+scripts/                     Setup, release, diagnostics, and documentation checks
+tests/                       Unit, wire-contract, security, and docs tests
+docs/                        Durable project notes; Russian translations use `_RU.md`
+skills/max-gateway/          Install and operation workflow skill
+plugin.yaml                  Hermes plugin metadata
+pyproject.toml               Python package and test configuration
 ```
-
-**Auto-install (optional):** with `MAX_AUTO_INSTALL_PLAYWRIGHT=true` the plugin
-installs the package and Chromium itself on the first table render (takes 1–2
-minutes and requires network access; subsequent renders work as usual).
-
-### 5. Restart
-
-```bash
-hermes gateway restart
-```
-
-## Connection Modes
-
-The plugin supports two modes for receiving messages from MAX API. The mode is determined by a single variable — **`MAX_WEBHOOK_URL`**:
-
-| `MAX_WEBHOOK_URL` | Mode | Mechanism |
-|---|---|---|
-| Not set (empty) | **Long polling** (default) | Cyclic `GET /updates?timeout=5&marker=...` |
-| HTTPS URL set | **Webhook** | aiohttp server on port 8646, `POST /subscriptions` registration |
-
-The choice happens in `connect()` with one line: `self._use_webhook = bool(self._webhook_url)`.
-
-### Switching Long polling → Webhook
-
-```bash
-# 1. Add to ~/.hermes/.env
-MAX_WEBHOOK_URL=https://your-domain.com/max/webhook
-MAX_WEBHOOK_SECRET=my-secret
-
-# 2. Restart
-sudo systemctl restart hermes-gateway
-```
-
-On startup: `_start_webhook()` → opens `0.0.0.0:8646` → registers a subscription in MAX API → messages arrive via webhook.
-
-### Switching Webhook → Long polling
-
-```bash
-# 1. Remove or comment out MAX_WEBHOOK_URL (and MAX_WEBHOOK_SECRET)
-# MAX_WEBHOOK_URL=...
-# MAX_WEBHOOK_SECRET=...
-
-# 2. Restart
-sudo systemctl restart hermes-gateway
-```
-
-On startup: `_start_polling()` → checks `GET /subscriptions`, **automatically removes** stale webhook subscriptions (otherwise MAX would keep sending to a dead URL) → starts `_poll_loop`.
-
-### 🚨 Important
-
-If a webhook subscription was registered **manually** (via curl, not through the plugin), auto-cleanup may not find it. In that case, delete it manually:
-
-```bash
-curl -X DELETE "https://platform-api.max.ru/subscriptions?url=<URL>" \
-  -H "Authorization: $MAX_BOT_TOKEN"
-```
-
-Check active subscriptions: `GET /subscriptions` with the same token.
-
-### 💬 Reasoning display (model thinking)
-
-When using reasoning models (DeepSeek R1, Claude Opus, Gemini Thinking, etc.), the reasoning block (`💭 **Reasoning:**`) is automatically prepended to the final response.
-
-To have reasoning appear as a **fresh separate message** (rather than an edit of the last streamed draft), core exposes `streaming.fresh_final_after_seconds`:
-
-```yaml
-streaming:
-  fresh_final_after_seconds: 10
-```
-
-**Important (verified on Hermes core 0.21.3, 2026-09-16):** the key is read only from the top-level `streaming:` section (not `display.platforms.max.*`) and is applied to **Telegram only** — `gateway/run_turn.py` forces `0.0` for every other platform. It therefore does nothing for MAX: reasoning stays a prefix on the final edit. If reasoning is not visible in MAX, check your core's streaming/reasoning behaviour instead of setting this key as a "MAX fix".
-
-### 🔍 Diagnostics
-
-For a quick health check, run the diagnostics script (located in `scripts/diagnose.sh`). It auto-detects the current mode (webhook or long polling) and adapts the checks:
-
-```bash
-cd ~/.hermes/plugins/max-platform
-
-# Basic check (no test message)
-./scripts/diagnose.sh
-
-# Full check with E2E send (delivers a message to the home channel)
-./scripts/diagnose.sh --send
-```
-
-The script checks 8 items: plugin status, MAX connection, activity (polling or webhook), health/errors, subscriptions, token, E2E send, and reasoning config. Exit code: `0` — all good, `1` — issues found.
-
-## Configuration Reference
-
-| Env Variable | Required | Default | Description |
-|-------------|----------|---------|-------------|
-| `MAX_BOT_TOKEN` | ✅ | — | Bot token from Max Platform |
-| `MAX_WEBHOOK_HOST` | ❌ | `0.0.0.0` | Webhook bind host |
-| `MAX_WEBHOOK_PORT` | ❌ | `8646` | Webhook bind port |
-| `MAX_WEBHOOK_PATH` | ❌ | `/max/webhook` | Webhook URL path |
-| `MAX_WEBHOOK_SECRET` | ❌ | — | Secret for X-Max-Bot-Api-Secret |
-| `MAX_WEBHOOK_URL` | ❌ | — | Public HTTPS URL (enables webhook mode) |
-| `MAX_ALLOWED_USERS` | ❌ | — | Comma-separated user IDs |
-| `MAX_ALLOW_ALL_USERS` | ❌ | `false` | Allow all users |
-| `MAX_GROUP_ALLOWED_USERS` | ❌ | — | User IDs allowed to interact in group chats |
-| `MAX_GROUP_ALLOWED_CHATS` | ❌ | — | Chat group IDs where bot is allowed |
-| `MAX_TABLE_AS_IMAGE` | ❌ | `false` | Render tables as PNG images (HTML→PNG via Playwright, Pillow fallback) |
-| `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first table render (needs network, 1–2 min) |
-| `MAX_HOME_CHANNEL` | ❌ | — | Default cron/send_message target |
-| `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
-| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; explicit opt-in required (see below) |
-
----
-
-## 🌐 Cross-Platform Sessions
-
-**Why:** by default, Hermes core only exposes sessions within the same platform — MAX sees only MAX sessions. This makes sense for multi-tenant setups, but is inconvenient when a single user works across multiple platforms.
-
-**How it works:** the adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` without platform filtering, and formats the response.
-
-| Command | Action | Example Output |
-|---------|--------|----------------|
-| `/sessions` | Last 15 sessions across all platforms | `1. 💻 cli — Zabbix deploy...` |
-| `/sessions search <q>` | Search across all sessions | `🔍 Sessions matching "traefik"` |
-| `/resume <id>` | Switch to any session | (switches without error) |
-
-**Requirement:** for `/resume --all`, add `max` to `platforms:` in config.yaml:
-```yaml
-platforms:
-  max:
-    extra:
-      allow_admin_from:
-        - "95825064"  # your MAX user_id
-```
-
-**Disabling:** `MAX_CROSS_SESSION=false` in `.env` — reverts to core standard behavior (MAX sessions only).
-
----
-
-## 👁️ send_action — Extended Statuses
-
-`send_typing()` now delegates to `send_action()`, which supports all MAX API statuses:
-
-| Method | action | MAX API | Description |
-|--------|--------|---------|-------------|
-| `send_typing()` | `typing` | `typing_on` | Typing (default) |
-| `send_action(cid, "typing_off")` | `typing_off` | `typing_off` | Hide typing indicator |
-| `send_action(cid, "sending_photo")` | `sending_photo` | `sending_photo` | Sending photo |
-| `send_action(cid, "sending_video")` | `sending_video` | `sending_video` | Sending video |
-| `send_action(cid, "sending_audio")` | `sending_audio` | `sending_audio` | Sending audio |
-| `send_action(cid, "sending_file")` | `sending_file` | `sending_file` | Sending file |
-| `send_action(cid, "read")` | `read` | `read` | Mark as read |
-
-```python
-await adapter.send_action("chat:123", "sending_file")
-```
-
-## 🔗 Link Buttons and send_buttons()
-
-New public method `send_buttons()` — send messages with inline buttons of any type:
-
-```python
-await adapter.send_buttons(
-    chat_id="chat:123",
-    text="Choose action:",
-    buttons=[
-        {"type": "link", "text": "🌐 Open website", "url": "https://example.com"},
-        {"type": "callback", "text": "✅ Confirm", "payload": "confirm:123"},
-        {"type": "request_contact", "text": "📞 Share contact"},
-    ],
-)
-```
-
-Supported button types:
-
-| type | Parameters | Description |
-|------|------------|-------------|
-| `callback` | `text`, `payload` (+ opt. `label`) | Inline callback with payload |
-| `link` | `text`, `url` (+ opt. `label`) | Opens URL |
-| `message` | `text`, `payload` (+ opt. `label`) | Sends pre-filled message |
-| `request_contact` | `text` (+ opt. `label`) | Request contact |
-| `request_geo_location` | `text` (+ opt. `label`) | Request geolocation |
-
-Each button takes a separate row (full width). Standard MAX limit — up to 210 buttons per message (30 rows, up to 7 buttons per row for callback buttons).
-
-With 3+ buttons, they are automatically numbered (`1.`, `2.`, `3.`...) both in the message body and on the buttons themselves.
-
-Optional `label` field contains **full description text** for fallback in the message body — unlike `text` (which goes onto the button and may be truncated by MAX on mobile devices). If `label` is omitted, `text` is used.
-
-```python
-# text — short (for button), label — full (for description)
-{"type": "callback", "text": "Basic", "label": "Basic — $5/mo, 10GB", "payload": "basic"}
-```
-
-If you need multiple buttons in a single row — use `_post_interactive()` directly with prepared row structure.
-
-| Input Emoji | Rendered As | Meaning | Color |
-|------------|-------------|---------|-------|
-| ✅ | ✓ | Done | `#16a34a` |
-| ❌ | ✗ | Failed / Error | `#dc2626` |
-| ⚠️ | ⚠ | In review / Warning | `#ea580c` |
-| ⏳ / ⌛ | ◷ | Pending | `#ca8a04` |
-| ⏳ + schedule | ▶ | Scheduled | `#3b82f6` |
-| 🔴 | ● | Critical (red) | `#dc2626` |
-| 🟢 | ● | Good (green) | `#16a34a` |
-| 🟡 | ● | Mid (yellow) | `#ca8a04` |
-
-Auto-fallbacks to inline `` `code` `` text if Pillow is not installed.
-
----
-
-## 📎 Native File Delivery (standalone sender)
-
-The plugin can send files via `hermes send` without a running gateway:
-
-```bash
-# Text + file (works without core modification)
-hermes send --to max:USER_ID "📄 Report MEDIA:/path/to/report.pdf"
-
-# Multiple files
-hermes send --to max:USER_ID "📦 Files: MEDIA:/tmp/a.pdf MEDIA:/tmp/b.xlsx"
-
-# MEDIA-only (requires optional core patch — see below)
-```
-
-**How it works:**
-
-1. Core extracts `MEDIA:` paths → `media_files: List[Tuple[str, bool]]`
-2. Text is sent as a separate `POST /messages`
-3. For each file:
-    - `POST /uploads?type=file` → CDN upload URL
-    - Multipart POST to CDN → file token
-    - `POST /messages` with `attachments: [{"type": "file", "payload": {"token": token}}]`
-
-All files are sent as `type=file`. MAX officially supports only "common formats" for `file` (e.g. TXT, DOC, PDF), up to 4 GB, and a `file` may be combined only with a keyboard attachment in the same message (dev.max.ru/docs-api/methods/POST/uploads and POST /messages, checked 2026-09-16).
-
-⚠️ **MAX CDN limitation:** Extensions `.exe`, `.apk`, `.bat`, `.msi` and other potentially dangerous types are rejected by MAX (HTTP 415 — "File extension is forbidden"); an unsupported extension returns the same error. This is a platform limitation, not addressable from the plugin, and delivery of "any reasonable extension" is **not** guaranteed — stick to MAX's supported format list.
-
-For **in-session** file delivery (via gateway), use `send_image_file()`, `send_document()`, `send_voice()`, `send_video()` — these use the adapter with retry on `attachment.not.ready`.
-
-### Optional: MEDIA-only core support
-
-By default `hermes send "MEDIA:/file"` (no text) is blocked by core:
-
-```
-send_message MEDIA delivery is currently only supported for telegram, discord...
-```
-
-Fix with the optional script that adds MAX to the supported platform list in `tools/send_message_tool.py`:
-
-```bash
-python3 scripts/apply-core-fix.py       # apply
-python3 scripts/apply-core-fix.py --revert  # revert
-```
-
-⚠️ **Core-version compatibility (verified on Hermes 0.21.3, 2026-09-16).** The script looks for the markers `# --- Non-media platforms ---` and `if media_files and not message.strip()` in `tools/send_message_tool.py`. Core 0.21.3 reworked that section (it now has a `_PLUGIN_STANDALONE_MEDIA` registry), the markers are gone, and the script exits with `❌ Could not find insertion marker in core file.` — neither apply nor `--revert` takes effect. A run against a copy of core confirmed the live install is not modified, but media-only delivery is not enabled either. Check the markers against your core version before applying; if they differ, the script needs adapting (or wait for native MAX support in core).
-
-After applying:
-```bash
-hermes send --to max:USER_ID "MEDIA:/tmp/image.png"      # ✅ works
-hermes send --to max:USER_ID "text MEDIA:/file.pdf"       # ✅ already worked
-```
-
-## Troubleshooting
-
-### Bot not responding
-
-```bash
-hermes gateway status
-curl -H "Authorization: ***" https://platform-api.max.ru/me
-curl http://localhost:8646/health
-```
-
-### Tables not rendering as images
-
-```bash
-# Check config
-grep MAX_TABLE_AS_IMAGE ~/.hermes/.env
-
-# Renderer diagnostics: playwright package + Chromium present?
-python scripts/setup-playwright.py --check-only
-#   MISSING → python scripts/setup-playwright.py  (installs what's missing)
-#   or manually: python -m pip install 'playwright>=1.40'
-#                python -m playwright install chromium
-
-# Check Pillow (fallback renderer)
-pip list | grep -i pillow
-
-# Check logs
-grep -i "table\|upload\|playwright\|pillow" ~/.hermes/logs/gateway.log
-```
-
-### SSL errors with Max API
-
-The plugin never disables TLS verification. Install the trusted MAX certificate chain in the system trust store or runtime image.
-
-### Voice not transcribing
-
-STT is performed by the **Hermes core** (not the plugin). Check:
-
-```bash
-# 1. stt section in the core config (provider, language)
-grep -A4 "^stt:" ~/.hermes/config.yaml
-# 2. STT category in the interactive tools
-hermes tools
-```
-
-For Russian, set in `config.yaml`:
-
-```yaml
-stt:
-  enabled: true
-  language: ru      # core default is "en"
-  provider: local   # or openai (gpt-transcribe), groq, xai...
-```
-
-> The plugin adapter downloads and caches audio; the core transcribes it. On first use of the `local` provider the model (~150 MB) is downloaded automatically.
-
-## Project Structure
-
-```
-hermes-max-integration/
-├── plugin.yaml              # Hermes plugin metadata
-├── __init__.py              # register() entry point
-├── pyproject.toml           # Python package config
-├── adapter.py               # MaxAdapter (~2600 lines)
-├── mixins/                  # Adapter layers: buttons, sessions, webhook, media, tables
-├── scripts/                 # apply-core-fix.py, check_docs_links.py, diagnose.sh,
-│                            #   release.sh, setup-playwright.py
-├── skills/max-gateway/      # SKILL.md + SKILL_EN.md (agent skill)
-├── tests/                   # pytest: 734 tests
-├── AGENTS.md                # Instructions for AI agents
-├── after-install.md         # Post-install guide
-├── cliff.toml               # git-cliff config (EN)
-├── cliff-ru.toml            # git-cliff config (RU)
-├── README.md                # English version
-├── README_RU.md             # Russian version
-└── .github/workflows/ci.yml # CI/CD
-```
-
-**Note:** generated table PNGs are cached in `~/.hermes/table_images/`; the cache
-key includes the renderer engine (Playwright/Pillow), so switching engines never
-serves stale images.
-
-## Security
-
-| Measure | Detail |
-|---------|--------|
-| 🛡️ **SSRF Protection** | Upload URLs validated against `*.max.ru` / `*.oneme.ru` whitelist |
-| 🔐 **Token Safety** | `Authorization` header never forwarded on HTTP redirects |
-| 🔑 **Webhook Secret** | Constant-time comparison via `secrets.compare_digest` |
-| 🔊 **Voice Privacy** | Audio cache stored with `0700` permissions |
-| 🧹 **Error Sanitization** | Tokens/URLs stripped from error messages |
-| 🔍 **CI Hardening** | `bandit` SAST + `pip-audit` on every push |
-
-Full audit and fixes: commit `e87ee64`.
-
-## Project History
-
-The project evolved through three major stages:
-
-1. **Version 1.0 — Initial Implementation & Core Capabilities.**  
-   Built from scratch to bridge Hermes Agent with the MAX messenger. This version introduced voice transcription (STT), two-step file uploads, interactive callback buttons, and response streaming — features unavailable in existing implementations at the time.
-
-2. **Version 2.0 — Architectural Foundation.**  
-   To adopt modern Hermes plugin standards, the plugin was re-anchored on the architectural skeleton of [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) (subscriptions, webhooks, adapter skeleton). The unique v1.0 feature set was ported over and enhanced with early table rendering and extended access policies.
-
-3. **Current Version (v2.10+) — Deep Refactoring & Full Autonomy.**  
-   Through continuous active development, the project outgrew its initial foundation:
-   - Decomposed monolithic logic into clean, modular mixins (`mixins/`: tables, buttons, webhook, media, sessions).
-   - Added native Hermes Desktop UI integration (sessions sidebar).
-   - Built an advanced dual-engine table renderer (Playwright/Chromium with Pillow fallback).
-   - Enforced rigorous security hardening (SSRF mitigation, constant-time secret comparison, token leakage protection).
-   - Expanded test coverage to **734 tests**.
-
-**Today, no more than 25% of the codebase traces back to the borrowed v2.0 code** — primarily raw MAX API signatures. The project has evolved into a fully autonomous, production-grade integration with unique capabilities and enterprise-level reliability.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT. See `LICENSE`.
 
 ## Credits
 
-- [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) — architecture base for v2.0 (subscriptions, webhooks, plugin structure)
-- Original v1.0 development — Realmagnum (STT, table images, buttons, streaming, file upload)
-- [Hermes Agent](https://hermes-agent.nousresearch.com/docs) — the agent framework
+- [Hermes Agent](https://hermes-agent.nousresearch.com/docs) — agent framework.
+- [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) — architectural starting point for the MAX integration.

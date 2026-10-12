@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
 """Guard published version/test claims against the repository state (DOC-09).
 
-Two documentation claims are checked mechanically, because both have already
-drifted in this repo (pyproject said 2.1.4 while plugin.yaml said 2.9.0; the
-README advertised 126 and 94 tests in different tables):
+Two documentation contracts are checked mechanically:
 
-  * **Version.** ``plugin.yaml`` is the single source of truth — it is what
-    Hermes shows for the plugin and what ``scripts/release.sh`` reads. The
-    ``pyproject.toml`` version and the newest ``CHANGELOG*`` heading must
-    mirror it.
-  * **Test count.** Every ``<N> tests`` / ``<N> тестов`` claim in ``README.md``
-    and ``README_RU.md`` must equal the number of tests pytest actually
-    collects (``pytest --collect-only``), never a count typed by hand.
+  * **Version.** `plugin.yaml` is the single source of truth — it is what Hermes shows for the plugin and what `scripts/release.sh` reads. The `pyproject.toml` version and the newest `CHANGELOG.md` heading must mirror it.
+  * **Test count.** Any test-count claim in README/setup docs must match pytest's collected count.
 
 Exit code 1 with a report when a claim drifts; 0 when everything matches.
 Run from anywhere: ``python scripts/check-doc-claims.py``.
@@ -27,7 +20,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 README_FILES = ("README.md", "README_RU.md")
-CHANGELOG_FILES = ("CHANGELOG.md", "CHANGELOG_EN.md")
+CLAIM_README_FILES = ("README.md", "README_RU.md", "docs/setup.md", "docs/setup_RU.md")
+CHANGELOG_FILES = ("CHANGELOG.md",)
 
 # "<N> tests" / "<N> тестов" / "<N> теста" — the published test-count claims.
 TEST_CLAIM_RE = re.compile(r"(\d+)\s+(?:тест\w*|tests?)\b", re.IGNORECASE)
@@ -75,7 +69,7 @@ def collected_test_count() -> int:
 
 def test_claims() -> list[tuple[str, int]]:
     claims: list[tuple[str, int]] = []
-    for name in README_FILES:
+    for name in CLAIM_README_FILES:
         text = (ROOT / name).read_text(encoding="utf-8")
         claims.extend((name, int(n)) for n in TEST_CLAIM_RE.findall(text))
     return claims
@@ -100,7 +94,7 @@ def main() -> int:
     count = collected_test_count()
     claims = test_claims()
     if not claims:
-        failures.append("no `<N> tests` claims found in " + ", ".join(README_FILES))
+        failures.append("no `<N> tests` claims found in " + ", ".join(CLAIM_README_FILES))
     for src, claimed in claims:
         if claimed != count:
             failures.append(

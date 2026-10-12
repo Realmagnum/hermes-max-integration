@@ -1,87 +1,87 @@
-# Внешние и неподтверждённые утверждения — журнал проверки (DOC-10)
+# External and unconfirmed claims — verification register (DOC-10)
 
-**Дата сверки:** 2026-09-16.
-**Область:** утверждения README / README_RU / docs/setup* об АПИ и требованиях MAX, возможностях Telegram и поведении ядра Hermes.
-**Метод:** сверка с официальной документацией MAX (`dev.max.ru/docs-api`), официальной документацией Telegram Bot API (`core.telegram.org/bots/api`) и фактическим кодом ядра Hermes 0.21.3 (`~/.hermes/hermes-agent`). Сетевой доступ к API не использовался; production-токены/сообщения не задействованы.
+**Verification date:** 2026-09-16.
+**Scope:** README / README_RU / docs/setup* claims about the MAX API and platform requirements, Telegram capabilities, and Hermes core behaviour.
+**Method:** reconciled against the official MAX documentation (`dev.max.ru/docs-api`), the official Telegram Bot API documentation (`core.telegram.org/bots/api`) and the actual Hermes 0.21.3 core source (`~/.hermes/hermes-agent`). No live API calls; no production tokens or messages were used.
 
-## 1. Сводка правок
+## 1. Change summary
 
-| Утверждение в репозитории | Вердикт | Источник | Изменение |
+| Repository claim | Verdict | Source | Change |
 |---|---|---|---|
-| «Telegram поддерживает markdown-таблицы из коробки: `\| A \| B \|` с `format=markdown`» | **Неверно** | core.telegram.org/bots/api, Bot API 10.1 (11.06.2026) | Переписано: классические `parse_mode` таблиц не дают; таблицы только через Rich Messages / `sendRichMessage` |
-| «MAX поддерживает только `*italic*`, `**bold**`, `` `code` ``, ссылки, заголовки, цитаты» | **Неполно** | dev.max.ru/docs-api, «Форматирование текста в сообщениях» | Список приведён к официальному (добавлены зачёркнутый, подчёркнутый, упоминание, выделение) |
-| «CDN MAX не валидирует содержимое, что гарантирует доставку любых безопасных расширений» | **Абсолют, не подтверждён** | dev.max.ru/docs-api/methods/POST/uploads | Убрано; указаны официальные ограничения форматов и размера |
-| «Webhook требуется для production» | **Подтверждено** | dev.max.ru/docs-api, «Рекомендации по работе с API» | Оставлено, добавлена цитата и требование порта 443 |
-| «MAX использует сертификаты Минцифры РФ» | **Подтверждено частично** | dev.max.ru/docs-api, POST /subscriptions | Уточнено: TLS-сертификат доверенного УЦ **или** Минцифры; с 25.05.2026 HTTP и самоподписанные не принимаются |
-| «`display.platforms.max.fresh_final_after_seconds: 10` — решение для reasoning в MAX» | **Неверно** | код ядра 0.21.3, `gateway/run_turn.py` | Заменено на `streaming.fresh_final_after_seconds` + оговорка, что ключ действует только для Telegram |
-| `scripts/apply-core-fix.py` apply/revert | **Несовместимо с ядром 0.21.3** | прогон на копии core | Добавлена оговорка о совместимости |
+| "Telegram supports markdown tables out of the box: `\| A \| B \|` with `format=markdown`" | **False** | core.telegram.org/bots/api, Bot API 10.1 (2026-06-11) | Rewritten: classic `parse_mode` has no tables; tables only via Rich Messages / `sendRichMessage` |
+| "MAX supports only `*italic*`, `**bold**`, `` `code` ``, links, headings, quotes" | **Incomplete** | dev.max.ru/docs-api, text formatting | List aligned with the official set (strikethrough, underline, mention, highlight added) |
+| "MAX CDN does not validate content, guaranteeing delivery for any safe extension" | **Unsupported absolute** | dev.max.ru/docs-api/methods/POST/uploads | Removed; official format/size limits stated instead |
+| "Webhook required for production" | **Confirmed** | dev.max.ru/docs-api, API recommendations | Kept, with a citation and the port 443 requirement |
+| "MAX uses Russian MinCifry CA certificates" | **Partially confirmed** | dev.max.ru/docs-api, POST /subscriptions | Clarified: trusted-CA **or** MinCifry cert; as of 2026-05-25 HTTP and self-signed are rejected |
+| "`display.platforms.max.fresh_final_after_seconds: 10` fixes reasoning in MAX" | **False** | core 0.21.3, `gateway/run_turn.py` | Replaced with `streaming.fresh_final_after_seconds` + a Telegram-only caveat |
+| `scripts/apply-core-fix.py` apply/revert | **Incompatible with core 0.21.3** | run against a core copy | Compatibility warning added |
 
-## 2. MAX API — хост и авторизация
+## 2. MAX API — host and authorization
 
-- **Хост.** С **19 июля 2026** запросы нужно направлять на `https://platform-api2.max.ru` вместо `platform-api.max.ru`, а также добавить корневой сертификат Минцифры в список доверенных (dev.max.ru/docs-api/changelog-api).
-  - Константа `MAX_API_BASE` обновлена на `platform-api2.max.ru` во всех модулях плагина. Плагин поставляет бандл сертификатов Минцифры в `assets/certs/mincifry_bundle.pem` и автоматически конфигурирует SSLContext для httpx и aiohttp.
-- **Авторизация.** Передача токена через query-параметры больше не поддерживается; требуется заголовок `Authorization: <token>`. Плагин уже использует заголовок (`adapter.py:345` и далее) — соответствует.
-- **Токен.** Выдаётся при создании бота на `business.max.ru/self` (раздел «Чат-боты») либо в мини-приложении «MAX для бизнеса».
+- **Host.** Since **July 19, 2026** requests must go to `https://platform-api2.max.ru` instead of `platform-api.max.ru`, and the MinCifry root certificate must be added to the trust store (dev.max.ru/docs-api/changelog-api).
+  - The `MAX_API_BASE` constant has been updated to `platform-api2.max.ru` across all plugin modules. The plugin bundles the MinCifry CA certificates in `assets/certs/mincifry_bundle.pem` and configures SSLContext automatically for httpx and aiohttp.
+- **Authorization.** Token-in-query is no longer supported; the `Authorization: <token>` header is required. The plugin already uses the header (`adapter.py:345` et al.) — compliant.
+- **Token.** Issued when the bot is created at `business.max.ru/self` ("Чат-боты") or in the "MAX for business" mini-app.
 
-## 3. Регистрация бота (bot registration eligibility)
+## 3. Bot registration eligibility
 
-Официальные требования (dev.max.ru/help/platform_connection):
+Official requirements (dev.max.ru/help/platform_connection):
 
-- Подключение доступно только **резидентам РФ**: юридическим лицам, ИП и самозанятым.
-- **Физические лица и нерезиденты верификацию пройти не могут.**
-- Количество ботов: **2** для самозанятых, **5** для организаций/ИП.
-- Подтверждение профиля: только Госуслуги (самозанятые) либо Госуслуги / банковские сервисы (организации, ИП).
+- Access is limited to **Russian residents**: legal entities, sole proprietors (ИП) and self-employed.
+- **Individuals and non-residents cannot pass verification.**
+- Bot limits: **2** for self-employed, **5** for organizations/sole proprietors.
+- Profile confirmation: Gosuslugi only (self-employed) or Gosuslugi / banking services (organizations, sole proprietors).
 
-> Рекомендация для документации: при описании установки явно указывать, что для бота MAX нужен подтверждённый профиль резидента РФ — у части пользователей регистрация невозможна по правилам платформы.
+> Documentation recommendation: state explicitly that a MAX bot requires a verified RU-resident profile — some users cannot register under platform rules.
 
-## 4. Форматирование и лимиты
+## 4. Formatting and limits
 
-Официальный список Markdown (dev.max.ru/docs-api): курсив, жирный, зачёркнутый, подчёркнутый, моноширинный, ссылки, упоминания, выделение, заголовки, цитаты. HTML — аналогично. **Таблиц нет** ни в Markdown, ни в HTML.
+Official Markdown set (dev.max.ru/docs-api): italic, bold, strikethrough, underline, monospace, links, mentions, highlight, headings, quotes. HTML is equivalent. **No tables** in either mode.
 
-Лимиты (dev.max.ru/docs-api, POST /messages, POST /uploads):
+Limits (dev.max.ru/docs-api, POST /messages, POST /uploads):
 
-| Параметр | Значение |
+| Parameter | Value |
 |---|---|
-| Текст сообщения | до 4000 символов |
-| Сообщений в один диалог/чат/канал | не более 2 в секунду |
-| Запросов к `platform-api2.max.ru` | до 30 rps (суммарно по интеграции) |
-| Команды бота (`PATCH /me/commands`) | до 32 элементов |
-| Вложений в сообщении | до 12; `file` — только с вложением-клавиатурой, 1 файл на сообщение |
-| `image` | JPG/JPEG/PNG/GIF/TIFF/BMP/HEIC, ≤50 МБ и ≤7680×7680 |
-| `video` | MP4/MOV/MKV/WEBM, ≤250 МБ |
-| `audio` | MP3/WAV/M4A и др., ≤256 МБ и ≤60 мин |
-| `file` | «распространённые форматы» (TXT, DOC, PDF и др.), ≤4 ГБ |
+| Message text | up to 4000 characters |
+| Messages to one dialog/chat/channel | no more than 2 per second |
+| Requests to `platform-api2.max.ru` | up to 30 rps (per integration, total) |
+| Bot commands (`PATCH /me/commands`) | up to 32 items |
+| Attachments per message | up to 12; `file` only with a keyboard attachment, 1 file per message |
+| `image` | JPG/JPEG/PNG/GIF/TIFF/BMP/HEIC, ≤50 MB and ≤7680×7680 |
+| `video` | MP4/MOV/MKV/WEBM, ≤250 MB |
+| `audio` | MP3/WAV/M4A etc., ≤256 MB and ≤60 min |
+| `file` | "common formats" (TXT, DOC, PDF etc.), ≤4 GB |
 
-- Неподдерживаемый тип файла → ошибка `File extension is forbidden`. Утверждение о «гарантированной доставке любых расширений» неверно.
-- `type=photo` больше не поддерживается — только `type=image`.
-- `GET /chats` удалён с июня 2026; список чатов/каналов бота — через `POST /subscriptions`.
+- An unsupported file type returns `File extension is forbidden`; the "guaranteed delivery for any extension" claim is false.
+- `type=photo` is no longer supported — use `type=image`.
+- `GET /chats` was removed in June 2026; list the bot's chats/channels via `POST /subscriptions`.
 
-## 5. Webhook: порт, TLS, CA
+## 5. Webhook: port, TLS, CA
 
-Официальные требования (dev.max.ru/docs-api/methods/POST/subscriptions):
+Official requirements (dev.max.ru/docs-api/methods/POST/subscriptions):
 
-- Endpoint доступен **только по HTTPS на порту 443**; порт в URL не указывается. Плагин биндится на `8646` (`DEFAULT_WEBHOOK_PORT`) → наружу публикуется reverse proxy на 443 (Caddy/Traefik-примеры уже есть в `docs/setup.md`).
-- С **25 мая 2026** не поддерживаются HTTP-webhook и самоподписанные сертификаты. Сертификат должен быть от доверенного УЦ **или Минцифры**; CN/SAN должен совпадать с доменом; нужна полная цепочка сертификатов.
-- Ответ endpoint — HTTP 200 в течение 30 секунд. Повторные попытки: до 10 с ростом интервала; при отсутствии успеха 8 часов — автоотписка.
-- Заголовок `X-Max-Bot-Api-Secret` (если задан `secret`, 5–256 символов `[A-Za-z0-9_-]`).
-- **Production — только Webhook.** Long Polling ограничен по скорости и сроку хранения и, по документации, для production не подходит.
-- `MAX_INSECURE_SSL` в коде плагина не используется (см. DOC-02): отключение проверки сертификата этим флагом не работает.
+- The endpoint must be reachable over **HTTPS on port 443 only**; the port must not appear in the URL. The plugin binds to `8646` (`DEFAULT_WEBHOOK_PORT`), so a reverse proxy must publish it on 443 (Caddy/Traefik examples already exist in `docs/setup.md`).
+- Since **May 25, 2026** HTTP webhooks and self-signed certificates are unsupported. The certificate must come from a trusted CA **or** MinCifry; CN/SAN must match the domain; the full chain must be served.
+- The endpoint must return HTTP 200 within 30 seconds. Retries: up to 10 with growing intervals; no success for 8 hours → automatic unsubscribe.
+- `X-Max-Bot-Api-Secret` header (when `secret` is set, 5–256 chars `[A-Za-z0-9_-]`).
+- **Production = Webhook only.** Long Polling is rate- and retention-limited and is documented as unsuitable for production.
+- `MAX_INSECURE_SSL` is not used by the plugin code (see DOC-02): disabling certificate validation with that flag does not work.
 
-## 6. Telegram и нативные таблицы
+## 6. Telegram and native tables
 
-- Классические режимы (`Markdown`, `MarkdownV2`, `HTML`) поддерживают bold/italic/underline/strikethrough/spoiler/quote/code/links и не содержат таблиц.
-- **Bot API 10.1 (11 июня 2026)** добавил Rich Messages: классы `RichBlockTable`, `RichBlockTableCell`, метод `sendRichMessage`, поле `rich_message` у `Message`. Таблицы доступны только этим путём.
+- Classic modes (`Markdown`, `MarkdownV2`, `HTML`) support bold/italic/underline/strikethrough/spoiler/quote/code/links and contain no tables.
+- **Bot API 10.1 (June 11, 2026)** added Rich Messages: `RichBlockTable`, `RichBlockTableCell`, the `sendRichMessage` method, and the `rich_message` field on `Message`. Tables are available only through that path.
 
-## 7. Ядро Hermes 0.21.3 — проверка локально
+## 7. Hermes core 0.21.3 — local verification
 
-- **Reasoning / fresh-final.** Ключ читается только из верхнеуровневой секции `streaming:` (`gateway/config.py`, `StreamingConfig.from_dict`) и применяется **только к Telegram**: `gateway/run_turn.py:2492` принудительно задаёт `0.0` для остальных платформ. Схема `display.platforms.max.fresh_final_after_seconds` из README не работает ни по пути ключа, ни по платформе.
-- **`scripts/apply-core-fix.py`.** Скрипт ищет маркеры `# --- Non-media platforms ---` и `if media_files and not message.strip()`. В ядре 0.21.3 этих строк нет (участок переработан, появился реестр `_PLUGIN_STANDALONE_MEDIA`), поэтому apply и revert завершаются с `❌ Could not find insertion marker in core file.` Прогон на **копии** core (live-файл не изменялся, sha256 до и после совпал) подтвердил: рабочая установка не правится, медиа-доставка не включается.
-- **Лимит текста.** `MAX_MESSAGE_LENGTH = 4000` в `adapter.py` совпадает с официальным лимитом MAX (4000 символов).
+- **Reasoning / fresh-final.** The key is read only from the top-level `streaming:` section (`gateway/config.py`, `StreamingConfig.from_dict`) and applied to **Telegram only**: `gateway/run_turn.py:2492` forces `0.0` for every other platform. The README's `display.platforms.max.fresh_final_after_seconds` shape works neither by key path nor by platform.
+- **`scripts/apply-core-fix.py`.** The script looks for the markers `# --- Non-media platforms ---` and `if media_files and not message.strip()`. Core 0.21.3 has neither (the section was reworked and now has a `_PLUGIN_STANDALONE_MEDIA` registry), so apply and revert both end with `❌ Could not find insertion marker in core file.` A run against a **copy** of core (the live file was untouched; sha256 identical before and after) confirmed the live install is not modified and media-only delivery is not enabled.
+- **Text limit.** `MAX_MESSAGE_LENGTH = 4000` in `adapter.py` matches the official MAX limit (4000 characters).
 
-## 8. Follow-up (вне объёма DOC-10)
+## 8. Follow-ups (outside DOC-10)
 
-1. Адаптировать `scripts/apply-core-fix.py` под layout ядра 0.21.3 (или заменить на поддерживаемый механизм).
+1. Adapt `scripts/apply-core-fix.py` to the 0.21.3 core layout (or replace it with a supported mechanism).
 
-## 9. Проверяемость
+## 9. Verifiability
 
-Регрессионный тест `tests/test_doc_external_claims.py` фиксирует отсутствие снятых абсолютов и наличие проверенных формулировок/ссылок в README и setup-документах (RU/EN).
+The regression test `tests/test_doc_external_claims.py` pins the removal of the retracted absolutes and the presence of the verified wording/references in the README and setup docs (RU/EN).

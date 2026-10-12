@@ -1,21 +1,20 @@
 # API Reference
 
-Wire-формат MAX Bot API и то, как его обрабатывает адаптер.
+Wire format of the MAX Bot API and how the adapter handles it.
 
-Все JSON-блоки в этом файле валидны и проверяются тестом
-`tests/test_docs_api_examples.py`; там же примеры upload/send/edit/callback
-исполняются на `httpx.MockTransport` против реального кода адаптера.
+Every JSON block in this file is valid and is checked by
+`tests/test_docs_api_examples.py`; the same test runs the upload/send/edit/callback
+examples on `httpx.MockTransport` against the real adapter code.
 
-Официальная документация: https://dev.max.ru/docs-api
+Official documentation: https://dev.max.ru/docs-api
 
-> MAX сейчас рекомендует домен `platform-api2.max.ru` вместо
-> `platform-api.max.ru`. Адаптер пока использует `platform-api.max.ru`
-> (`MAX_API_BASE` в `mixins/media_upload.py` и `adapter.py`) — примеры ниже
-> соответствуют текущей реализации.
+> The current API address is `platform-api2.max.ru`. The adapter uses it via
+> `MAX_API_BASE` in `adapter.py` and `mixins/media_upload.py`; the examples below
+> match the current implementation.
 
-## Формат MAX Update
+## MAX Update Format
 
-### Личный диалог (message_created)
+### Direct dialog (message_created)
 
 ```json
 {
@@ -42,7 +41,7 @@ Wire-формат MAX Bot API и то, как его обрабатывает а
 }
 ```
 
-### Групповой чат (message_created)
+### Group chat (message_created)
 
 ```json
 {
@@ -67,24 +66,24 @@ Wire-формат MAX Bot API и то, как его обрабатывает а
 }
 ```
 
-Корневого объекта `chat` в Update нет: id чата приходит в
-`message.recipient.chat_id`. Адаптер считает сообщение групповым, если
-`recipient.chat_id` присутствует; иначе это диалог (`user:{user_id}`).
+An Update has no root `chat` object: the chat id arrives in
+`message.recipient.chat_id`. The adapter treats a message as a group message when
+`recipient.chat_id` is present; otherwise it is a dialog (`user:{user_id}`).
 
-### Поля
+### Fields
 
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `update_type` | string | Тип события: `message_created`, `message_callback`, `message_edited`, `message_removed`, `bot_added`, `bot_started`, `bot_stopped`, `bot_removed` и др. |
-| `message.sender.user_id` | int64 | ID отправителя |
-| `message.sender.is_bot` | bool | `true` для сообщений бота — адаптер их игнорирует |
-| `message.recipient.chat_id` | int64 | ID чата/канала (есть только у групповых чатов и каналов) |
-| `message.recipient.chat_type` | string | `dialog`, `chat` или `channel` |
-| `message.body.mid` | string | Уникальный ID сообщения (нужен для `edit_message` / `delete_message`) |
-| `message.body.text` | string | Текст сообщения |
-| `message.body.attachments` | array | Список вложений |
+| Field | Type | Description |
+|-------|------|-------------|
+| `update_type` | string | Event type: `message_created`, `message_callback`, `message_edited`, `message_removed`, `bot_added`, `bot_started`, `bot_stopped`, `bot_removed`, etc. |
+| `message.sender.user_id` | int64 | Sender ID |
+| `message.sender.is_bot` | bool | `true` for bot messages — the adapter ignores them |
+| `message.recipient.chat_id` | int64 | Chat/channel ID (present only for group chats and channels) |
+| `message.recipient.chat_type` | string | `dialog`, `chat` or `channel` |
+| `message.body.mid` | string | Unique message ID (needed for `edit_message` / `delete_message`) |
+| `message.body.text` | string | Message text |
+| `message.body.attachments` | array | Attachments list |
 
-### Вложения (входящие)
+### Attachments (inbound)
 
 ```json
 {
@@ -96,16 +95,16 @@ Wire-формат MAX Bot API и то, как его обрабатывает а
 }
 ```
 
-Официальные типы вложений: `image`, `video`, `audio`, `file`, `sticker`,
+Official attachment types: `image`, `video`, `audio`, `file`, `sticker`,
 `contact`, `inline_keyboard`, `share`, `location`.
 
-Входящие медиа адаптер скачивает по `payload.url` и раскладывает во внутренние
-media-типы (`image`, `audio`/`voice`, `document`) — см.
-`_extract_inbound_media` и `_attachment_kind` в `adapter.py`.
+The adapter downloads inbound media via `payload.url` and maps it to internal
+media types (`image`, `audio`/`voice`, `document`) — see `_extract_inbound_media`
+and `_attachment_kind` in `adapter.py`.
 
 ## Callback Data Format
 
-### Структура message_callback
+### message_callback structure
 
 ```json
 {
@@ -137,49 +136,49 @@ media-типы (`image`, `audio`/`voice`, `document`) — см.
 }
 ```
 
-Данные кнопки лежат в `callback.payload` (адаптер принимает и `callback.data`),
-нажавший пользователь — `callback.user.user_id`.
+Button data is in `callback.payload` (the adapter also accepts `callback.data`);
+the user who pressed it is `callback.user.user_id`.
 
-### Chat ID для callback
+### Chat ID for callbacks
 
-**ВАЖНО:** для callback chat_id находится в `message.recipient.chat_id`,
-НЕ в `chat.chat_id`.
+**IMPORTANT:** for callback updates the chat_id is in
+`message.recipient.chat_id`, NOT in `chat.chat_id`.
 
 ```python
-# Правильно
+# Correct
 chat_id = message.get("recipient", {}).get("chat_id")
 
-# Неправильно
+# Incorrect
 chat_id = chat.get("chat_id")
 ```
 
-### Префиксы callback_data (реализация адаптера)
+### callback_data prefixes (adapter implementation)
 
-`_on_callback` разбирает `callback.payload` по префиксу до первого `:`:
+`_on_callback` splits `callback.payload` on the prefix up to the first `:`:
 
-| Префикс | Формат | Назначение |
-|---------|--------|------------|
-| `exec` | `exec:{choice}:{approval_id}` | Подтверждение опасной команды (`once` / `session` / `always` / `deny`) |
-| `sc` | `sc:{choice}:{confirm_id}` | Подтверждение slash-команды (`once` / `always` / `cancel`) |
-| `clarify` | `clarify:{clarify_id}:{index}`, `clarify:{clarify_id}:other` | Выбор варианта clarify (свободный ввод для `other`) |
+| Prefix | Format | Purpose |
+|--------|--------|---------|
+| `exec` | `exec:{choice}:{approval_id}` | Dangerous-command approval (`once` / `session` / `always` / `deny`) |
+| `sc` | `sc:{choice}:{confirm_id}` | Slash-command confirmation (`once` / `always` / `cancel`) |
+| `clarify` | `clarify:{clarify_id}:{index}`, `clarify:{clarify_id}:other` | Clarify choice (free-text input for `other`) |
 | `model` | `model:provider:{slug}`, `model:pick:{model}:{provider}`, `model:page:{provider}:{page}`, `model:back` | Model picker |
 
-Неизвестный префикс логируется и игнорируется (возвращается `None`).
+An unknown prefix is logged and ignored (returns `None`).
 
 ## Upload API
 
-Загрузка медиафайла — два шага: получить URL для загрузки и залить по нему
-файл. Токен для вложения берётся из ответа шага 1 (audio/video) или из ответа
-CDN (image/file).
+Uploading a media file takes two steps: get an upload URL, then push the file to
+it. The attachment token comes from step 1 (audio/video) or from the CDN response
+(image/file).
 
-### Шаг 1: Получить URL загрузки
+### Step 1: Get the upload URL
 
 ```bash
-curl -X POST "https://platform-api.max.ru/uploads?type=image" \
+curl -X POST "https://platform-api2.max.ru/uploads?type=image" \
   -H "Authorization: {access_token}"
 ```
 
-Ответ:
+Response:
 
 ```json
 {
@@ -187,7 +186,8 @@ curl -X POST "https://platform-api.max.ru/uploads?type=image" \
 }
 ```
 
-Для `type=audio` и `type=video` в ответе сразу приходит и токен:
+For `type=audio` and `type=video` the response also contains the token right
+away:
 
 ```json
 {
@@ -196,12 +196,12 @@ curl -X POST "https://platform-api.max.ru/uploads?type=image" \
 }
 ```
 
-Допустимые значения `type`: `image`, `video`, `audio`, `file`
-(`type=photo` больше не поддерживается). Домен в `url` зависит от типа файла:
+Allowed `type` values: `image`, `video`, `audio`, `file` (`type=photo` is no
+longer supported). The host in `url` depends on the file type:
 `file` → `fu.oneme.ru`, `image` → `iu.oneme.ru`, `video` → `omub.okcdn.ru`,
 `audio` → `omu.okcdn.ru`.
 
-### Шаг 2: Загрузить файл (multipart POST)
+### Step 2: Upload the file (multipart POST)
 
 ```bash
 curl -X POST "https://iu.oneme.ru/upload.do?params=abc123" \
@@ -209,8 +209,8 @@ curl -X POST "https://iu.oneme.ru/upload.do?params=abc123" \
   -F "data=@picture.jpg"
 ```
 
-Файл передаётся multipart-формой с полем `data` — это `POST`, а не бинарный
-`PUT`. Ответ CDN для `image`/`file`:
+The file is sent as a multipart form with the `data` field — that is a `POST`,
+not a binary `PUT`. The CDN response for `image`/`file`:
 
 ```json
 {
@@ -218,10 +218,10 @@ curl -X POST "https://iu.oneme.ru/upload.do?params=abc123" \
 }
 ```
 
-### Шаг 3: Отправить сообщение с вложением
+### Step 3: Send a message with the attachment
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?chat_id=95825064" \
+curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
   -H "Authorization: {access_token}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -235,18 +235,18 @@ curl -X POST "https://platform-api.max.ru/messages?chat_id=95825064" \
   }'
 ```
 
-Пока CDN обрабатывает файл, `POST /messages` может вернуть
-`{"code": "attachment.not.ready", "message": "..."}` — адаптер повторяет
-отправку (задержки 2/4/6 с).
+While the CDN is still processing the file, `POST /messages` may return
+`{"code": "attachment.not.ready", "message": "..."}` — the adapter retries the
+send (2/4/6 s delays).
 
 ### SSRF Protection
 
-Плагин проверяет хост upload URL через `_ALLOWED_UPLOAD_HOSTS`
-(плюс суффиксы `.max.ru`, `.oneme.ru`, `.okcdn.ru`):
+The plugin checks the upload URL host against `_ALLOWED_UPLOAD_HOSTS`
+(plus the `.max.ru`, `.oneme.ru`, `.okcdn.ru` suffixes):
 
 ```python
 _ALLOWED_UPLOAD_HOSTS = {
-    "platform-api.max.ru",
+    "platform-api2.max.ru",
     "cdn.max.ru",
     "storage.max.ru",
     "upload.max.ru",
@@ -259,18 +259,18 @@ _ALLOWED_UPLOAD_HOSTS = {
 
 ### Chunking
 
-Максимальная длина сообщения: 4000 символов.
+Max message length: 4000 characters.
 
-**Алгоритм:**
-1. Разбить текст на абзацы
-2. Если абзац > 4000 символов — разбить по словам
-3. Собрать чанки ≤ 4000 символов
-4. Отправить последовательно
+**Algorithm:**
+1. Split text into paragraphs
+2. If a paragraph > 4000 chars — split by words
+3. Assemble chunks ≤ 4000 chars
+4. Send sequentially
 
-### Формат ответа
+### Response Format
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?chat_id=95825064" \
+curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
   -H "Authorization: {access_token}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -279,17 +279,17 @@ curl -X POST "https://platform-api.max.ru/messages?chat_id=95825064" \
   }'
 ```
 
-**Форматы:**
-- `markdown` — Markdown (по умолчанию)
+**Formats:**
+- `markdown` — Markdown (default)
 - `html` — HTML
 
-### Edit Message (Стриминг)
+### Edit Message (Streaming)
 
-Правка идёт через `PUT /messages` с query-параметром `message_id` (не
-`chat_id` и не `mid` в теле):
+Editing goes through `PUT /messages` with the `message_id` query parameter (not
+`chat_id`, and not `mid` in the body):
 
 ```bash
-curl -X PUT "https://platform-api.max.ru/messages?message_id=mid-abc123" \
+curl -X PUT "https://platform-api2.max.ru/messages?message_id=mid-abc123" \
   -H "Authorization: {access_token}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -301,33 +301,33 @@ curl -X PUT "https://platform-api.max.ru/messages?message_id=mid-abc123" \
 ### Delete Message
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/messages?message_id=mid-abc123" \
+curl -X DELETE "https://platform-api2.max.ru/messages?message_id=mid-abc123" \
   -H "Authorization: {access_token}"
 ```
 
 ## Commands API
 
-### Регистрация команд
+### Register Commands
 
-Плагин автоматически регистрирует 20 команд через `PATCH /me/commands` при
-старте.
+The plugin automatically registers 20 commands via `PATCH /me/commands` on
+startup.
 
-**Проверить зарегистрированные команды:**
+**Check registered commands:**
 
 ```bash
 curl -H "Authorization: {access_token}" \
-  https://platform-api.max.ru/me/commands
+  https://platform-api2.max.ru/me/commands
 ```
 
-### Ограничения
+### Limitations
 
-- Максимум **32 команды** (Telegram: 100)
-- Ошибки регистрации не критичны — бот работает без команд
+- Maximum **32 commands** (Telegram: 100)
+- Registration errors are not critical — the bot works without commands
 
-## Исполняемые примеры (mocked)
+## Executable examples (mocked)
 
-Примеры ниже запускаются в `tests/test_docs_api_examples.py` на
-`httpx.MockTransport`: код адаптера настоящий, сеть замокана.
+The examples below run in `tests/test_docs_api_examples.py` on
+`httpx.MockTransport`: the adapter code is real, the network is mocked.
 
 ```python
 import httpx
@@ -352,6 +352,6 @@ async def handler(request):
     return httpx.Response(200, json={"message": {"body": {"mid": "mid-1"}}})
 ```
 
-Результат `edit_message` проверяется по query-параметру `message_id`, а
-callback — по фикстуре `message_callback` из этого файла, поданной в
+`edit_message` is asserted through the `message_id` query parameter, and the
+callback example feeds the `message_callback` fixture from this file into
 `adapter._on_callback`.

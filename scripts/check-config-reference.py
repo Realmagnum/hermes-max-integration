@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Check that the config reference matches what the plugin actually reads.
+"""Check that the config reference matches the plugin source.
 
-Scope (DOC-02): the environment-variable tables of
+Scope (DOC-02): the configuration-reference tables in
 
-  * README_RU.md    README.md
-  * docs/setup.md    docs/setup_EN.md
+  * docs/setup.md    docs/setup_RU.md
+
+README files are concise overviews and link to these canonical references.
 
 Verified per run:
 
@@ -32,8 +33,8 @@ import re
 import sys
 from pathlib import Path
 
-CONFIG_DOCS = ["README_RU.md", "README.md", "docs/setup.md", "docs/setup_EN.md"]
-CORE_CONFIG_DOCS = ["docs/setup.md", "docs/setup_EN.md"]
+CONFIG_DOCS = ["docs/setup.md", "docs/setup_RU.md"]
+CORE_CONFIG_DOCS = ["docs/setup.md", "docs/setup_RU.md"]
 
 # Keys consumed by typed ``PlatformConfig`` fields (gateway/config.py::_TYPED_KEYS).
 # Everything else in a platform block is promoted into ``extra`` and read by the adapter.
@@ -45,7 +46,7 @@ CORE_TYPED_KEYS = frozenset({
 
 ENV_TOKEN = re.compile(r"\bMAX_[A-Z0-9_]+\b")
 TABLE_ROW = re.compile(r"^\s*\|")
-ENV_TABLE_HEADER = re.compile(r"^\s*\|\s*(Переменная|Variable|Env Variable)\b")
+ENV_TABLE_HEADER = re.compile(r"^\s*\|\s*(Variable|Переменная|Env Variable)\b")
 CONST_TABLE_HEADER = re.compile(r"^\s*\|\s*(Константа|Constant)\b")
 CORE_TABLE_HEADER = re.compile(r"^\s*\|\s*(?:Ключ в блоке|Key in the)\b")
 EXTRA_GET = re.compile(r'extra\.get\("([A-Za-z0-9_]+)"')
@@ -241,11 +242,11 @@ def main() -> int:
             problems.append(f"internal constant value for {label} ({literal!r}) not found in source")
 
     # 5. RU/EN parity (env tables) and constants table coverage
-    ru = set(documented.get("README_RU.md", {})) | set(documented.get("docs/setup.md", {}))
-    en = set(documented.get("README.md", {})) | set(documented.get("docs/setup_EN.md", {}))
+    en = set(documented.get("docs/setup.md", {}))
+    ru = set(documented.get("docs/setup_RU.md", {}))
     if ru != en:
         problems.append(f"RU/EN mismatch: only RU {sorted(ru - en)}; only EN {sorted(en - ru)}")
-    for rel in ("docs/setup.md", "docs/setup_EN.md"):
+    for rel in ("docs/setup.md", "docs/setup_RU.md"):
         if not has_constants_table(root, rel):
             problems.append(f"{rel}: no internal-constants table found")
 
@@ -271,8 +272,8 @@ def main() -> int:
     for key in sorted(set(extra_keys) - core_documented):
         problems.append(f"adapter reads extra[{key!r}] but it is missing from the platforms.max table ({extra_keys[key]})")
 
-    ru_core = set(core_docs.get("docs/setup.md", {}))
-    en_core = set(core_docs.get("docs/setup_EN.md", {}))
+    en_core = set(core_docs.get("docs/setup.md", {}))
+    ru_core = set(core_docs.get("docs/setup_RU.md", {}))
     if ru_core != en_core:
         problems.append(f"core config RU/EN mismatch: only RU {sorted(ru_core - en_core)}; only EN {sorted(en_core - ru_core)}")
 
@@ -280,7 +281,7 @@ def main() -> int:
     for name in sorted(all_documented):
         where = code.get(name, [])
         print(f"  {name:<28} {where[0] if where else '??'}")
-    constants_doc = sorted(set(constants.get("docs/setup.md", {})) | set(constants.get("docs/setup_EN.md", {})))
+    constants_doc = sorted(set(constants.get("docs/setup.md", {})) | set(constants.get("docs/setup_RU.md", {})))
     print(f"internal constants documented: {', '.join(constants_doc)}")
     print(f"platforms.max keys documented: {', '.join(sorted(core_documented))}")
     if problems:

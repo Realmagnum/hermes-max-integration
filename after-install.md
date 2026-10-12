@@ -1,95 +1,12 @@
-# Плагин Max установлен
+# Max plugin installed
 
-Что делать дальше:
+## Next steps
 
-1. **Установите зависимости времени выполнения:**
-   ```bash
-   pip install aiohttp httpx
-   ```
+1. Install runtime dependencies into the same Python environment used by Hermes Gateway. Use the current `pyproject.toml` and Hermes installation instructions; do not assume the host `pip` targets the gateway environment.
+2. Run `hermes gateway setup` and configure the MAX platform. Store `MAX_BOT_TOKEN` in the protected Hermes `.env` or secret manager; never paste secret values into shell arguments, docs, logs, or chat.
+3. Voice transcription is performed by Hermes Core. Configure STT in the Core settings; this plugin only delivers/caches audio for Core.
+4. Choose the delivery mode. Polling is the default. Webhook requires public HTTPS, the configured URL, and a matching secret. Before switching, inspect existing MAX subscriptions because startup in polling mode may remove them.
+5. Restarting the gateway or modifying subscriptions has external effects; obtain approval before doing so.
+6. Verify with `hermes gateway status` and the local health endpoint. `scripts/diagnose.sh --send` sends a real message and requires an approved recipient.
 
-   **Таблицы-картинки (опционально):** HTML→PNG рендер через Playwright/Chromium.
-   Ставьте в тот же Python, где работает шлюз Hermes (venv), иначе пакет не
-   попадёт в рантайм плагина. Windows: `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
-   ```bash
-   python -m pip install 'playwright>=1.40'
-   python -m playwright install chromium    # ~115 МБ, один раз
-   ```
-   Либо включите авто-установку (плагин сам поставит пакет и браузер при первом
-   рендере таблицы): добавьте `MAX_AUTO_INSTALL_PLAYWRIGHT=true` в `~/.hermes/.env`.
-
-2. **Настройте платформу:**
-   ```bash
-   hermes gateway setup
-   ```
-   Выберите **Max**, вставьте `MAX_BOT_TOKEN`, укажите host/port/path вебхука и секрет (обязателен для вебхука).
-
-3. **Голосовые сообщения:** транскрипция выполняется ядром Hermes (≥ 0.20.0) — плагин только скачивает и кэширует аудио. Для русского языка задайте в `config.yaml`:
-   ```yaml
-   stt:
-     enabled: true
-     language: ru   # дефолт ядра — "en"
-     provider: local
-   ```
-
-4. **Выберите режим подключения:**
-
-   **Long polling (проще, без HTTPS):**
-   - Просто установите `MAX_BOT_TOKEN` и перезапустите. Адаптер автоматически использует long-polling.
-   - Публичный URL не нужен. Подходит для разработки.
-
-   **Webhook (продакшен) — требуется reverse proxy:**
-   - MAX API стучится **только на порт 443** по HTTPS.
-   - Вам нужен reverse proxy (Caddy, Nginx, Traefik, Cloudflare Tunnel), который терминирует TLS и проксирует на `127.0.0.1:8646`.
-   - Пример для **Caddy** (`Caddyfile`):
-     ```caddyfile
-     max.example.com {
-         reverse_proxy 127.0.0.1:8646
-     }
-     ```
-   - Пример для **Cloudflare Tunnel** (без своего сервера):
-     ```bash
-     # туннелирование вебхука (Cloudflare Tunnel):
-     tunnel-service --url http://localhost:8646
-     ```
-   - В `.env` пропишите публичный URL и секрет:
-     ```bash
-     MAX_WEBHOOK_URL=https://max.example.com/max/webhook
-     MAX_WEBHOOK_SECRET=my-secret-abc123
-     MAX_WEBHOOK_HOST=0.0.0.0
-     MAX_WEBHOOK_PORT=8646
-     MAX_WEBHOOK_PATH=/max/webhook
-     ```
-     `MAX_WEBHOOK_SECRET` обязателен: без него gateway отказывается запускать
-     webhook-режим (fail-closed). Для локальной отладки без секрета используйте
-     long polling либо `MAX_WEBHOOK_INSECURE_DEV=true` вместе с
-     `MAX_WEBHOOK_HOST=127.0.0.1`.
-   - Зарегистрируйте подписку в MAX API (адаптер делает это автоматически при старте, но можно и вручную):
-     ```bash
-     curl -X POST "https://platform-api.max.ru/subscriptions" \
-       -H "Authorization: ***" \
-       -H "Content-Type: application/json" \
-       -d '{"url":"https://max.example.com/max/webhook","update_types":["message_created","message_callback","bot_started"],"secret":"my-secret-abc123"}'
-     ```
-
-5. **Перезапустите шлюз Hermes:**
-   ```bash
-   hermes gateway restart
-   ```
-
-6. **Проверьте:**
-   ```bash
-   hermes gateway status
-   curl http://localhost:8646/health
-   # Ожидается: {"status":"ok"} — сервер вебхука жив
-   curl -i http://localhost:8646/ready
-   # Ожидается: 200 {"status":"ready"} — MAX реально шлёт апдейты сюда
-   # 503 not_ready = сервер жив, но подписка не зарегистрирована
-   ```
-
-## Официальная документация MAX
-
-Проверено 2026-06-22:
-- https://dev.max.ru/docs/chatbots/bots-create
-- https://dev.max.ru/docs/chatbots/bots-coding/prepare
-- https://dev.max.ru/docs-api/methods/POST/subscriptions
-- https://dev.max.ru/docs-api/methods/POST/messages
+See `docs/setup.md`, `docs/security.md`, and `docs/troubleshooting.md` for current details. Official MAX references and last-checked dates are tracked in `docs/external-claims.md`.

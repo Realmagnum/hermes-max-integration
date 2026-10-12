@@ -35,7 +35,7 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 ENV_FILE="$HERMES_HOME/.env"
 CONFIG_FILE="$HERMES_HOME/config.yaml"
 GATEWAY_LOG="$HERMES_HOME/logs/gateway.log"
-MAX_API="https://platform-api.max.ru"
+MAX_API="https://platform-api2.max.ru"
 
 # Parse KEY=VALUE from .env (skip comments, non-var lines)
 if [ -f "$ENV_FILE" ]; then

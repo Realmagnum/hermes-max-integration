@@ -1,37 +1,37 @@
-# Возможности
+# Features
 
 ## STT (Voice Transcription)
 
-### Как работает
+### How it works
 
-Голосовые сообщения от MAX приходят как аудиовложения с `payload.url` для прямой загрузки. Адаптер автоматически:
+Voice messages from MAX come as audio attachments with `payload.url` for direct download. The adapter automatically:
 
-1. Загружает аудиофайл в `$HERMES_HOME/cache/audio/` (`~/.hermes/cache/audio/`)
-2. Передаёт аудиофайл ядру Hermes
-3. Ядро транскрибирует аудио (Core STT) и добавляет текст к сообщению
+1. Downloads audio file to `$HERMES_HOME/cache/audio/` (`~/.hermes/cache/audio/`)
+2. Forwards audio file to Hermes Core
+3. Core transcribes audio (Core STT) and appends text to message
 
-### Настройка
+### Setup
 
-Транскрипция выполняется **ядром Hermes** (≥ 0.20.0). Настройка выполняется в `config.yaml` ядра:
+Transcription is performed by **Hermes Core** (≥ 0.20.0). Configuration lives in the core `config.yaml`:
 
 ```yaml
 stt:
   enabled: true
-  language: ru      # дефолт ядра — "en"
-  provider: local   # или openai, groq, mistral, xai, elevenlabs
+  language: ru      # core default is "en"
+  provider: local   # or openai, groq, mistral, xai, elevenlabs
 ```
 
-Для интерактивной настройки используйте `hermes tools` (категория 🎙️ Speech-to-Text).
+For interactive setup, use `hermes tools` (🎙️ Speech-to-Text category).
 
-### Параметры
+### Parameters
 
-| Параметр | По умолчанию | Описание |
-|----------|--------------|----------|
-| `enabled` | `false` | Включить транскрипцию голоса в ядре |
-| `language` | `en` | Язык транскрипции (`ru` для распознавания русской речи) |
-| `provider` | `local` | Провайдер STT (`local`, `openai`, `groq`, `mistral`, `xai`, `elevenlabs`) |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `false` | Enable voice transcription in core |
+| `language` | `en` | Transcription language (`ru` for Russian speech) |
+| `provider` | `local` | STT provider (`local`, `openai`, `groq`, `mistral`, `xai`, `elevenlabs`) |
 
-### Проверка конфигурации
+### Configuration Check
 
 ```bash
 grep -A8 "^stt:" ~/.hermes/config.yaml
@@ -39,81 +39,81 @@ grep -A8 "^stt:" ~/.hermes/config.yaml
 
 ### Troubleshooting
 
-**STT возвращает пустоту:**
-- Проверить настройки в `config.yaml`: `enabled: true`, `language: ru`
-- Убедиться, что аудиофайл загружен адаптером: `ls -la ~/.hermes/cache/audio/`
+**STT returns empty:**
+- Check settings in `config.yaml`: `enabled: true`, `language: ru`
+- Verify audio file downloaded by adapter: `ls -la ~/.hermes/cache/audio/`
 
-**Локальный провайдер faster-whisper:**
-- Для `provider: local` установить пакет в окружение ядра: `pip install faster-whisper`
-- Ошибки транскрипции в логах ядра: `grep -i "transcri" ~/.hermes/logs/gateway.log`
+**Local provider faster-whisper:**
+- For `provider: local` install package into core environment: `pip install faster-whisper`
+- Core transcription errors in logs: `grep -i "transcri" ~/.hermes/logs/gateway.log`
 
-## Таблицы-картинки
+## Table Images
 
-### Как работает
+### How it works
 
-Markdown-таблицы (`| A | B |\n|---|---|`) рендерятся как PNG-изображения.
-Основной рендер — **HTML→PNG через Playwright/Chromium** (фиксированная
-раскладка, нативные эмодзи, без переполнения ячеек); если пакет или браузер
-недоступны — автоматический фоллбэк на классическую отрисовку через Pillow.
+Markdown tables (`| A | B |\n|---|---|`) rendered as PNG images.
+Primary renderer is **HTML→PNG via Playwright/Chromium** (fixed layout, native
+emoji, no cell overflow); if the package or browser is unavailable it falls back
+to classic Pillow rendering.
 
-**Алгоритм рендера (v6):**
+**Render algorithm (v6):**
 
-1. **Playwright (HTML→PNG):** таблица → HTML → скриншот через Chromium
-   (системный Chrome при наличии, иначе bundled)
-2. **Pillow (фоллбэк):** парсинг markdown-сегментов (`**bold**`, `*italic*`,
-   `` `code` ``), измерение ширины ячеек через `draw.textlength()`, soft-wrap
-   с учётом стилей, отрисовка с цветными иконками статусов
-3. Кэш PNG: ключ включает текст таблицы **и** движок рендера — при
-   переключении движка старые картинки не подставляются
+1. **Playwright (HTML→PNG):** table → HTML → screenshot via Chromium
+   (system Chrome when available, bundled otherwise)
+2. **Pillow (fallback):** parse markdown segments (`**bold**`, `*italic*`,
+   `` `code` ``), measure each cell via `draw.textlength()`, soft-wrap with
+   styles, draw with colored status icons
+3. PNG cache: the key includes the table text **and** the renderer engine —
+   switching engines never serves stale images
 
-### Параметры
+### Parameters
 
-| Параметр | Значение | Описание |
-|----------|----------|----------|
-| `MAX_TABLE_AS_IMAGE` | `false` | Включить рендер в PNG |
-| `MAX_AUTO_INSTALL_PLAYWRIGHT` | `false` | Авто-установка Playwright + Chromium при первом рендере |
-| `MAX_CELL_WIDTH` | `300px` | Максимальная ширина ячейки |
-| `MAX_TABLE_WIDTH` | `1200px` | Максимальная ширина таблицы |
-| `CELL_PAD_X` | `22px` | Отступ по горизонтали |
-| `CELL_PAD_Y` | `14px` | Отступ по вертикали |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `MAX_TABLE_AS_IMAGE` | `false` | Enable PNG render |
+| `MAX_AUTO_INSTALL_PLAYWRIGHT` | `false` | Auto-install Playwright + Chromium on first render |
+| `MAX_CELL_WIDTH` | `300px` | Max cell width |
+| `MAX_TABLE_WIDTH` | `1200px` | Max table width |
+| `CELL_PAD_X` | `22px` | Horizontal padding |
+| `CELL_PAD_Y` | `14px` | Vertical padding |
 
-### Иконки статусов
+### Status Icons
 
-| Эмодзи | Unicode | Цвет | Значение |
-|--------|---------|------|----------|
-| ✅ | ✓ | `#16a34a` | Готово / Done |
-| ❌ | ✗ | `#dc2626` | Ошибка / Failed |
-| ⚠️ | ⚠ | `#ea580c` | Предупреждение |
-| ⏳ | ◷ | `#ca8a04` | Ожидание |
-| ▶ | ▶ | `#2563eb` | В процессе |
+| Emoji | Unicode | Color | Meaning |
+|-------|---------|-------|---------|
+| ✅ | ✓ | `#16a34a` | Done |
+| ❌ | ✗ | `#dc2626` | Failed |
+| ⚠️ | ⚠ | `#ea580c` | Warning |
+| ⏳ | ◷ | `#ca8a04` | Pending |
+| ▶ | ▶ | `#2563eb` | In progress |
 
 ### Troubleshooting
 
-**Pillow/Playwright не установлены:**
+**Pillow/Playwright not installed:**
 ```bash
-python scripts/setup-playwright.py          # ставит playwright + Chromium
-python -m pip install Pillow                # фоллбэк-рендер
+python scripts/setup-playwright.py          # installs playwright + Chromium
+python -m pip install Pillow                # fallback renderer
 ```
 
-**Текст обрезается:**
-- Увеличить `MAX_CELL_WIDTH`
-- Проверить шрифты: `fc-list | grep -i dejavu`
+**Text truncated:**
+- Increase `MAX_CELL_WIDTH`
+- Check fonts: `fc-list | grep -i dejavu`
 
-**Кривая отрисовка:**
-- Убедиться что используется `draw.textlength()` (не `wcswidth * 0.6`)
-- Добавить 5px буфер к ширине
+**Bad rendering:**
+- Ensure `draw.textlength()` is used (not `wcswidth * 0.6`)
+- Add 5px buffer to width
 
-## Стриминг
+## Streaming
 
-### Как работает
+### How it works
 
-Адаптер использует `edit_message` через `PUT /messages` для вывода токенов в реальном времени.
+Adapter uses `edit_message` via `PUT /messages` for real-time token output.
 
 ### Reasoning Display
 
-При использовании reasoning-моделей (DeepSeek R1, Claude Opus, Gemini Thinking) блок с рассуждениями добавляется к финальному ответу.
+When using reasoning models (DeepSeek R1, Claude Opus, Gemini Thinking), reasoning block added to final response.
 
-**Отображение reasoning:**
+**Reasoning display:**
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -121,45 +121,45 @@ streaming:
   fresh_final_after_seconds: 10
 ```
 
-> **Примечание:** Ключ `streaming.fresh_final_after_seconds` читается ядром из секции `streaming:` (не `display.platforms.max.*`) и действует только для Telegram. В MAX рассуждения модели передаются в рамках финального редактирования сообщения.
+> **Note:** The `streaming.fresh_final_after_seconds` key is read by the core from the `streaming:` section (not `display.platforms.max.*`) and applies only to Telegram. In MAX, reasoning is sent as part of the final message edit.
 
 ### Troubleshooting
 
-**Reasoning не отображается:**
-- Проверить модель (fast модели не генерируют reasoning)
-- Проверить журнал шлюза на наличие ошибок стриминга
+**Reasoning not displayed:**
+- Check model (fast models don't generate reasoning)
+- Check gateway logs for streaming errors
 
-## Кнопки
+## Buttons
 
 ### send_buttons()
 
-Публичный метод для отправки сообщений с inline-кнопками:
+Public method for sending messages with inline buttons:
 
 ```python
 await adapter.send_buttons(
     chat_id="chat:123",
-    text="Выберите действие:",
+    text="Choose action:",
     buttons=[
-        {"type": "link", "text": "🌐 Сайт", "url": "https://example.com"},
-        {"type": "callback", "text": "✅ Подтвердить", "payload": "confirm:123"},
-        {"type": "request_contact", "text": "📞 Контакт"},
+        {"type": "link", "text": "🌐 Site", "url": "https://example.com"},
+        {"type": "callback", "text": "✅ Confirm", "payload": "confirm:123"},
+        {"type": "request_contact", "text": "📞 Contact"},
     ],
 )
 ```
 
-### Типы кнопок
+### Button Types
 
-| type | Параметры | Описание |
-|------|-----------|----------|
+| type | Parameters | Description |
+|------|------------|-------------|
 | `callback` | `text`, `payload` | Inline callback |
-| `link` | `text`, `url` | Открыть URL |
-| `message` | `text`, `payload` | Предзаполненное сообщение |
-| `request_contact` | `text` | Запрос контакта |
-| `request_geo_location` | `text` | Запрос геолокации |
+| `link` | `text`, `url` | Open URL |
+| `message` | `text`, `payload` | Pre-filled message |
+| `request_contact` | `text` | Request contact |
+| `request_geo_location` | `text` | Request location |
 
 ### Model Picker
 
-Интерактивный выбор модели с пагинацией (15 на страницу).
+Interactive model selection with pagination (15 per page).
 
 **Callback format:** `model:pick:{model}:{provider}`
 
@@ -167,42 +167,43 @@ await adapter.send_buttons(
 
 ### Confirm/Clarify
 
-Публичного метода `adapter.clarify()` нет. Ядро вызывает адаптер через
-`send_clarify`, а ответ пользователя приходит callback'ом с префиксом
+There is no public `adapter.clarify()` method. The core calls the adapter through
+`send_clarify`, and the user's answer arrives as a callback with the prefix
 `clarify:{clarify_id}:{index|other}`.
 
-**Отправка вопроса:**
+**Sending the question:**
 
 ```python
 result = await adapter.send_clarify(
     chat_id="chat:123",
-    question="Какой сервер выбрать?",
-    choices=["web-01", "db-main"],   # None → вопрос уходит обычным текстом
+    question="Which server?",
+    choices=["web-01", "db-main"],   # None → the question is sent as plain text
     clarify_id="clr-42",
     session_key="telegram:42",
 )
 ```
 
-**Ответ (callback):** `clarify:clr-42:0`, `clarify:clr-42:1`, …,
-`clarify:clr-42:other` (последний переводит сессию в режим ожидания
-свободного текста). Обработчик — `_handle_clarify_callback`.
-Подтверждение опасных команд — отдельный префикс `exec`, подтверждение
-slash-команд — `sc` (полная таблица в `docs/api.md`).
+**Answer (callback):** `clarify:clr-42:0`, `clarify:clr-42:1`, …,
+`clarify:clr-42:other` (the last one puts the session into free-text input
+mode). Handler — `_handle_clarify_callback`. Dangerous-command approval is a
+separate `exec` prefix, slash-command confirmation is `sc` (full table in
+`docs/api.md`).
 
-## Загрузка файлов
+## File Upload
 
-### Двухшаговая загрузка
+### Two-step Upload
 
-1. `POST /uploads?type=image` → получить upload URL (поле `url`) и, для
-   audio/video, сразу `token`
-2. `POST <url>` multipart-формой с полем `data` → получить `token`
-   (для image/file)
-3. `POST /messages` с `attachments: [{type: "image", payload: {token: "..."}}]`
+1. `POST /uploads?type=image` → get the upload URL (`url` field) and, for
+   audio/video, the `token` right away
+2. `POST <url>` as a multipart form with the `data` field → get the `token`
+   (for image/file)
+3. `POST /messages` with `attachments: [{type: "image", payload: {token: "..."}}]`
 
 ### SSRF Allowlist
 
 ```python
 _ALLOWED_UPLOAD_HOSTS = {
+    "platform-api2.max.ru",
     "platform-api.max.ru",
     "cdn.max.ru",
     "storage.max.ru",
@@ -212,36 +213,37 @@ _ALLOWED_UPLOAD_HOSTS = {
 }
 ```
 
-### Методы отправки
+### Send Methods
 
-`_upload_send(chat_id, path, type, ...)` передаёт в MAX attachment-тип, а не
-имя метода: `send_voice()` шлёт `type=audio`, `send_document()` — `type=file`.
+`_upload_send(chat_id, path, type, ...)` passes a MAX attachment type, not the
+method name: `send_voice()` sends `type=audio`, `send_document()` sends
+`type=file`.
 
-| Метод | Attachment `type` | Описание |
-|-------|-------------------|----------|
-| `send_voice()` | `audio` | Голосовое сообщение |
-| `send_video()` | `video` | Видеосообщение |
-| `send_document()` | `file` | Документ |
-| `send_image_file()` | `image` | Изображение из файла (через CDN) |
-| `send_image()` | `image` (`payload.url`) | Изображение по внешнему URL, без загрузки |
-| `send_multiple_images()` | `image` | Несколько изображений одним сообщением |
-| `send_animation()` | `image` | GIF (в MAX отправляется как изображение) |
+| Method | Attachment `type` | Description |
+|--------|-------------------|-------------|
+| `send_voice()` | `audio` | Voice message |
+| `send_video()` | `video` | Video message |
+| `send_document()` | `file` | Document |
+| `send_image_file()` | `image` | Image from a file (via CDN) |
+| `send_image()` | `image` (`payload.url`) | Image by external URL, no upload |
+| `send_multiple_images()` | `image` | Several images in one message |
+| `send_animation()` | `image` | GIF (MAX sends it as an image) |
 
-## Кросс-платформенные сессии
+## Cross-Platform Sessions
 
-### Как работает
+### How it works
 
-Адаптер перехватывает `/sessions` и `/resume` до ядра, запрашивает `SessionDB` без фильтра платформы.
+Adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` without platform filter.
 
-### Команды
+### Commands
 
-| Команда | Действие |
-|---------|----------|
-| `/sessions` | Последние 15 сессий со всех платформ |
-| `/sessions search <q>` | Поиск по всем сессиям |
-| `/resume <id>` | Переключиться на любую сессию |
+| Command | Action |
+|---------|--------|
+| `/sessions` | Last 15 sessions from all platforms |
+| `/sessions search <q>` | Search all sessions |
+| `/resume <id>` | Switch to any session |
 
-### Настройка
+### Setup
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -249,38 +251,38 @@ platforms:
   max:
     extra:
       cross_session_users:
-        - "95825064"  # ваш MAX user_id
+        - "95825064"  # your MAX user_id
 ```
 
-Переменная окружения: `MAX_CROSS_SESSION_USERS="95825064"`.
-Включение/отключение: `MAX_CROSS_SESSION=false` в `.env` (по умолчанию: `false`).
+Environment variable: `MAX_CROSS_SESSION_USERS="95825064"`.
+Enable/disable: `MAX_CROSS_SESSION=false` in `.env` (default: `false`).
 
-## Standalone отправитель
+## Standalone Sender
 
-`_standalone_send()` — отправка сообщений из cron/send_message без модификации ядра.
+`_standalone_send()` — send messages from cron/send_message without core modification.
 
 ```bash
-hermes send "текст MEDIA:/file"
+hermes send "text MEDIA:/file"
 ```
 
-Работает через `_standalone_send` с нативной доставкой файлов.
+Works via `_standalone_send` with native file delivery.
 
-## Сайдбар сессий Desktop UI
+## Desktop UI Sessions Sidebar
 
-### Как работает
+### How it works
 
-Плагин содержит нативный компонент интерфейса для Hermes Desktop — `desktop/plugin.js` (ID: `max-sessions-sidebar`).
-При включении плагина он автоматически отображается в левой боковой панели Hermes Desktop.
+The plugin includes a native UI component for Hermes Desktop — `desktop/plugin.js` (ID: `max-sessions-sidebar`).
+When the plugin is enabled, it automatically integrates into the left sidebar of Hermes Desktop.
 
-### Возможности сайдбара
+### Sidebar Features
 
-1. **Список активных диалогов MAX:** вывод пользователей и групп, с которыми велась переписка через MAX Bot API.
-2. **Метрики сессий:** отображение количества сообщений в диалоге и объема потребленных токенов.
-3. **Форматирование времени:** использование локализованных утилит времени Hermes (`fmtDateTime`, `fmtDayTime`, `relativeTime`).
-4. **Стилевая интеграция:** адаптация под активную тему оформления Hermes (CSS-переменные темы, нативные классы бейджей и карточек).
+1. **Active MAX Dialogs List:** shows users and groups communicated with via MAX Bot API.
+2. **Session Metrics:** displays message counts and total token consumption for each conversation.
+3. **Time Formatting:** leverages localized Hermes time formatters (`fmtDateTime`, `fmtDayTime`, `relativeTime`).
+4. **Theme Integration:** seamlessly inherits the active Hermes theme variables, badges, and card styling.
 
-### Автоматическая установка (Unified Package)
+### Automatic Installation (Unified Package)
 
-Десктоп-виджет не требует отдельной установки или настройки пользователем:
-- Механизм Unified Package ядра Hermes автоматически считывает `desktop/plugin.js` из состава плагина и разворачивает его в каталоге виджетов рабочего стола.
-- При обновлении плагина виджет обновляется синхронно.
+The desktop widget requires no separate installation:
+- Hermes Core's Unified Package mechanism automatically copies and registers `desktop/plugin.js` into the desktop plugins directory.
+- Updates to the plugin automatically synchronize the desktop UI component.

@@ -1,21 +1,16 @@
-# API Reference
+# Справочник API
 
-Wire format of the MAX Bot API and how the adapter handles it.
+Формат обмена с MAX Bot API и его обработка адаптером.
 
-Every JSON block in this file is valid and is checked by
-`tests/test_docs_api_examples.py`; the same test runs the upload/send/edit/callback
-examples on `httpx.MockTransport` against the real adapter code.
+Каждый JSON-пример проверяется `tests/test_docs_api_examples.py`; тест также выполняет примеры upload/send/edit/callback через `httpx.MockTransport` и реальный код адаптера.
 
-Official documentation: https://dev.max.ru/docs-api
+Официальная документация: https://dev.max.ru/docs-api
 
-> MAX currently recommends the `platform-api2.max.ru` domain instead of
-> `platform-api.max.ru`. The adapter still uses `platform-api.max.ru`
-> (`MAX_API_BASE` in `mixins/media_upload.py` and `adapter.py`) — the examples
-> below match the current implementation.
+> Актуальный адрес API — `platform-api2.max.ru`. Адаптер использует его через `MAX_API_BASE` в `adapter.py` и `mixins/media_upload.py`; сверяйте примеры с текущей реализацией.
 
-## MAX Update Format
+## Формат обновлений MAX
 
-### Direct dialog (message_created)
+### Личный диалог (`message_created`)
 
 ```json
 {
@@ -103,7 +98,7 @@ The adapter downloads inbound media via `payload.url` and maps it to internal
 media types (`image`, `audio`/`voice`, `document`) — see `_extract_inbound_media`
 and `_attachment_kind` in `adapter.py`.
 
-## Callback Data Format
+## Формат callback-данных
 
 ### message_callback structure
 
@@ -175,7 +170,7 @@ it. The attachment token comes from step 1 (audio/video) or from the CDN respons
 ### Step 1: Get the upload URL
 
 ```bash
-curl -X POST "https://platform-api.max.ru/uploads?type=image" \
+curl -X POST "https://platform-api2.max.ru/uploads?type=image" \
   -H "Authorization: {access_token}"
 ```
 
@@ -222,7 +217,7 @@ not a binary `PUT`. The CDN response for `image`/`file`:
 ### Step 3: Send a message with the attachment
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?chat_id=95825064" \
+curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
   -H "Authorization: {access_token}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -247,7 +242,7 @@ The plugin checks the upload URL host against `_ALLOWED_UPLOAD_HOSTS`
 
 ```python
 _ALLOWED_UPLOAD_HOSTS = {
-    "platform-api.max.ru",
+    "platform-api2.max.ru",
     "cdn.max.ru",
     "storage.max.ru",
     "upload.max.ru",
@@ -271,7 +266,7 @@ Max message length: 4000 characters.
 ### Response Format
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?chat_id=95825064" \
+curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
   -H "Authorization: {access_token}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -290,7 +285,7 @@ Editing goes through `PUT /messages` with the `message_id` query parameter (not
 `chat_id`, and not `mid` in the body):
 
 ```bash
-curl -X PUT "https://platform-api.max.ru/messages?message_id=mid-abc123" \
+curl -X PUT "https://platform-api2.max.ru/messages?message_id=mid-abc123" \
   -H "Authorization: {access_token}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -302,11 +297,11 @@ curl -X PUT "https://platform-api.max.ru/messages?message_id=mid-abc123" \
 ### Delete Message
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/messages?message_id=mid-abc123" \
+curl -X DELETE "https://platform-api2.max.ru/messages?message_id=mid-abc123" \
   -H "Authorization: {access_token}"
 ```
 
-## Commands API
+## API команд
 
 ### Register Commands
 
@@ -317,7 +312,7 @@ startup.
 
 ```bash
 curl -H "Authorization: {access_token}" \
-  https://platform-api.max.ru/me/commands
+  https://platform-api2.max.ru/me/commands
 ```
 
 ### Limitations

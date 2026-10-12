@@ -75,16 +75,18 @@ def test_max_host_and_format_limits_are_documented():
 
 
 def test_webhook_production_claim_cites_official_source():
-    for rel in (("docs", "setup.md"), ("docs", "setup_EN.md")):
+    for rel in (("docs", "setup.md"), ("docs", "setup_RU.md")):
         text = _read(*rel)
         assert "443" in text, f"{rel[-1]} must state the official webhook port"
         assert "dev.max.ru/docs-api" in text, f"{rel[-1]} must cite the MAX docs"
 
 
 def test_evidence_register_exists_in_both_languages():
-    ru = _read("docs", "external-claims.md")
-    en = _read("docs", "external-claims_EN.md")
-    assert "platform-api2.max.ru" in ru and "platform-api2.max.ru" in en
-    assert "2026-09-16" in ru and "2026-09-16" in en
-    # The register must keep the follow-up list honest about the patch script.
-    assert "apply-core-fix.py" in ru and "apply-core-fix.py" in en
+    en = _read("docs", "external-claims.md")
+    ru = _read("docs", "external-claims_RU.md")
+    for text, label in ((en, "EN"), (ru, "RU")):
+        assert "platform-api2.max.ru" in text, f"{label} evidence register must use current MAX API host"
+        assert "2026-09-16" in text, f"{label} evidence register must contain the check date"
+        assert "apply-core-fix.py" in text, f"{label} evidence register must document the follow-up"
+    assert "MAX_API_BASE" in ru and "platform-api.max.ru" in ru
+    assert "MAX_API_BASE" in en and "platform-api.max.ru" in en
