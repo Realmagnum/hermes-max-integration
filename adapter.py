@@ -874,12 +874,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         callback = payload.get("callback") or payload.get("message_callback") or {}
         return str(body.get("mid") or message.get("mid") or callback.get("mid") or callback.get("message_id") or "")
 
-    @staticmethod
-    def _model_picker_owner(scoped_chat: str, metadata: dict | None) -> str:
+    def _model_picker_owner(self, scoped_chat: str, metadata: dict | None, session_key: str = "") -> str:
         meta = metadata or {}
-        explicit = meta.get("owner_user_id") or meta.get("user_id")
+        explicit = meta.get("owner_user_id") or meta.get("user_id") or meta.get("recipient_user_id")
         if explicit is not None and str(explicit):
-            return str(explicit)
+            return str(explicit).strip()
+        if session_key and session_key in self._session_owners:
+            return str(self._session_owners[session_key]).strip()
         scope, _, value = str(scoped_chat or "").partition(":")
         return value if scope == "user" else ""
 
@@ -2972,14 +2973,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             self._model_picker_state.pop(scoped_chat, None)
             return None
         owner = str(state.get("owner_user_id") or "")
-        if owner and owner != str(user_id):
+        if not owner or owner != str(user_id):
             return None
         expected_message = str(state.get("model_msg_id") or state.get("provider_msg_id") or "")
-        if message_id and expected_message and message_id != expected_message:
+        if not message_id or not expected_message or message_id != expected_message:
             return None
-        if not owner:
-            owner = str(user_id)
-            state["owner_user_id"] = owner
         state["updated_at"] = now
 
         parts = data.split(":", 3)
@@ -3048,6 +3046,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
 
+        picker_scope = str(chat_id)
+        owner = self._model_picker_owner(picker_scope, metadata, session_key)
+        if not owner:
+            return SendResult(success=False, error="Model picker requester is unknown")
+
         try:
             from hermes_cli.providers import get_label
         except ImportError:
@@ -3091,7 +3094,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
         result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
-            picker_scope = str(chat_id)
+            if not result.message_id:
+                return SendResult(success=False, error="Model picker message ID was not confirmed")
             self._model_picker_state[picker_scope] = {
                 "provider_msg_id": result.message_id,  # ID сообщения с провайдерами (текст+кнопки)
                 "providers": providers,
@@ -3099,7 +3103,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                 "on_model_selected": on_model_selected,
                 "current_model": current_model,
                 "current_provider": current_provider,
-                "owner_user_id": self._model_picker_owner(picker_scope, metadata),
+                "owner_user_id": owner,
                 "created_at": (created_at := time.monotonic()),
                 "updated_at": created_at,
                 "expires_at": created_at + MODEL_PICKER_TTL_SECONDS,
