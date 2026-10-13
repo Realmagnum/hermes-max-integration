@@ -5,7 +5,7 @@ name = "hermes-max-integration"
 # scripts/check-doc-claims.py.
 version = "2.10.2"
 description = "Hermes Agent MAX messenger adapter with STT voice transcription"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Realmagnum / Hermes Agent community"}
