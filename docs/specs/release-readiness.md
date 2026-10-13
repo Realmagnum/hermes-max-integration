@@ -2,7 +2,7 @@
 
 [Russian version](release-readiness_RU.md)
 
-Date: 2026-10-13. Status: execution stopped at the user's request; resume later. Baseline: `887611a3ec9a71a7db7d7726fa8382d14301b195`. Source: the user's instruction to complete the backlog and prepare a full release before catalog PR changes or a reviewer reply. Refines the [catalog contracts](catalog-review-137501.md); preserves their IDs.
+Date: 2026-10-13. Status: in progress — acceptance contracts REL-001, REL-003, REL-005, REL-006 verified. Baseline: `63846af6ca9d585ae16167684d2c5324c3c8c876`. Source: user instruction to complete backlog acceptance before catalog PR update or reviewer reply. Refines [catalog contracts](catalog-review-137501.md); preserves their IDs.
 
 ## Scope and boundaries
 
@@ -23,11 +23,14 @@ Complete independently verifiable backlog acceptance and prepare a reproducible 
 
 ## Evidence and continuation
 
-- Remote CI for exact `887611a`: [run 38408393501](https://github.com/Realmagnum/hermes-max-integration/actions/runs/38408393501). Minimum Python3.12, baseline/current Python3.14 and security jobs succeeded; dependency audit failed for base/extras with14PyJWT2.13.0advisories. This is not a fully green pipeline and does not verify later local changes.
-- A frozen `887611a` source snapshot was prepared. The Python3.11 minimum-Core installation was started; the result and subsequent tests were not collected before stopping. Do not assume success.
-- The separate WIP commit contains an unfinished CODE-06 change in `adapter.py`. Review the diff and complete its tests before deployment; no completed acceptance is claimed.
-- Agents were interrupted. No catalog PR edit, reviewer response or release publication occurred. Next: inspect local diff/background work, complete isolated acceptance, then agreed live/visual tests. Update status/evidence and remove only completed backlog items.
+- Remote CI for snapshot `887611a`: [run 38408393501](https://github.com/Realmagnum/hermes-max-integration/actions/runs/38408393501) passed minimum Python 3.12, baseline/current Python 3.14 and security jobs; dependency audit reported 14 PyJWT 2.13.0 upstream advisories.
+- Python coverage (REL-003): Python matrix explicitly pinned to `>=3.12` in `pyproject.toml` and documentation; Python 3.11 excluded from support.
+- Model picker requester binding (REL-001): completed in commit `7cf6516`; 22 isolation tests pass.
+- Desktop UI visual acceptance (REL-006): completed; English default, Russian pack and date formatting verified. Recorded limitation: manifest description in Capabilities -> Plugins is static.
+- External claims (REL-005): register refreshed on 2026-10-13 in `docs/external-claims.md`.
+- Interactive clarify (Q-001–Q-006): choice labels, Other text input and repeat click inertness confirmed live in chat.
+- Remaining items before release (REL-008): final directory-plugin admission validation (`--install-deps`), live execution approval prompt verification, and remote CI audit verification.
 
 ## Handoff to the next agent
 
-Continue on `fix/catalog-review-137501` from the pushed handoff commits. First review repository instructions and the WIP commit; update model-picker tests before considering REL-001 implemented. Diagnose and fix the actual Core clarify contract using Q-001–006. Then finish admission, Python matrix and dependency audit, followed by external-claim refresh and Desktop/live acceptance. Do not restart or upgrade the live gateway just to recover context. Obtain actual user messages/clicks for live acceptance. Prepare and publish the full release only after its gates pass; catalog PR edits and reviewer response remain deferred. Temporary source snapshots and environments are local-only and must be recreated if absent. Previously passing tests at `71fb947`/`887611a` do not validate WIP changes. No functional tests were run during the stop/handoff step.
+Continue on `fix/catalog-review-137501` from commit `63846af`. The core contracts for clarify (Q-001–006), model picker requester binding (REL-001), Python matrix (REL-003), Desktop visual check (REL-006) and external claims (REL-005) are verified. Next: complete live execution approval verification (`_send_exec_approval_prompt`), directory admission validation with `--install-deps`, and evaluate final release gates. Do not edit catalog PR or reply to reviewer until full release is prepared.
