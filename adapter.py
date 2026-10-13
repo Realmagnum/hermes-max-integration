@@ -613,13 +613,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             platform = Platform("max")
         except ValueError:
             # Platform 'max' is not in the Enum (typical in unit tests where the plugin isn't registered)
-            # We can register a pseudo-member dynamically to make it work.
             try:
                 pseudo = object.__new__(Platform)
                 pseudo._value_ = "max"
                 pseudo._name_ = "MAX"
-                Platform._value2member_map_["max"] = pseudo
-                Platform._member_map_["MAX"] = pseudo
                 platform = pseudo
             except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
                 platform = next(iter(Platform))
