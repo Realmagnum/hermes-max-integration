@@ -36,7 +36,7 @@ Compared against the immutable `v2.10.2` tag (`bcbf7696a99e81db1679671f979726d5b
 - Full plugin suite: **796 passed** on Core `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f`; subsequent instruction update: **27 focused tests passed**. Wheel build includes the caption helper. Earlier released-minimum Core 0.21.4/Python 3.12 checks remain dated evidence; the latest caption runtime was not retested on that minimum.
 - User confirmed live file delivery, model picker and clarify; Desktop EN/RU/date inspection is recorded. Final remote-source admission, live execution-approval selection and release publication remain open.
 - Pinned CI Core PyJWT 2.13.0 audit reports **14 advisories**. No vulnerability exclusions or incompatible overrides; this is an unresolved release constraint.
-- Desktop language changes do not dynamically translate the static plugin manifest description on older SDKs. [Remaining work](BACKLOG.md).
+- **CAT-01 / MS-006:** static English description in Capabilities → Plugins is bound to the installed Desktop source build `0.0.0`, commit `7157422022ff06f3e632d1dd394ee1253b17ad37` (checked 2026-10-14); loader/renderer evidence and upgrade recheck conditions are in [Desktop features](docs/features.md). This is separate from older-SDK palette reload behavior. Visual acceptance stays closed. [Remaining work](BACKLOG.md).
 
 ## [2.10.2] — 2026-09-30
 

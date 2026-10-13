@@ -283,6 +283,14 @@ When the plugin is enabled, it automatically integrates into the left sidebar of
 
 The sessions page, notifications and statusbar use plugin-scoped English/Russian locale bundles through the public Desktop SDK. English is the default and fallback for other languages; dates retain the user's selected locale. When `ctx.i18n.onLocaleChange` is available, palette labels also refresh on language changes. Older SDKs keep palette labels in the language active at registration until the plugin reloads; the page and statusbar remain reactive. Verified against the public SDK on 2026-10-13: [Hermes 0.21.4](https://github.com/NousResearch/hermes-agent/blob/v2026.9.21/apps/desktop/src/i18n/plugin-i18n.ts) lacks this subscription, while [Hermes 0.21.5](https://github.com/NousResearch/hermes-agent/blob/v2026.9.24/apps/desktop/src/i18n/plugin-i18n.ts) provides it.
 
+### Localization acceptance and host limitation
+
+**CAT-01 / MS-006, checked 2026-10-14 against the installed Hermes Desktop source build:** application package version `0.0.0`, clean build commit `7157422022ff06f3e632d1dd394ee1253b17ad37`, build timestamp `2026-10-05T11:24:05.84Z`. The running application's `install-stamp.json` identifies that commit; the local Core checkout has the same SHA. A release number cannot be inferred from the package's `0.0.0` placeholder.
+
+Visual acceptance recorded English/Russian page labels, buttons, dates and Cmd+K commands. Page/button strings use `usePluginI18n`; dates use `Intl.DateTimeFormat` with the selected locale. **The description in Capabilities → Plugins stays in English when the language changes**, because this MAX package provides English static descriptions. At the checked revision, the [runtime loader](https://github.com/NousResearch/hermes-agent/blob/7157422022ff06f3e632d1dd394ee1253b17ad37/apps/desktop/src/contrib/runtime-loader.ts#L459) copies `plugin.description` into the record, [package merging](https://github.com/NousResearch/hermes-agent/blob/7157422022ff06f3e632d1dd394ee1253b17ad37/apps/desktop/src/app/capabilities/plugins/plugin-packages.ts#L63) retains the agent manifest description with a Desktop-description fallback, and the [Plugins row](https://github.com/NousResearch/hermes-agent/blob/7157422022ff06f3e632d1dd394ee1253b17ad37/apps/desktop/src/app/capabilities/plugins/plugins-tab.tsx#L366) displays `pkg.description` directly. This path does not apply plugin i18n to descriptions.
+
+This is a host metadata limitation at the recorded revision, not an unfinished MAX page translation. MS-006 remains accepted. Recheck the loader, package merging and row renderer when upgrading Desktop; this finding does not assert that every later version has the same limitation. The older-SDK palette reload condition above is a separate issue.
+
 ### Automatic Installation (Unified Package)
 
 The desktop widget requires no separate installation:
