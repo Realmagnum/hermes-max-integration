@@ -311,23 +311,17 @@ class ButtonsMixin(MaxBaseMixin):
         reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
 
         if choices and len(choices) > 0:
-            # Render choice buttons (up to 3 per row)
+            # Give every choice the full row width so longer labels remain readable.
             buttons: list[list[dict[str, str]]] = []
-            row: list[dict[str, str]] = []
             for i, choice in enumerate(choices):
                 btn_text = str(choice)[:40]
                 if len(str(choice)) > 40:
                     btn_text = btn_text[:37] + "..."
-                row.append({
+                buttons.append([{
                     "type": "callback",
                     "text": btn_text,
                     "payload": f"clarify:{clarify_id}:{i}",
-                })
-                if len(row) >= 3:
-                    buttons.append(row)
-                    row = []
-            if row:
-                buttons.append(row)
+                }])
             # Add "Other…" button
             buttons.append([{
                 "type": "callback",
@@ -338,7 +332,9 @@ class ButtonsMixin(MaxBaseMixin):
             text = f"**{question}**"[:MAX_MESSAGE_LENGTH]
             result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
             if result.success:
-                # SEC-01: owner/chat/message binding + TTL.
+                if not result.message_id:
+                    return SendResult(success=False, error="Clarify message ID was not confirmed")
+                # Bind the exact offered choices to this message before accepting callbacks.
                 self._register_interaction(
                     "clarify", clarify_id,
                     session_key=session_key,
@@ -347,7 +343,7 @@ class ButtonsMixin(MaxBaseMixin):
                     ),
                     chat_id=chat_id,
                     message_id=result.message_id,
-                )
+                )["choices"] = list(choices)
             return result
         else:
             # Open-ended — just send the question as plain text

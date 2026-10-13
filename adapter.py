@@ -2892,55 +2892,36 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         clarify_id = parts[1]
         choice_idx = parts[2]
 
-        record, _reason = self._consume_interaction(
-            "clarify", clarify_id, user_id=user_id, chat_id=chat_id, message_id=message_id,
-        )
-        if record is None:
+        record = self._clarify_state.get(clarify_id)
+        if not record or self._interaction_deny_reason(
+            record, user_id=user_id, chat_id=chat_id, message_id=message_id,
+        ) or not message_id or message_id != record.get("message_id"):
+            return None
+        if time.monotonic() >= float(record.get("expires_at") or 0):
+            self._clarify_state.pop(clarify_id, None)
             return None
 
-        try:
-            from tools.clarify_gateway import (
-                mark_awaiting_text,
-                resolve_gateway_clarify,
-            )
-
-            if choice_idx == "other":
-                # User chose "Other…" — next text message will be the answer
-                mark_awaiting_text(clarify_id)
-                return None
-
-            if not choice_idx.isdigit():
-                logger.warning("MAX: clarify callback with non-numeric index: %s", choice_idx)
-                return None
-
-            idx = int(choice_idx)
-            if idx < 0 or idx > 256:  # reasonable upper bound
-                logger.warning("MAX: clarify callback index out of range: %s", idx)
-                return None
-            # Get the choice text from the pending clarify state
-            # The gateway stores the choices — we resolve with the index
-            response = str(idx)
-            result_text = await resolve_gateway_clarify(clarify_id, response)
-            if result_text:
-                # Send choice text to MAX so the user sees what they picked,
-                # then return a MessageEvent (NOT internal) so the AI sees it
-                # as the user's input in the next turn.
-                await self.send(f"user:{user_id}", result_text)
-                source = self.build_source(
-                    chat_id=f"user:{user_id}",
-                    chat_name=user_id,
-                    chat_type="dm",
-                    user_id=user_id,
-                    user_name=user_id,
-                )
-                return MessageEvent(
-                    text=result_text,
-                    message_type=MessageType.TEXT,
-                    source=source,
-                    raw_message=raw_payload,
-                )
-        except (ValueError, ImportError) as e:
-            logger.warning("MAX: clarify callback failed: %s", e)
+        from tools.clarify_gateway import (
+            get_pending_for_session,
+            mark_awaiting_text,
+            resolve_gateway_clarify,
+        )
+        pending = get_pending_for_session(record["session_key"], include_choice_prompts=True)
+        if pending is None or pending.clarify_id != clarify_id or pending.event.is_set():
+            self._clarify_state.pop(clarify_id, None)
+            return None
+        choices = record.get("choices") or []
+        if choice_idx == "other":
+            if mark_awaiting_text(clarify_id):
+                self._clarify_state.pop(clarify_id, None)
+            return None
+        if not choice_idx.isdigit() or int(choice_idx) >= len(choices):
+            return None
+        response = str(choices[int(choice_idx)])
+        if resolve_gateway_clarify(clarify_id, response):
+            self._clarify_state.pop(clarify_id, None)
+        # Core's waiting clarify tool receives the choice; injecting a second
+        # MessageEvent here would create a duplicate user turn.
         return None
 
     async def _handle_model_callback(

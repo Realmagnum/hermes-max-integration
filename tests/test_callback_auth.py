@@ -238,41 +238,38 @@ class TestSlashConfirmAuthorization:
 
 class TestClarifyAuthorization:
     @pytest.fixture
-    def clarify_tools(self, monkeypatch):
+    def clarify_tools(self):
         import tools.clarify_gateway as cg
 
-        resolve = AsyncMock(return_value="chosen")
-        mark = MagicMock(return_value=None)
-        monkeypatch.setattr(cg, "resolve_gateway_clarify", resolve)
-        monkeypatch.setattr(cg, "mark_awaiting_text", mark)
-        return resolve, mark
+        cg.register("q1", "sk", "Choose", ["chosen"])
+        yield cg
+        cg.clear_session("sk")
 
     @pytest.mark.asyncio
     async def test_owner_can_answer(self, clarify_tools):
-        resolve, _ = clarify_tools
+        cg = clarify_tools
         a = _make_adapter()
         a._register_interaction(
             "clarify", "q1", session_key="sk", owner_user_id="42",
             chat_id="chat:777", message_id="mid-q1",
-        )
+        )["choices"] = ["chosen"]
 
-        await a._on_callback(_callback("clarify:q1:0", 42, chat_id=777, mid="mid-q1"))
-
-        resolve.assert_awaited_once_with("q1", "0")
+        assert await a._on_callback(_callback("clarify:q1:0", 42, chat_id=777, mid="mid-q1")) is None
+        assert cg.get_pending_for_session("sk", include_choice_prompts=True).response == "chosen"
+        assert "q1" not in a._clarify_state
 
     @pytest.mark.asyncio
     async def test_other_member_cannot_answer(self, clarify_tools):
-        resolve, mark = clarify_tools
+        cg = clarify_tools
         a = _make_adapter()
         a._register_interaction(
             "clarify", "q1", session_key="sk", owner_user_id="42",
             chat_id="chat:777", message_id="mid-q1",
-        )
+        )["choices"] = ["chosen"]
 
         await a._on_callback(_callback("clarify:q1:other", 99, chat_id=777, mid="mid-q1"))
-
-        resolve.assert_not_awaited()
-        mark.assert_not_called()
+        assert cg.get_pending_for_session("sk", include_choice_prompts=True).awaiting_text is False
+        assert cg.get_pending_for_session("sk", include_choice_prompts=True).response is None
         assert "q1" in a._clarify_state
 
 
@@ -311,10 +308,10 @@ class TestModelPickerAuthorization:
         a = _make_adapter()
         a.send = AsyncMock()
         a.delete_message = AsyncMock(return_value=MagicMock(success=True))
-        a._model_picker_state["chat:777"] = self._state()
+        a._model_picker_state["chat:777"] = self._state(model_msg_id="mid-model")
 
         await a._on_callback(
-            _callback("model:pick:deepseek-v3:deepseek", 42, chat_id=777)
+            _callback("model:pick:deepseek-v3:deepseek", 42, chat_id=777, mid="mid-model")
         )
 
         assert "chat:777" not in a._model_picker_state
@@ -418,6 +415,7 @@ class TestBoundStateShape:
         mock_resp.json.return_value = {"message": {"body": {"mid": "mid-p"}}}
         a._http_client.post = AsyncMock(return_value=mock_resp)
 
+        a._remember_interaction_owner(session_key="sk", chat_id="chat:777", user_id="42")
         result = await a.send_model_picker(
             chat_id="chat:777",
             providers=[{"slug": "deepseek", "name": "DeepSeek", "models": []}],
@@ -427,9 +425,6 @@ class TestBoundStateShape:
             on_model_selected=AsyncMock(),
         )
         assert result.success is True
-
-        # Group scope has no user in it — ownership comes from inbound traffic,
-        # which is why an unknown owner must fail closed (asserted above).
         state = a._model_picker_state["chat:777"]
-        assert state["owner_user_id"] == ""
+        assert state["owner_user_id"] == "42"
         assert state["expires_at"] > time.monotonic()
