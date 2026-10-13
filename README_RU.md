@@ -10,6 +10,16 @@
 [![Hermes Core](https://img.shields.io/badge/Hermes_Core-≥0.21.4-8A2BE2)](docs/setup_RU.md)
 [![Python](https://img.shields.io/badge/Python-≥3.12-3776AB)](pyproject.toml)
 
+## 📚 Карта документации
+
+| Задача | Документ |
+|---|---|
+| Установить, настроить, найти причину сбоя | [Установка](docs/setup_RU.md) · [Диагностика](docs/troubleshooting_RU.md) |
+| Разобраться в поведении и устройстве | [Возможности](docs/features_RU.md) · [Архитектура](docs/architecture_RU.md) · [API](docs/api_RU.md) |
+| Разработать или проверить изменение | [Micro-Spec](docs/micro-spec-development_RU.md) · [Контракты каталога](docs/specs/20261013-catalog-review-137501_RU.md) · [Backlog](BACKLOG_RU.md) |
+
+`scripts/diagnose.sh --send` отправляет реальное сообщение; используйте только одобренного адресата. Локальные проверки и запуск тестов описаны в [инструкции установки](docs/setup_RU.md).
+
 ## ✨ Возможности
 
 | | Возможность | В вашем чате |
@@ -81,16 +91,6 @@ hermes gateway setup
 - Аудит закреплённых в CI зависимостей Core сообщает 14 advisories PyJWT 2.13.0. Ограничение upstream остаётся открытым; исключения аудита и несовместимые подмены не используются.
 
 Подробности: [безопасность](docs/security_RU.md), [датированные проверки совместимости](docs/external-claims_RU.md) и [оставшиеся задачи](BACKLOG_RU.md). Изменения после `v2.10.2` **ещё не выпущены**; см. [changelog](CHANGELOG_RU.md).
-
-## 📚 Подробнее
-
-| Задача | Документ |
-|---|---|
-| Установить, настроить, найти причину сбоя | [Установка](docs/setup_RU.md) · [Диагностика](docs/troubleshooting_RU.md) |
-| Разобраться в поведении и устройстве | [Возможности](docs/features_RU.md) · [Архитектура](docs/architecture_RU.md) · [API](docs/api_RU.md) |
-| Разработать или проверить изменение | [Micro-Spec](docs/micro-spec-development_RU.md) · [Контракты каталога](docs/specs/20261013-catalog-review-137501_RU.md) · [Backlog](BACKLOG_RU.md) |
-
-`scripts/diagnose.sh --send` отправляет реальное сообщение; используйте только одобренного адресата. Локальные проверки и запуск тестов описаны в [инструкции установки](docs/setup_RU.md).
 
 ## Лицензия и благодарности
 

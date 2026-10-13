@@ -10,6 +10,16 @@
 [![Hermes Core](https://img.shields.io/badge/Hermes_Core-≥0.21.4-8A2BE2)](docs/setup.md)
 [![Python](https://img.shields.io/badge/Python-≥3.12-3776AB)](pyproject.toml)
 
+## 📚 Documentation map
+
+| Need | Read |
+|---|---|
+| Install, configure or diagnose | [Setup](docs/setup.md) · [Troubleshooting](docs/troubleshooting.md) |
+| Understand behavior and internals | [Features](docs/features.md) · [Architecture](docs/architecture.md) · [API](docs/api.md) |
+| Develop or verify a change | [Micro-Spec workflow](docs/micro-spec-development.md) · [Catalog contracts](docs/specs/20261013-catalog-review-137501.md) · [Backlog](BACKLOG.md) |
+
+`scripts/diagnose.sh --send` sends a real message; use only an approved recipient. Offline checks and test instructions are in [setup](docs/setup.md).
+
 ## ✨ What you get
 
 | | Capability | In your chat |
@@ -81,16 +91,6 @@ Direct `hermes send` and cron paths without the output hook still need text: `re
 - The pinned CI Core dependency audit reports 14 PyJWT 2.13.0 advisories. This remains an open upstream constraint; no audit exclusions or incompatible overrides are used.
 
 Details: [security](docs/security.md), [dated compatibility evidence](docs/external-claims.md) and [outstanding work](BACKLOG.md). Changes since `v2.10.2` are **unreleased**; see the [changelog](CHANGELOG.md).
-
-## 📚 Go deeper
-
-| Need | Read |
-|---|---|
-| Install, configure or diagnose | [Setup](docs/setup.md) · [Troubleshooting](docs/troubleshooting.md) |
-| Understand behavior and internals | [Features](docs/features.md) · [Architecture](docs/architecture.md) · [API](docs/api.md) |
-| Develop or verify a change | [Micro-Spec workflow](docs/micro-spec-development.md) · [Catalog contracts](docs/specs/20261013-catalog-review-137501.md) · [Backlog](BACKLOG.md) |
-
-`scripts/diagnose.sh --send` sends a real message; use only an approved recipient. Offline checks and test instructions are in [setup](docs/setup.md).
 
 ## License and credits
 
