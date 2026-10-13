@@ -83,7 +83,6 @@ def locale_problems(text: str, is_ru: bool, path: Path, root: Path) -> list[str]
         target_path = (path.parent / target.split("#", 1)[0]).resolve()
         if target_path.suffix.lower() != ".md":
             continue
-        rel_target = target_path.relative_to(root).as_posix() if target_path.is_relative_to(root) else target
         # Language-switch links to the paired document itself are intentional.
         if is_ru:
             expected_peer = path.with_name("README.md") if path.name == "README_RU.md" else path.with_name(path.stem.removesuffix("_RU") + ".md")

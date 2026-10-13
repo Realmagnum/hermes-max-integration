@@ -1,8 +1,6 @@
 # Hermes MAX Gateway
 
-<p align="center">
-  <img src="assets/banner.jpg" alt="Интеграция Hermes с MAX" width="100%">
-</p>
+![Интеграция Hermes с MAX](assets/banner.jpg)
 
 > Английская версия: [README.md](README.md). Этот файл — русская версия; синхронизируйте факты и ссылки в обеих версиях.
 
@@ -25,7 +23,7 @@
 
 ## Карта документации
 
-Краткую карту заметок покажет `tree docs`. `docs/architecture_RU.md` описывает компоненты; `docs/setup_RU.md` — установку и конфигурацию; `docs/security_RU.md` — границы безопасности; `docs/api_RU.md` — API-контракты; `docs/features_RU.md` — поведение функций; `docs/troubleshooting_RU.md` — диагностику; `docs/external-claims_RU.md` — датированные внешние утверждения. Правила документации — в `docs/document_writing_RU.md`.
+Краткую карту заметок покажет `tree docs`. [docs/architecture_RU.md](docs/architecture_RU.md) описывает компоненты; [docs/setup_RU.md](docs/setup_RU.md) — установку и конфигурацию; [docs/security_RU.md](docs/security_RU.md) — границы безопасности; [docs/api_RU.md](docs/api_RU.md) — API-контракты; [docs/features_RU.md](docs/features_RU.md) — поведение функций; [docs/troubleshooting_RU.md](docs/troubleshooting_RU.md) — диагностику; [docs/external-claims_RU.md](docs/external-claims_RU.md) — датированные внешние утверждения. Правила документации — в [docs/document_writing_RU.md](docs/document_writing_RU.md).
 
 Основные документы в `docs/` пишутся на английском (`name.md`), русские переводы — `name_RU.md`. `README.md` — английский, `README_RU.md` — русский.
 
@@ -38,11 +36,11 @@ hermes gateway setup
 
 Создайте бота MAX и получите токен по актуальной [официальной документации MAX](https://dev.max.ru/). `hermes gateway setup` поможет настроить токен и доступ. По умолчанию используется long polling. Для webhook задайте `MAX_WEBHOOK_URL` и `MAX_WEBHOOK_SECRET`, опубликуйте endpoint через публичный HTTPS и перезапустите gateway. **Перед сменой режима проверьте существующие подписки MAX:** при старте polling плагин пытается удалить устаревшие webhook-подписки.
 
-Подробности и требования к production — в `docs/setup_RU.md`. Не сохраняйте токены и секреты в репозитории.
+Подробности и требования к production — в [docs/setup_RU.md](docs/setup_RU.md). Не сохраняйте токены и секреты в репозитории.
 
 ## Конфигурация
 
-Полный справочник переменных окружения, значений по умолчанию и YAML-ключей `platforms.max` находится в `docs/setup_RU.md`.
+Полный справочник переменных окружения, значений по умолчанию и YAML-ключей `platforms.max` находится в [docs/setup_RU.md](docs/setup_RU.md).
 
 ## Slash-команды
 
@@ -57,13 +55,17 @@ hermes gateway setup
 Telegram Bot API 10.1+ поддерживает таблицы через отдельный API `sendRichMessage`; у MAX в текущем контракте нет аналогичного формата таблиц.
 
 Настройка отображения reasoning в Hermes Core задаётся через `streaming:
-  fresh_final_after_seconds`, но сейчас Core применяет её только к Telegram, не к MAX. Перед использованием как обхода проверьте `docs/features_RU.md`.
+  fresh_final_after_seconds`, но сейчас Core применяет её только к Telegram, не к MAX. Перед использованием как обхода проверьте [docs/features_RU.md](docs/features_RU.md).
 
-Для PNG-рендера Markdown-таблиц установите `MAX_TABLE_AS_IMAGE=true`. Основной рендерер — Playwright/Chromium, Pillow используется как fallback. Дополнительные зависимости должны быть установлены в том же Python-окружении, где работает Hermes Gateway. См. `docs/features_RU.md` и `docs/troubleshooting_RU.md`.
+Для PNG-рендера Markdown-таблиц установите `MAX_TABLE_AS_IMAGE=true`. Основной рендерер — Playwright/Chromium, Pillow используется как fallback. Дополнительные зависимости должны быть установлены в том же Python-окружении, где работает Hermes Gateway. См. [docs/features_RU.md](docs/features_RU.md) и [docs/troubleshooting_RU.md](docs/troubleshooting_RU.md).
+
+## Безопасность и приватность
+
+Исходящие API-запросы направляются только на настроенный endpoint MAX Bot API (`MAX_API_BASE_URL`, по умолчанию `https://platform-api2.max.ru`) и официальные медиа-хосты MAX (`*.max.ru`, `*.oneme.ru`). Скачанные медиафайлы и PNG-таблицы хранятся локально в `HERMES_HOME`. В плагине нет телеметрии, аналитики или кода автообновления; режим webhook требует `MAX_WEBHOOK_SECRET` (fail-closed). См. [docs/security_RU.md](docs/security_RU.md).
 
 ## Проверки и диагностика
 
-Диагностика описана в `docs/troubleshooting_RU.md`. `scripts/diagnose.sh --send` отправляет реальное сообщение; запускайте только с одобренным адресатом.
+Диагностика описана в [docs/troubleshooting_RU.md](docs/troubleshooting_RU.md). `scripts/diagnose.sh --send` отправляет реальное сообщение; запускайте только с одобренным адресатом.
 
 ```bash
 python scripts/check_docs_links.py

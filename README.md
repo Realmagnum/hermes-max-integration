@@ -1,8 +1,6 @@
 # Hermes MAX Gateway
 
-<p align="center">
-  <img src="assets/banner.jpg" alt="Hermes MAX messenger integration" width="100%">
-</p>
+![Hermes MAX messenger integration](assets/banner.jpg)
 
 > Русская документация: [README_RU.md](README_RU.md). Этот файл — основная английская версия; синхронизируйте факты и ссылки в обеих версиях.
 
@@ -26,7 +24,7 @@ Hermes Agent platform plugin for the MAX messenger. It provides polling and webh
 
 ## Documentation map
 
-For a compact document map, run `tree docs`. Read `docs/architecture.md` for component relationships; `docs/setup.md` for setup/configuration; `docs/security.md` for security boundaries; `docs/api.md` for wire/API contracts; `docs/features.md` for feature behavior; `docs/troubleshooting.md` for diagnostics; and `docs/external-claims.md` for dated external evidence. Documentation rules are in `docs/document_writing.md`.
+For a compact document map, run `tree docs`. Read [docs/architecture.md](docs/architecture.md) for component relationships; [docs/setup.md](docs/setup.md) for setup/configuration; [docs/security.md](docs/security.md) for security boundaries; [docs/api.md](docs/api.md) for wire/API contracts; [docs/features.md](docs/features.md) for feature behavior; [docs/troubleshooting.md](docs/troubleshooting.md) for diagnostics; and [docs/external-claims.md](docs/external-claims.md) for dated external evidence. Documentation rules are in [docs/document_writing.md](docs/document_writing.md).
 
 Project documents use English `name.md` with Russian `name_RU.md` counterparts. `README.md` is English and `README_RU.md` is Russian.
 
@@ -39,11 +37,11 @@ hermes gateway setup
 
 Create a MAX bot and obtain its token using the current official [MAX documentation](https://dev.max.ru/). `hermes gateway setup` guides token and access configuration. By default, the plugin uses long polling. To use a webhook, configure `MAX_WEBHOOK_URL` and `MAX_WEBHOOK_SECRET`, expose the configured path through public HTTPS, then restart the gateway. **Before changing modes, check existing MAX subscriptions:** polling startup attempts to remove stale webhook subscriptions.
 
-See `docs/setup.md` before changing a production gateway. Never commit bot tokens or webhook secrets.
+See [docs/setup.md](docs/setup.md) before changing a production gateway. Never commit bot tokens or webhook secrets.
 
 ## Configuration
 
-For the complete environment-variable reference, defaults, and `platforms.max` YAML keys, see `docs/setup.md`.
+For the complete environment-variable reference, defaults, and `platforms.max` YAML keys, see [docs/setup.md](docs/setup.md).
 
 ## Slash commands
 
@@ -58,13 +56,17 @@ Additional: `/retry`, `/undo [N]`, `/title [name]`, `/branch` (`/fork`), `/compr
 Telegram Bot API 10.1+ offers tables through the separate `sendRichMessage` API; this plugin targets MAX, which has no equivalent table message format in its current API contract.
 
 Reasoning-display configuration in Hermes Core uses `streaming:
-  fresh_final_after_seconds`, but Core currently applies that option only to Telegram, not MAX. Check `docs/features.md` before using it as a workaround.
+  fresh_final_after_seconds`, but Core currently applies that option only to Telegram, not MAX. Check [docs/features.md](docs/features.md) before using it as a workaround.
 
-Set `MAX_TABLE_AS_IMAGE=true` to render Markdown tables as PNG. Playwright/Chromium is preferred; Pillow is the fallback. Install optional dependencies in the same Python environment as the Hermes gateway. See `docs/features.md` and `docs/troubleshooting.md`.
+Set `MAX_TABLE_AS_IMAGE=true` to render Markdown tables as PNG. Playwright/Chromium is preferred; Pillow is the fallback. Install optional dependencies in the same Python environment as the Hermes gateway. See [docs/features.md](docs/features.md) and [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Security and privacy
+
+Outbound API requests go only to the configured MAX Bot API endpoint (`MAX_API_BASE_URL`, default `https://platform-api2.max.ru`) and official MAX media hosts (`*.max.ru`, `*.oneme.ru`). Downloaded media and rendered table images are stored locally under `HERMES_HOME`. The plugin includes no telemetry, analytics, or self-updating code; webhook mode requires `MAX_WEBHOOK_SECRET` (fail-closed). See [docs/security.md](docs/security.md).
 
 ## Troubleshooting and checks
 
-See `docs/troubleshooting.md`. `scripts/diagnose.sh --send` sends a real outbound test message; use it only when the recipient is explicitly approved.
+See [docs/troubleshooting.md](docs/troubleshooting.md). `scripts/diagnose.sh --send` sends a real outbound test message; use it only when the recipient is explicitly approved.
 
 ```bash
 python scripts/check_docs_links.py
