@@ -9,6 +9,7 @@ import json
 
 import httpx
 import pytest
+from max.media_caption import transform_max_media_output
 
 import adapter
 
@@ -159,3 +160,23 @@ async def test_actual_core_router_reports_incomplete_delivery(registered_max, ma
     assert result["media_requested"] == len(descriptors)
     assert "warnings" not in result
     assert json.loads(requests[0].content)["text"] == "Router text"
+
+
+@pytest.mark.asyncio
+async def test_transformed_media_only_reaches_public_router(registered_max, max_http_boundary, tmp_path):
+    from gateway.config import Platform, PlatformConfig
+    from gateway.platforms.base import BasePlatformAdapter
+    from tools.send_message_tool import _send_to_platform
+
+    media = tmp_path / "report.pdf"
+    media.write_bytes(b"fixture")
+    transformed = transform_max_media_output(f"MEDIA:{media}", "max")
+    files, text = BasePlatformAdapter.extract_media(transformed)
+    result = await _send_to_platform(Platform("max"), PlatformConfig(enabled=True, token="fixture-token"),
+                                     "user:42", text, media_files=files)
+    assert result["success"] and result["media_delivered"]
+    requests, uploads, _ = max_http_boundary
+    messages = [json.loads(r.content) for r in requests if r.url.path == "/messages"]
+    assert messages[0]["text"].strip() == "report.pdf"
+    assert messages[-1]["text"] == "report.pdf"
+    assert len(uploads) == 1

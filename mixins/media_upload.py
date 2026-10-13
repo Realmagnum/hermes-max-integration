@@ -16,6 +16,11 @@ from gateway.platforms.base import SendResult
 from .base import MaxBaseMixin
 
 try:
+    from ..media_caption import media_caption
+except (ImportError, ValueError):  # Legacy flat mixins import used by existing checks.
+    from media_caption import media_caption
+
+try:
     from ..ssl_support import get_max_ssl_context
 except (ImportError, ValueError):
     from ssl_support import get_max_ssl_context
@@ -188,7 +193,7 @@ class MediaUploadMixin(MaxBaseMixin):
         params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
 
         body: dict[str, Any] = {
-            "text": caption,
+            "text": media_caption(caption, file_path),
             "attachments": [{"type": mtype, "payload": {"token": token}}],
         }
         if reply_to:

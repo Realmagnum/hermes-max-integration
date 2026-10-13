@@ -52,7 +52,7 @@ build-backend = "setuptools.build_meta"
 # `assets/` directories trigger "Multiple top-level packages discovered".
 # Declare the distribution contents explicitly instead.
 [tool.setuptools]
-py-modules = ["adapter", "ssl_support", "credential_support"]
+py-modules = ["adapter", "ssl_support", "credential_support", "media_caption"]
 
 [tool.setuptools.packages.find]
 include = ["mixins*"]

@@ -6,6 +6,8 @@ All notable changes to the hermes-max-integration plugin.
 
 ### Fixed
 
+- **CAP-001–004:** uncaptioned MAX agent MEDIA replies gain the first filename before Core delivery through the public output hook; direct attachment sends use basename or `File`. Authored text is preserved. See [caption contracts](docs/specs/media-caption.md). Direct CLI media-only routing still requires caller-provided text.
+
 - **MS-001/002:** setup stays private and preserves existing allowlists; denied media/commands/callbacks/start events stop before downloads or Core dispatch.
 - **MS-003/004:** credentials honor the active profile scope; default multiplex startup uses Core's supported helper. Dependency checks are passive. Diagnostics use caller env and do not read credential files or expose secrets.
 - **MS-006/007:** English-default Desktop plugin translations and locale-aware dates; native Core execution-approval hook with offered-choice and owner checks.

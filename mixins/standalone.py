@@ -15,6 +15,7 @@ try:
 except (ImportError, ValueError):
     from ssl_support import get_max_ssl_context
 from ..credential_support import get_max_secret
+from ..media_caption import media_caption
 from .media_upload import _ALLOWED_UPLOAD_HOSTS
 
 logger = logging.getLogger(__name__)
@@ -242,7 +243,7 @@ async def _standalone_send(
                 target_id = parts[1] if len(parts) > 1 else chat_id
                 params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
                 body = {
-                    "text": os.path.basename(media_path),
+                    "text": media_caption(None, media_path),
                     "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
                 }
                 _sent_ok = False

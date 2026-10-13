@@ -57,6 +57,7 @@ except ImportError:  # pragma: no cover — older Hermes core
     _core_base = None  # type: ignore[assignment]
 
 from .credential_support import get_max_secret
+from .media_caption import media_caption, transform_max_media_output
 from .mixins.base import _http_body_snippet, _is_retryable_http_status
 from .mixins.buttons import ButtonsMixin
 from .mixins.callback_auth import CallbackAuthMixin
@@ -2683,7 +2684,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
-        return await self._upload_send(chat_id, file_path, "file", caption or "", reply_to)
+        return await self._upload_send(chat_id, file_path, "file", media_caption(caption, file_path, file_name), reply_to)
 
     async def send_video(
         self, chat_id: str, video_path: str,
@@ -3627,6 +3628,8 @@ def register(ctx) -> None:
             "Keep responses clear and well-structured."
         ),
     )
+
+    ctx.register_hook("transform_llm_output", transform_max_media_output)
 
     if skill_path.exists():
         ctx.register_skill(
