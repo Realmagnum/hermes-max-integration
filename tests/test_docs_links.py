@@ -86,7 +86,7 @@ class TestRepositoryLinks:
 
 
 class TestProjectTreeDocs:
-    """The README tree must not advertise files that do not exist."""
+    """The concise README links to the maintained architecture map."""
 
     def test_readme_trees_match_repository(self):
         missing = []
@@ -94,6 +94,9 @@ class TestProjectTreeDocs:
             text = (REPO_ROOT / name).read_text(encoding="utf-8")
             if "docs/webhook.md" in text:
                 missing.append(f"{name} still lists docs/webhook.md")
-            if "mixins/" not in text:
-                missing.append(f"{name} does not list the mixins/ package")
+            architecture = "docs/architecture_RU.md" if name.endswith("_RU.md") else "docs/architecture.md"
+            if architecture not in text:
+                missing.append(f"{name} does not link to the architecture map")
+            if "mixins/" not in (REPO_ROOT / architecture).read_text(encoding="utf-8"):
+                missing.append(f"{architecture} does not document the mixins/ package")
         assert missing == [], "\n".join(missing)

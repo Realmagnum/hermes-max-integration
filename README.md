@@ -1,109 +1,97 @@
 # Hermes MAX Gateway
 
-![Hermes MAX messenger integration](assets/banner.jpg)
+![Hermes + MAX](assets/banner.jpg)
 
-> Русская документация: [README_RU.md](README_RU.md). Этот файл — основная английская версия; синхронизируйте факты и ссылки в обеих версиях.
+**Your Hermes agent, in MAX.** Streaming replies, voice messages, interactive buttons and files — with an optional Desktop sessions sidebar.
 
-Hermes Agent platform plugin for the MAX messenger. It provides polling and webhook transports, streaming and chunked replies, interactive callbacks, media handling, access controls, table images, and an optional Hermes Desktop sessions sidebar. Voice transcription is provided by Hermes Core STT, not by this plugin.
+[Русский](README_RU.md) · [Setup](docs/setup.md) · [Changelog](CHANGELOG.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Hermes Agent](https://img.shields.io/badge/Hermes-Agent-8A2BE2)](https://hermes-agent.nousresearch.com/docs)
+[![Hermes Core](https://img.shields.io/badge/Hermes_Core-≥0.21.4-8A2BE2)](docs/setup.md)
+[![Python](https://img.shields.io/badge/Python-≥3.12-3776AB)](pyproject.toml)
 
-## Features
+## ✨ What you get
 
-- MAX platform adapter with long polling or HTTPS webhook transport.
-- Streaming replies, lossless message chunking, and chat actions.
-- Interactive callbacks and buttons; model selection, execution approval, slash confirmation, and clarify flows.
-- Media download and upload, native image/video/audio/document methods, and standalone `hermes send` integration.
-- Optional Markdown-table rendering to PNG (Playwright/Chromium, Pillow fallback).
-- User/group access policies, webhook secret validation, and callback-owner authorization.
-- Optional owner-authorized cross-platform `/sessions` and `/resume`.
-- Optional Hermes Desktop sessions sidebar with RU/EN UI localization.
-- Voice messages enter Hermes Core’s STT pipeline; transcription is configured in Core, not in this plugin.
-- `hermes gateway setup` integration and MAX slash-command registration.
+| | Capability | In your chat |
+|---|---|---|
+| 💬 | **Streaming replies** | Progressive edits, typing indicators and long-message chunking |
+| 🔘 | **Interactive controls** | Model picker, command approvals and clarify choices, including Other |
+| 📎 | **Native attachments** | Images, video, audio and documents; file-only agent replies gain a filename caption |
+| 🎤 | **Voice messages** | Downloaded and passed to Hermes Core STT; transcription is configured in Core |
+| 📊 | **Readable tables** | Optional Markdown → PNG, with Playwright/Chromium and a Pillow fallback |
+| 📡 | **Two transports** | Long polling by default, or HTTPS webhook with secret validation |
+| 🔒 | **Access controls** | User/group allowlists and callback ownership checks |
+| 🖥️ | **Desktop companion** | MAX sessions sidebar, English default and Russian localization |
 
-## Documentation map
+Optional cross-platform `/sessions` and `/resume` require explicit owner authorization. See [feature behavior](docs/features.md).
 
-For a compact document map, run `tree docs`. Read [docs/architecture.md](docs/architecture.md) for component relationships; [docs/setup.md](docs/setup.md) for setup/configuration; [docs/security.md](docs/security.md) for security boundaries; [docs/api.md](docs/api.md) for wire/API contracts; [docs/features.md](docs/features.md) for feature behavior; [docs/troubleshooting.md](docs/troubleshooting.md) for diagnostics; and [docs/external-claims.md](docs/external-claims.md) for dated external evidence. Documentation rules are in [docs/document_writing.md](docs/document_writing.md).
+## 🚀 Quick start
 
-Project documents use English `name.md` with Russian `name_RU.md` counterparts. `README.md` is English and `README_RU.md` is Russian.
-
-[Development with Micro-Spec](docs/micro-spec-development.md) explains requirements, implementation, verification, and handoff. [Catalog contracts and acceptance evidence](docs/specs/catalog-review-137501.md); [outstanding work](BACKLOG.md); [change history](CHANGELOG.md).
-
-## Quick start
-
-Requires Hermes Core **>=0.21.4**. The released minimum is verified at `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` (0.21.4, Python 3.12), alongside later baseline/current source fixtures in CI. Core 0.20 lacks the native execution-approval entry point required by this plugin.
+Requires **Hermes Core ≥0.21.4** and **Python ≥3.12**. The configured minimum/baseline/current Core fixtures are recorded in [setup](docs/setup.md).
 
 ```bash
 hermes plugins install Realmagnum/hermes-max-integration --enable
 hermes gateway setup
 ```
 
-Create a MAX bot and obtain its token using the current official [MAX documentation](https://dev.max.ru/). `hermes gateway setup` guides token and access configuration. By default, the plugin uses long polling. To use a webhook, configure `MAX_WEBHOOK_URL` and `MAX_WEBHOOK_SECRET`, expose the configured path through public HTTPS, then restart the gateway. **Before changing modes, check existing MAX subscriptions:** polling startup attempts to remove stale webhook subscriptions.
+Create a bot using the official [MAX guide](https://dev.max.ru/docs/chatbots/bots-create); setup prompts for `MAX_BOT_TOKEN` and access rules. Long polling needs no public endpoint. For webhooks, configure `MAX_WEBHOOK_URL` and `MAX_WEBHOOK_SECRET` with public HTTPS. **Check existing subscriptions before switching modes:** polling startup attempts to remove stale webhooks.
 
-See [docs/setup.md](docs/setup.md) before changing a production gateway. Never commit bot tokens or webhook secrets.
+Configuration, optional dependencies and production procedures: [setup](docs/setup.md). Keep tokens and secrets out of Git.
 
-## Configuration
+## 📊 Tables that stay readable
 
-For the complete environment-variable reference, defaults, and `platforms.max` YAML keys, see [docs/setup.md](docs/setup.md).
+Enable `MAX_TABLE_AS_IMAGE=true` to turn Markdown tables into a shareable PNG. Install the renderer in the gateway's Python environment; [renderer setup and fallback](docs/features.md).
 
-## Slash commands
+**Source table:**
 
-The plugin registers 20 commands with MAX when possible; registration failure is non-fatal. MAX allows up to 32 commands.
-
-Core: `/start`, `/new` (`/reset`), `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`.
-
-Additional: `/retry`, `/undo [N]`, `/title [name]`, `/branch` (`/fork`), `/compress` (`/compact`), `/rollback [number]`, `/background` (`/bg`, `/btw`), `/agents` (`/tasks`), `/queue` (`/q`), `/topic`.
-
-## Optional table images
-
-Telegram Bot API 10.1+ offers tables through the separate `sendRichMessage` API; this plugin targets MAX, which has no equivalent table message format in its current API contract.
-
-Reasoning-display configuration in Hermes Core uses `streaming:
-  fresh_final_after_seconds`, but Core currently applies that option only to Telegram, not MAX. Check [docs/features.md](docs/features.md) before using it as a workaround.
-
-Set `MAX_TABLE_AS_IMAGE=true` to render Markdown tables as PNG. Playwright/Chromium is preferred; Pillow is the fallback. Install optional dependencies in the same Python environment as the Hermes gateway. See [docs/features.md](docs/features.md) and [docs/troubleshooting.md](docs/troubleshooting.md).
-
-## Security and privacy
-
-The plugin bundles a Russian Trusted Root CA and adds it to the MAX API and upload clients only. This extends their normal trusted CA set. Attachment downloads use standard TLS trust without that additional CA and retain SSRF protections. See [docs/security.md](docs/security.md).
-
-The tested Core dependency set currently pins PyJWT 2.13.0; the dependency audit reports 14 advisories for that version. The audit remains failing until the upstream Core constraint is fixed; no audit exclusions or incompatible dependency overrides are used. See [docs/external-claims.md](docs/external-claims.md).
-
-Outbound API requests go only to the MAX Bot API endpoint fixed in the plugin (`MAX_API_BASE`, `https://platform-api2.max.ru`) and official MAX media hosts (`*.max.ru`, `*.oneme.ru`). Downloaded media and rendered table images are stored locally under `HERMES_HOME`. The plugin includes no telemetry, analytics, or self-updating code; webhook mode requires `MAX_WEBHOOK_SECRET` (fail-closed). See [docs/security.md](docs/security.md).
-
-## Troubleshooting and checks
-
-See [docs/troubleshooting.md](docs/troubleshooting.md). `scripts/diagnose.sh --send` sends a real outbound test message; use it only when the recipient is explicitly approved.
-
-```bash
-python scripts/check_docs_links.py
-python scripts/check-ru-en-parity.py
-python scripts/check-doc-claims.py
-python scripts/check-config-reference.py
-python -m pytest tests/ -q
+```markdown
+| Server   | Status | Load | IP       |
+|----------|--------|------|----------|
+| web-01   | ✓ OK   | 23%  | 10.0.1.10 |
+| web-02   | ✓ OK   | 67%  | 10.0.1.11 |
+| db-main  | ✗ Down | 0%   | 10.0.2.5  |
+| cache-01 | ⚠ High | 92%  | 10.0.3.1  |
 ```
 
-## Project layout
+**Example image delivered to MAX:**
 
-```text
-adapter.py                  MAX gateway adapter and lifecycle
-mixins/                      Webhook, media, buttons, callbacks, sessions, table rendering
-desktop/plugin.js            Hermes Desktop sessions sidebar companion
-locales/                     Plugin and desktop locale manifests
-scripts/                     Setup, release, diagnostics, and documentation checks
-tests/                       Unit, wire-contract, security, and docs tests
-docs/                        Durable project notes; Russian translations use `_RU.md`
-skills/max-gateway/          Install and operation workflow skill
-plugin.yaml                  Hermes plugin metadata
-pyproject.toml               Python package and test configuration
-```
+![Table rendering example: colored status icons and aligned columns](assets/table_sample.png)
 
-## License
+Useful for task lists, monitoring summaries and reports. Rendering is optional; this image illustrates the feature, not a live monitoring result.
 
-MIT. See `LICENSE`.
+## 📎 Sending a file
 
-## Credits
+Ask the agent to create and send a file. It returns `MEDIA:<absolute-file-path>` in its final reply; the gateway uploads the attachment. With no authored text, the plugin adds its filename, or `File` if unavailable. Live file delivery was confirmed by the user on 2026-10-14.
 
-- [Hermes Agent](https://hermes-agent.nousresearch.com/docs) — agent framework.
-- [vladimiraldushin/hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform) — architectural starting point for the MAX integration.
+Direct `hermes send` and cron paths without the output hook still need text: `report.pdf MEDIA:/path/report.pdf`. See [caption contracts](docs/specs/media-caption.md).
+
+## ⌨️ Slash commands
+
+20 commands are registered when possible; registration failure is non-fatal.
+
+**Core:** `/start`, `/new` (`/reset`), `/status`, `/model`, `/resume`, `/sessions`, `/help`, `/stop`, `/config`, `/restart`.
+
+**Additional:** `/retry`, `/undo [N]`, `/title [name]`, `/branch` (`/fork`), `/compress` (`/compact`), `/rollback [number]`, `/background` (`/bg`, `/btw`), `/agents` (`/tasks`), `/queue` (`/q`), `/topic`.
+
+## 🛡️ Security and compatibility
+
+- Tokens follow the active Hermes profile; webhook and callback checks fail closed. Media downloads retain host allowlisting and SSRF protection.
+- The bundled Russian Trusted Root CA extends trust **only for MAX API/upload clients**. Attachment downloads use standard TLS trust.
+- Local media stays under `HERMES_HOME`. No plugin telemetry or self-updating code. API endpoint: `MAX_API_BASE` (`https://platform-api2.max.ru`); official media hosts: `*.max.ru`, `*.oneme.ru`.
+- The pinned CI Core dependency audit reports 14 PyJWT 2.13.0 advisories. This remains an open upstream constraint; no audit exclusions or incompatible overrides are used.
+
+Details: [security](docs/security.md), [dated compatibility evidence](docs/external-claims.md) and [outstanding work](BACKLOG.md). Changes since `v2.10.2` are **unreleased**; see the [changelog](CHANGELOG.md).
+
+## 📚 Go deeper
+
+| Need | Read |
+|---|---|
+| Install, configure or diagnose | [Setup](docs/setup.md) · [Troubleshooting](docs/troubleshooting.md) |
+| Understand behavior and internals | [Features](docs/features.md) · [Architecture](docs/architecture.md) · [API](docs/api.md) |
+| Develop or verify a change | [Micro-Spec workflow](docs/micro-spec-development.md) · [Catalog contracts](docs/specs/catalog-review-137501.md) · [Backlog](BACKLOG.md) |
+
+`scripts/diagnose.sh --send` sends a real message; use only an approved recipient. Offline checks and test instructions are in [setup](docs/setup.md).
+
+## License and credits
+
+[MIT](LICENSE) · Built for [Hermes Agent](https://hermes-agent.nousresearch.com/docs), based on the architectural starting point of [hermes-max-platform](https://github.com/vladimiraldushin/hermes-max-platform).

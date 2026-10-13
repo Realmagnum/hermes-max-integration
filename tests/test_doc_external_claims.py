@@ -44,8 +44,10 @@ def test_reasoning_workaround_no_longer_points_at_display_platforms():
     for fname in ("README.md", "README_RU.md"):
         text = _read(fname)
         assert broken_fragment not in text, f"{fname} still documents the broken config path"
-        assert "streaming:\n  fresh_final_after_seconds" in text, (
-            f"{fname} must document the real streaming.fresh_final_after_seconds key"
+        features = "features_RU.md" if fname.endswith("_RU.md") else "features.md"
+        assert f"docs/{features}" in text
+        assert "streaming:\n  fresh_final_after_seconds" in _read("docs", features), (
+            f"{features} must document the real streaming.fresh_final_after_seconds key"
         )
 
 
@@ -57,8 +59,11 @@ def test_reasoning_workaround_no_longer_points_at_display_platforms():
 def test_telegram_tables_route_through_rich_messages():
     for fname in ("README.md", "README_RU.md"):
         text = _read(fname)
-        assert "sendRichMessage" in text, f"{fname} must name the only table-capable API"
-        assert "Bot API 10.1" in text, f"{fname} must cite the Telegram Bot API version"
+        claims_file = "external-claims_RU.md" if fname.endswith("_RU.md") else "external-claims.md"
+        assert f"docs/{claims_file}" in text
+        claims = _read("docs", claims_file)
+        assert "sendRichMessage" in claims, f"{claims_file} must name the table-capable API"
+        assert "Bot API 10.1" in claims, f"{claims_file} must cite the Telegram Bot API version"
 
 
 def test_max_host_and_format_limits_are_documented():

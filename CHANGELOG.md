@@ -2,34 +2,41 @@
 
 All notable changes to the hermes-max-integration plugin.
 
-## [Unreleased] — Catalog review follow-up, 2026-10-13
+## [Unreleased] — Changes since v2.10.2, 2026-10-14
+
+Compared against the immutable `v2.10.2` tag (`bcbf7696a99e81db1679671f979726d5b5c2833b`). These changes are merged into main; no new version or release tag is created by this update. [Compare with v2.10.2](https://github.com/Realmagnum/hermes-max-integration/compare/v2.10.2...main).
+
+### Added
+
+- **File-only MAX agent replies:** public `transform_llm_output` hook inserts the first filename before Core delivery; direct attachment sends use basename or `File`, preserving authored captions. Platform instructions explain final `MEDIA:<absolute-file-path>` replies. User confirmed live file delivery on 2026-10-14. [CAP-001–005](docs/specs/media-caption.md).
+- **Presentation and documentation:** banner, compact illustrated capability table and the existing PNG-table example in both READMEs; durable architecture notes, Micro-Spec contracts and acceptance/handoff records.
+- **Regression coverage:** real Core send-router and clarify-queue tests, catalog access/security cases, diagnostics privacy, requester-bound picker and Desktop locale harness.
 
 ### Fixed
 
-- **CAP-005:** platform instructions explain final `MEDIA:<absolute-file-path>` replies for local file delivery, avoiding a needless search for a separate MAX sending tool. Actual model compliance and live receipt remain pending.
-
-- **CAP-001–004:** uncaptioned MAX agent MEDIA replies gain the first filename before Core delivery through the public output hook; direct attachment sends use basename or `File`. Authored text is preserved. See [caption contracts](docs/specs/media-caption.md). Direct CLI media-only routing still requires caller-provided text.
-
-- **MS-001/002:** setup stays private and preserves existing allowlists; denied media/commands/callbacks/start events stop before downloads or Core dispatch.
-- **MS-003/004:** credentials honor the active profile scope; default multiplex startup uses Core's supported helper. Dependency checks are passive. Diagnostics use caller env and do not read credential files or expose secrets.
-- **MS-006/007:** English-default Desktop plugin translations and locale-aware dates; native Core execution-approval hook with offered-choice and owner checks.
-- **MS-008/011:** additional CA restricted to API/upload and disclosed in both README files; standalone delivery reports attachment failures/partial results truthfully.
-- **INT-01 (Q-001–Q-006):** native `clarify` choices with Hermes Core gateway resolution; options resolved with label strings instead of numeric indices, duplicate user turn eliminated, single-button-per-row layout for readability, Other free-text interception supported, duplicate and foreign clicks rejected; verified live in MAX chat.
-- **CODE-06 (REL-001):** model picker in unowned group sessions fails closed on tap instead of binding to the first tapper; requests strictly bound to original requester.
+- **Profile isolation:** MAX token/webhook secret resolution uses Core's scoped-secret helper; multiplex default startup works without borrowing credentials from another profile. Dependency checks are passive.
+- **Interactive questions:** callbacks pass choice text into Core's synchronous clarify resolver, continue the waiting turn once, and support Other text input. Invalid/foreign/replayed callbacks cannot consume a valid prompt; buttons use one option per row. Model picker/clarify were confirmed live.
+- **Model picker:** binds to the original requester before sending, requires the matching prompt message, rejects unknown ownership and provides a Cancel button; no first-tapper ownership in groups.
+- **Native command approvals:** adapter implements Core's execution-approval entry point and validates the actual offered choices and requester. Live execution-approval selection remains unverified.
+- **Private setup and access:** preserves existing allowlists; denied media, commands, callbacks and bot-start events stop before downloading or dispatching to Core.
+- **Delivery results:** missing files, upload/send failures and partially delivered attachments are reported as incomplete delivery, preserving counts and already-delivered text/file evidence.
+- **Desktop localization:** English default, Russian language pack, translated UI strings and locale-aware dates; older SDK limitations are documented.
+- **Platform identity:** adapter fallback no longer mutates Core's Platform enum maps.
 
 ### Changed
 
-- **MS-005:** removed the Core-editing media workaround; documented the public router's media-only limitation.
-- **MS-009/010 / BUILD-02:** Playwright pinned to 1.62.0; bounded dependencies, PyYAML test extra, normal resolver and exact minimum/baseline/later Core fixtures. Minimum supported Core is >=0.21.4; supported Python matrix pinned to >=3.12 in `pyproject.toml` and setup docs (Python 3.11 excluded).
-- **DOC-10:** refreshed verification register of external claims (`docs/external-claims.md`) as of 2026-10-13 against current MAX Bot API rules and released Hermes Core >=0.21.4.
-- Persisted the [Micro-Spec and acceptance evidence](docs/specs/catalog-review-137501.md). Removed completed historical defects from the active [backlog](BACKLOG.md); retained original IDs and remaining checks in the traceability record.
-- Historical fixes already present in the candidate include SEC-01…07, CODE-01…05/07/08 and DOC-01…04/06.
+- **Core boundary:** removed `scripts/apply-core-fix.py` and its instructions. The plugin does not rewrite Core. Direct CLI/cron media-only requests without the output hook still need caller-provided text.
+- **MAX API and TLS:** API endpoint uses `platform-api2.max.ru`. Bundled Russian Trusted Root CA is restricted to API/upload clients; attachment downloads keep standard TLS trust, host allowlisting and SSRF/DNS protections.
+- **Supported runtime:** Hermes Core **>=0.21.4**, Python **>=3.12**; Python 3.11 is excluded. CI pins exact minimum/baseline/current Core fixtures; Playwright is pinned to 1.62.0, dependencies bounded and PyYAML included in test extras.
+- **Operational tooling:** diagnostics do not read credential files or reveal token/API bodies; Playwright setup reports installation failures. CI rejects dependency-install fallback messages rather than relying on validator exit status alone.
+- **Documentation:** English primary files with `_RU.md` counterparts, synchronized navigation and refreshed external claims; completed work tracked in changelog/specs, remaining acceptance in backlog. README keeps configuration details in docs while restoring the visual presentation of v2.10.2.
 
 ### Verification and limitations
 
-- Implementation snapshot passed 780 tests and Ruff linting; exact released Core 0.21.4/Python 3.12 and current Core/Python 3.14 verified.
-- Visual acceptance of Desktop UI completed: English default, Russian pack, and date locale formatting verified; recorded limitation that switching language in Desktop client does not dynamically translate the plugin manifest description in Capabilities -> Plugins.
-- Live inbound reaches Core and reply dispatch; outbound standalone text+file has API readback; model picker and clarify choices confirmed live in MAX chat. Live execution approval prompt selection (`_send_exec_approval_prompt`), final admission and catalog repin/reviewer response remain open.
+- Full plugin suite: **796 passed** on Core `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f`; subsequent instruction update: **27 focused tests passed**. Wheel build includes the caption helper. Earlier released-minimum Core 0.21.4/Python 3.12 checks remain dated evidence; the latest caption runtime was not retested on that minimum.
+- User confirmed live file delivery, model picker and clarify; Desktop EN/RU/date inspection is recorded. Final remote-source admission, live execution-approval selection and release publication remain open.
+- Pinned CI Core PyJWT 2.13.0 audit reports **14 advisories**. No vulnerability exclusions or incompatible overrides; this is an unresolved release constraint.
+- Desktop language changes do not dynamically translate the static plugin manifest description on older SDKs. [Remaining work](BACKLOG.md).
 
 ## [2.10.2] — 2026-09-30
 
