@@ -2,6 +2,10 @@
 
 Значимые изменения плагина hermes-max-integration.
 
+## [Не выпущено]
+
+- **Передача каталога на ревью:** опубликованы [PR #138075](https://github.com/NousResearch/hermes-agent/pull/138075) для immutable v2.11.0 и [ответ ревьюеру](https://github.com/NousResearch/hermes-agent/pull/137501#issuecomment-6156793138) с доказательствами исправлений и оставшимися ограничениями. Старый #137501 сохранён как Draft; решение повторного ревью ожидает. [MS-012](docs/specs/20261013-catalog-review-137501_RU.md).
+
 ## [2.11.0] — 2026-10-14
 
 Сравнено с неизменяемым тегом `v2.10.2` (`bcbf7696a99e81db1679671f979726d5b5c2833b`). Этот релиз объединяет все изменения после указанной версии. [Сравнение с v2.10.2](https://github.com/Realmagnum/hermes-max-integration/compare/v2.10.2...v2.11.0).
