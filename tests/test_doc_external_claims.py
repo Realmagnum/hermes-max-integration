@@ -87,6 +87,7 @@ def test_evidence_register_exists_in_both_languages():
     for text, label in ((en, "EN"), (ru, "RU")):
         assert "platform-api2.max.ru" in text, f"{label} evidence register must use current MAX API host"
         assert "2026-09-16" in text, f"{label} evidence register must contain the check date"
-        assert "apply-core-fix.py" in text, f"{label} evidence register must document the follow-up"
+        assert "media-only" in text.lower(), f"{label} evidence register must document the routing limitation"
+        assert "apply-core-fix.py" not in text, f"{label} must not recommend the removed Core-editing script"
     assert "MAX_API_BASE" in ru and "platform-api.max.ru" in ru
     assert "MAX_API_BASE" in en and "platform-api.max.ru" in en

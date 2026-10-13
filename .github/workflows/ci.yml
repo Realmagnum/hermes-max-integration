@@ -1,21 +1,16 @@
 name: CI
 
-# Quality gates must cover every branch: the audit found that `push` was
-# limited to `main`, so feature branches (and the PRs built from them) were
-# never gated. `push:` without a branch filter runs on all branches; PRs stay
-# gated against `main`.
-#
-# Workflow discovery on the Gitea instance used by this repo (1.26.4):
-# `[actions] WORKFLOW_DIRS` defaults to `.gitea/workflows,.github/workflows`
-# and "the first one to exist in a repo is used". This repo has no
-# `.gitea/workflows`, so `.github/workflows` is the directory that is read —
-# the path does not need to change. A CI run still requires a registered
-# act_runner (instance/org/repo level); see BACKLOG BUILD-03 notes.
 on:
   push:
   workflow_dispatch:
   pull_request:
     branches: [main]
+
+# Pin released minimum Core 0.21.4 on Python 3.12 (it requires <3.14).
+# The later baseline/current source fixtures use Python 3.14 and report
+# package version 0.0.0. No dependency overrides are permitted.
+env:
+  CURRENT_CORE_SHA: ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f
 
 jobs:
   test:
@@ -23,128 +18,99 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
-
+        core:
+          - label: minimum
+            job-name: test-minimum-core
+            sha: d337b736aa1e8ebecfab043842d13e4a2d2f48a3
+            python: "3.12"
+          - label: baseline
+            job-name: test
+            sha: d0288be5b3330d2442e3907185b8e9d0958297bb
+            python: "3.14"
+          - label: current
+            job-name: test-current-core
+            sha: ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f
+            python: "3.14"
+    name: ${{ matrix.core.job-name }} (Python ${{ matrix.core.python }})
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
+          python-version: ${{ matrix.core.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install exact Core and plugin
+        env:
+          CORE_SHA: ${{ matrix.core.sha }}
         run: |
+          git init /tmp/hermes-core
+          git -C /tmp/hermes-core remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C /tmp/hermes-core fetch --no-tags --depth=1 origin "$CORE_SHA"
+          git -C /tmp/hermes-core checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/hermes-core rev-parse HEAD)" = "$CORE_SHA"
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-          # Hermes Core 0.19 pins Pillow 12.2, while this plugin's supported
-          # table renderer requires the audited 12.3+ release. Exercise that
-          # compatible runtime combination in every release-gate test job.
-          pip install --upgrade --no-deps "pillow>=12.3"
-
-      - name: Lint with ruff (all production modules)
+          python -m pip install -e /tmp/hermes-core -e ".[test,tables]"
+          python -m pip check
+      - name: Lint, tests and documentation contracts
         run: |
-          ruff check adapter.py mixins/ scripts/ tests/
-
-      - name: Run tests
-        run: |
+          ruff check adapter.py credential_support.py mixins/ scripts/ tests/
           python -m pytest -v --tb=short
           python scripts/check-doc-claims.py
           python scripts/check-config-reference.py
           python scripts/check-ru-en-parity.py
-
-  test-current-core:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-
-      - name: Install pinned current Hermes Core and plugin
+          python scripts/check_docs_links.py
+      - name: Plugin admission including dependency installation
+        shell: bash
         run: |
-          # A depth-1 clone contains only the current branch tip, which may not
-          # include this pinned commit. Fetch the exact object instead; a fetch
-          # failure is a release-gate failure, never a fallback to current HEAD.
-          git init /tmp/hermes-core
-          git -C /tmp/hermes-core remote add origin https://github.com/NousResearch/hermes-agent.git
-          git -C /tmp/hermes-core fetch --no-tags --depth=1 origin d0288be5b3330d2442e3907185b8e9d0958297bb
-          git -C /tmp/hermes-core checkout --detach FETCH_HEAD
-          test "$(git -C /tmp/hermes-core rev-parse HEAD)" = "d0288be5b3330d2442e3907185b8e9d0958297bb"
-          python -m pip install --upgrade pip
-          pip install -e /tmp/hermes-core
-          pip install -e .
-          pip install "pytest>=8" "pytest-asyncio>=0.24" "pytest-mock>=3.14" "ruff>=0.6" "pillow>=12.3" "wcwidth>=0.2"
-
-      - name: Verify current Core compatibility
-        run: |
-          ruff check adapter.py mixins/ scripts/ tests/
-          python -m pytest -v --tb=short
+          hermes plugins validate "$GITHUB_WORKSPACE" --install-deps 2>&1 | tee /tmp/plugin-admission.log
+          # Core currently catches PM preparation failures and proceeds with
+          # validation in the old environment; its exit code alone is not proof
+          # that --install-deps succeeded.
+          ! grep -q 'dependency preparation failed:' /tmp/plugin-admission.log
+          ! grep -q 'Python dependencies not installed' /tmp/plugin-admission.log
+          python -m pip check
 
   security:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: SAST scan with bandit (all production modules)
-        run: |
-          pip install bandit
-          bandit -r adapter.py mixins/ scripts/ -f txt -lll
+          python-version: "3.14"
+      - name: Install scanner
+        run: python -m pip install "bandit>=1.8,<2"
+      - name: SAST scan of production modules
+        run: bandit -r adapter.py credential_support.py mixins/ scripts/ -f txt -lll
 
   dependency-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-
-      - name: Install pinned current Hermes Core and audit tooling
+      - name: Install exact current Core, plugin and audit tooling
         run: |
-          # A depth-1 clone contains only the current branch tip, which may not
-          # include this pinned commit. Fetch the exact object instead; a fetch
-          # failure is a release-gate failure, never a fallback to current HEAD.
           git init /tmp/hermes-core
           git -C /tmp/hermes-core remote add origin https://github.com/NousResearch/hermes-agent.git
-          git -C /tmp/hermes-core fetch --no-tags --depth=1 origin d0288be5b3330d2442e3907185b8e9d0958297bb
+          git -C /tmp/hermes-core fetch --no-tags --depth=1 origin "$CURRENT_CORE_SHA"
           git -C /tmp/hermes-core checkout --detach FETCH_HEAD
-          test "$(git -C /tmp/hermes-core rev-parse HEAD)" = "d0288be5b3330d2442e3907185b8e9d0958297bb"
+          test "$(git -C /tmp/hermes-core rev-parse HEAD)" = "$CURRENT_CORE_SHA"
           python -m pip install --upgrade pip
-          pip install pip-audit
-          pip install -e /tmp/hermes-core
-          pip install -e .
-          pip install "pillow>=12.3" "wcwidth>=0.2"
-
-      - name: Audit runtime + dev dependencies
+          python -m pip install -e /tmp/hermes-core -e ".[test]" "pip-audit>=2.9,<3"
+          python -m pip check
+      - name: Audit Core plus plugin and test dependencies
         run: |
-          pip freeze
+          python -m pip freeze
           pip-audit --desc --skip-editable
-
-      # Optional extras pull heavy native packages (ctranslate2/onnxruntime for
-      # STT, playwright for tables) that the base environment never installs.
-      # `always()` keeps the extras audit running even when the base audit
-      # already failed, so one run reports both environments.
       - name: Install optional extras (stt, tables)
         if: always()
         run: |
-          pip install -e ".[stt,tables]"
-
+          python -m pip install -e ".[stt,tables]"
+          python -m pip check
       - name: Audit optional extras (stt, tables)
         if: always()
         run: |
-          pip freeze
+          python -m pip freeze
           pip-audit --desc --skip-editable

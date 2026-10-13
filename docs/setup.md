@@ -1,6 +1,8 @@
 # Setup
 
-This version currently has **735 tests**; the count is checked by `python scripts/check-doc-claims.py`.
+Minimum supported Core: **>=0.21.4**. The exact released fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` uses Python 3.12 because that release requires Python >=3.11,<3.14. Later baseline/current fixtures use Python 3.14. The isolated minimum-Core environment passed all 776 tests and dependency compatibility checks on 2026-10-13.
+
+This version currently has **776 tests**; the count is checked by `python scripts/check-doc-claims.py`.
 
 ## Environment Variables
 
@@ -255,3 +257,7 @@ curl http://localhost:8646/health
 # Plugin status
 hermes gateway status
 ```
+
+## Development checks
+
+Install the selected Hermes Core source separately, then install this checkout with `python -m pip install -e ".[test,tables]"`. Run `python -m pip check` before `python -m pytest`. CI records the exact Core revisions and uses independent environments. The plugin does not declare Hermes itself as a package dependency: Hermes supplies the application runtime.

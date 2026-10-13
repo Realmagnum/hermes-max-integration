@@ -221,56 +221,32 @@ class ButtonsMixin(MaxBaseMixin):
 
         return await self._post_interactive(chat_id, full_text, keyboard, reply_to=reply_to)
 
-    async def send_exec_approval(
-        self,
-        chat_id: str,
-        command: str,
-        session_key: str,
-        description: str = "dangerous command",
-        metadata: dict[str, Any] | None = None,
-        *args,
-        **kwargs,
-    ) -> SendResult:
-        """Render a dangerous-command approval prompt with native buttons.
-
-        Four buttons: Approve Once / Approve Session / Approve Always / Deny.
-        Button callbacks route through _on_callback → resolve_gateway_approval.
-        """
+    async def _send_exec_approval_prompt(self, prompt) -> SendResult:
+        """Render Core's approved text and action set as owner-bound buttons."""
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
 
         approval_id = uuid.uuid4().hex[:12]
-        cmd_preview = (command or "")[:300] + "..." if len(command or "") > 300 else (command or "")
-
-        text = (
-            f"⚠️ **Command Approval Required**\n\n"
-            f"```\n{cmd_preview}\n```\n\n"
-            f"Reason: {description}"
+        buttons = [
+            {"type": "callback", "text": label, "payload": f"exec:{choice}:{approval_id}"}
+            for label, choice, _style in prompt.actions
+        ]
+        rows = [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
+        result = await self._post_interactive(
+            prompt.chat_id, prompt.text, rows,
+            reply_to=(prompt.metadata or {}).get("reply_to_message_id"),
         )
-
-        reply_to = (metadata or {}).get("reply_to_message_id") if metadata else None
-
-        buttons = [[
-            {"type": "callback", "text": "✅ Approve Once", "payload": f"exec:once:{approval_id}"},
-            {"type": "callback", "text": "🔄 Session", "payload": f"exec:session:{approval_id}"},
-        ], [
-            {"type": "callback", "text": "🔒 Always", "payload": f"exec:always:{approval_id}"},
-            {"type": "callback", "text": "❌ Deny", "payload": f"exec:deny:{approval_id}"},
-        ]]
-
-        result = await self._post_interactive(chat_id, text, buttons, reply_to=reply_to)
         if result.success:
-            # SEC-01: bind the prompt to its owner, chat and message so only
-            # that user can resolve it (see mixins/callback_auth.py).
-            self._register_interaction(
+            record = self._register_interaction(
                 "exec", approval_id,
-                session_key=session_key,
+                session_key=prompt.session_key,
                 owner_user_id=self._resolve_interaction_owner(
-                    session_key, chat_id, metadata,
+                    prompt.session_key, prompt.chat_id, prompt.metadata,
                 ),
-                chat_id=chat_id,
+                chat_id=prompt.chat_id,
                 message_id=result.message_id,
             )
+            record["allowed_choices"] = prompt.choices
         return result
 
     async def send_slash_confirm(

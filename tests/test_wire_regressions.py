@@ -35,6 +35,14 @@ ACCEPT_AFFIX = re.compile(r"^\(\d+/\d+\)\n")
 # Inbound routing
 # ═════════════════════════════════════════════════════════════════════════
 
+@pytest.fixture
+def make_adapter(make_adapter):
+    """Wire scenarios authorize the captured actor; security cases override it."""
+    def factory(extra=None, **kwargs):
+        return make_adapter(extra={"allowed_users": [str(DIALOG_USER_ID)], **(extra or {})}, **kwargs)
+    return factory
+
+
 class TestInboundRouting:
     """`_build_event` must classify a dialog as a DM and a chat as a group."""
 
@@ -737,7 +745,7 @@ class TestExecApproval:
             lambda key, choice: resolved.append((key, choice)) or 1,
         )
 
-        a = make_adapter()
+        a = make_adapter(extra={"allowed_users": [str(DIALOG_USER_ID), "99999"]})
         await a.send_exec_approval(
             f"user:{DIALOG_USER_ID}", command="rm -rf /", session_key="sess-1"
         )
@@ -877,16 +885,15 @@ class TestCrossSessionCommands:
         assert event.text == "/sessions"
         assert max_api.requests == []
 
-    async def test_empty_allowlist_keeps_sessions_scoped_to_core(
+    async def test_empty_allowlist_denies_sessions_before_core(
         self, make_adapter, max_api
     ):
         """SEC-05: empty DM allowlists must not invoke the global-session handler."""
-        a = make_adapter()  # allow_all_users False, allowed_users []
+        a = make_adapter(extra={"allowed_users": []})  # closed access, even for /sessions
 
         event = await a._build_event(self._dialog_without_chat_id("/sessions"))
 
-        assert event is not None
-        assert event.text == "/sessions"
+        assert event is None
         assert max_api.calls("POST", "/messages") == []
 
 

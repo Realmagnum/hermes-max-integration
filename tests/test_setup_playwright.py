@@ -1,9 +1,4 @@
-"""Tests for scripts/setup-playwright.py (pure helper functions).
-
-The script itself is a standalone CLI; here we import it by file path and
-exercise its pure logic (browser detection, interpreter probing) without
-running pip or downloading anything.
-"""
+"""Playwright setup must check the exact package/browser in the target Python."""
 
 import importlib.util
 from pathlib import Path
@@ -12,57 +7,70 @@ import pytest
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "setup-playwright.py"
 _spec = importlib.util.spec_from_file_location("setup_playwright", _SCRIPT)
-assert _spec and _spec.loader, f"cannot load {_SCRIPT}"
+assert _spec and _spec.loader
 setup_playwright = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(setup_playwright)
 
 
-class TestBrowserDetection:
-    def test_chromium_dir_detected(self, tmp_path, monkeypatch):
-        (tmp_path / "chromium-1234").mkdir()
-        (tmp_path / "ffmpeg-1011").mkdir()
-        monkeypatch.setattr(setup_playwright, "browsers_root", lambda: tmp_path)
-        assert setup_playwright.chromium_installed() is True
-
-    def test_headless_shell_counts_as_installed(self, tmp_path, monkeypatch):
-        (tmp_path / "chromium_headless_shell-1234").mkdir()
-        monkeypatch.setattr(setup_playwright, "browsers_root", lambda: tmp_path)
-        assert setup_playwright.chromium_installed() is True
-
-    def test_empty_root_reports_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(setup_playwright, "browsers_root", lambda: tmp_path)
-        assert setup_playwright.chromium_installed() is False
-
-    def test_nonexistent_root_reports_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            setup_playwright, "browsers_root", lambda: tmp_path / "nope"
-        )
-        assert setup_playwright.chromium_installed() is False
+@pytest.mark.parametrize("version,expected", [("1.62.0", True), ("1.63.0", False), ("", False)])
+def test_exact_package_pin(monkeypatch, version, expected):
+    calls = []
+    def probe(py, code):
+        calls.append((py, code))
+        return version
+    monkeypatch.setattr(setup_playwright, "probe", probe)
+    assert setup_playwright.playwright_installed("target-python") is expected
+    assert calls[0][0] == "target-python"
+    assert "metadata.version('playwright')" in calls[0][1]
 
 
-class TestProbe:
-    @pytest.mark.skipif(
-        importlib.util.find_spec("playwright") is None,
-        reason=(
-            "playwright is an optional extra (pyproject: [project.optional-dependencies]"
-            " tables) — not installed in this interpreter, so the running-interpreter"
-            " probe cannot be asserted here"
-        ),
-    )
-    def test_playwright_installed_in_running_interpreter(self):
-        """The interpreter running the tests (hermes venv) has playwright.
+@pytest.mark.parametrize("response,expected", [("True", True), ("False", False), ("error True", False)])
+def test_browser_checks_target_revision(monkeypatch, response, expected):
+    calls = []
+    def probe(py, code):
+        calls.append((py, code))
+        return response
+    monkeypatch.setattr(setup_playwright, "probe", probe)
+    assert setup_playwright.chromium_installed("target-python") is expected
+    assert calls[0][0] == "target-python"
+    assert "chromium.executable_path" in calls[0][1]
+    assert "is_file()" in calls[0][1]
 
-        Skipped when the optional `tables` extra is absent: the plugin's
-        documented fallback (Pillow) makes Playwright non-required, so the
-        suite must not turn into a 'is Playwright installed?' probe.
-        """
-        import sys
 
-        assert setup_playwright.playwright_installed(sys.executable) is True
+def test_check_only_does_not_install(monkeypatch):
+    monkeypatch.setattr("sys.argv", [str(_SCRIPT), "--check-only"])
+    monkeypatch.setattr(setup_playwright, "playwright_installed", lambda py: False)
+    monkeypatch.setattr(setup_playwright, "chromium_installed", lambda py: False)
+    def forbidden(*args, **kwargs):
+        pytest.fail("check-only must not install")
+    monkeypatch.setattr(setup_playwright, "run", forbidden)
+    assert setup_playwright.main() == 1
 
-    def test_probe_returns_false_for_missing_interpreter(self):
-        """A non-existent interpreter → probe returns '' → not installed."""
-        assert (
-            setup_playwright.playwright_installed("definitely-not-a-python-exe")
-            is False
-        )
+
+def test_package_upgrade_rechecks_browser_revision(monkeypatch):
+    monkeypatch.setattr("sys.argv", [str(_SCRIPT), "--python", "target-python"])
+    packages = iter([False, True])
+    browsers = iter([True, False, True])
+    monkeypatch.setattr(setup_playwright, "playwright_installed", lambda py: next(packages))
+    monkeypatch.setattr(setup_playwright, "chromium_installed", lambda py: next(browsers))
+    commands = []
+    monkeypatch.setattr(setup_playwright, "run", lambda cmd, **kw: commands.append(cmd) or 0)
+    assert setup_playwright.main() == 0
+    assert commands == [
+        ["target-python", "-m", "pip", "install", "-q", "playwright==1.62.0"],
+        ["target-python", "-m", "playwright", "install", "chromium"],
+    ]
+
+
+def test_resolver_failure_stops_browser_install(monkeypatch):
+    monkeypatch.setattr("sys.argv", [str(_SCRIPT)])
+    monkeypatch.setattr(setup_playwright, "playwright_installed", lambda py: False)
+    monkeypatch.setattr(setup_playwright, "chromium_installed", lambda py: False)
+    commands = []
+    monkeypatch.setattr(setup_playwright, "run", lambda cmd, **kw: commands.append(cmd) or 1)
+    assert setup_playwright.main() == 1
+    assert len(commands) == 1
+
+
+def test_missing_interpreter_is_not_installed():
+    assert not setup_playwright.playwright_installed("definitely-not-a-python-exe")

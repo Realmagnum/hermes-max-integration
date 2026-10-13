@@ -178,17 +178,11 @@ class CallbackAuthMixin(MaxBaseMixin):
     # ── authorization gate ───────────────────────────────────────────────
 
     def _is_callback_user_allowed(self, user_id: str) -> bool:
-        """Mirror the inbound-message allowlist check.
-
-        NOTE: the empty-allowlist semantics of the message path (an empty
-        ``allowed_users`` currently opens access) are a separate finding
-        (SEC-06) — this helper only reuses the existing rule so callbacks are
-        never *weaker* than ordinary messages.
-        """
+        """Apply the same fail-closed user policy as inbound messages."""
         if getattr(self, "_allow_all_users", False):
             return True
         allowed = getattr(self, "_allowed_users_set", None) or set()
-        return not allowed or str(user_id) in allowed
+        return str(user_id) in allowed
 
     def _interaction_deny_reason(
         self,

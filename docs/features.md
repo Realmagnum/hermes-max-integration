@@ -12,7 +12,7 @@ Voice messages from MAX come as audio attachments with `payload.url` for direct 
 
 ### Setup
 
-Transcription is performed by **Hermes Core** (≥ 0.20.0). Configuration lives in the core `config.yaml`:
+Transcription is performed by **Hermes Core** (≥ 0.21.4). Configuration lives in the core `config.yaml`:
 
 ```yaml
 stt:
@@ -278,8 +278,10 @@ When the plugin is enabled, it automatically integrates into the left sidebar of
 
 1. **Active MAX Dialogs List:** shows users and groups communicated with via MAX Bot API.
 2. **Session Metrics:** displays message counts and total token consumption for each conversation.
-3. **Time Formatting:** leverages localized Hermes time formatters (`fmtDateTime`, `fmtDayTime`, `relativeTime`).
+3. **Time Formatting:** uses `Intl.DateTimeFormat` with the user's Desktop locale.
 4. **Theme Integration:** seamlessly inherits the active Hermes theme variables, badges, and card styling.
+
+The sessions page, notifications and statusbar use plugin-scoped English/Russian locale bundles through the public Desktop SDK. English is the default and fallback for other languages; dates retain the user's selected locale. When `ctx.i18n.onLocaleChange` is available, palette labels also refresh on language changes. Older SDKs keep palette labels in the language active at registration until the plugin reloads; the page and statusbar remain reactive. Verified against the public SDK on 2026-10-13: [Hermes 0.21.4](https://github.com/NousResearch/hermes-agent/blob/v2026.9.21/apps/desktop/src/i18n/plugin-i18n.ts) lacks this subscription, while [Hermes 0.21.5](https://github.com/NousResearch/hermes-agent/blob/v2026.9.24/apps/desktop/src/i18n/plugin-i18n.ts) provides it.
 
 ### Automatic Installation (Unified Package)
 

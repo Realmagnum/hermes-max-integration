@@ -51,7 +51,7 @@ class TestSendModelPicker:
 
     def _make_adapter(self):
         from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
+        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token", "allowed_users": ["42", "99"]})
         a = adapter.MaxAdapter(cfg)
         a._http_client = AsyncMock()
         mock_resp = MagicMock()
@@ -154,13 +154,14 @@ class TestModelCallback:
 
     def _make_adapter(self):
         from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
+        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token", "allowed_users": ["42", "99"]})
         a = adapter.MaxAdapter(cfg)
         a._http_client = AsyncMock()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"message": {"body": {"mid": "mid-models"}}}
         a._http_client.post = AsyncMock(return_value=mock_resp)
+        a._http_client.delete = AsyncMock(return_value=mock_resp)
         return a
 
     @pytest.mark.asyncio
@@ -359,7 +360,7 @@ class TestModelPickerIsolation:
 
     def _make_adapter(self):
         from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
+        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token", "allowed_users": ["42", "99"]})
         a = adapter.MaxAdapter(cfg)
         a._http_client = AsyncMock()
         mock_resp = MagicMock()

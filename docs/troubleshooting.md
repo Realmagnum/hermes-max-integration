@@ -4,6 +4,8 @@
 
 Start with read-only checks. Never place bot tokens in shell arguments or publish them in logs. `--send` performs a real outbound message and must only be used with an approved recipient.
 
+`diagnose.sh` reads MAX variables from the caller's environment only; it never loads Hermes `.env`. Run it from a profile-aware environment that supplies `MAX_BOT_TOKEN` and the relevant non-secret MAX settings. A missing token is reported as a failed check. The script withholds log contents and API response bodies and passes the authorization header to curl over stdin, rather than exposing it in process arguments.
+
 ## diagnose.sh
 
 Automated script for checking MAX functionality.
@@ -131,7 +133,7 @@ HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
 # Install what's missing (idempotent):
 "$HERMES_PY" scripts/setup-playwright.py
 # or manually:
-"$HERMES_PY" -m pip install 'playwright>=1.40'
+"$HERMES_PY" -m pip install 'playwright==1.62.0'
 "$HERMES_PY" -m playwright install chromium
 
 # Fallback renderer without a browser:

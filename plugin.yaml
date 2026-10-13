@@ -2,7 +2,7 @@ name: max-platform
 label: Max
 kind: platform
 version: 2.10.2
-requires_hermes: ">=0.20"
+requires_hermes: ">=0.21.4"
 description: >
   MAX messenger (max.ru) gateway adapter for Hermes Agent with cross-platform
   session management and native Hermes Desktop sessions sidebar integration.
@@ -17,9 +17,11 @@ homepage: https://github.com/Realmagnum/hermes-max-integration
 # renderer, pillow the fallback. Browser binaries need a separate step:
 #   python -m playwright install chromium   (~115 MB, one-time)
 python_dependencies:
-  - "playwright>=1.40"
-  - "pillow>=12.3"
-  - "wcwidth>=0.2"
+  - "aiohttp>=3.14.3,<4"
+  - "httpx>=0.28.1,<0.29"
+  - "playwright==1.62.0"
+  - "pillow>=12.3,<13"
+  - "wcwidth>=0.2,<1"
 
 provides_locales:
   - id: ru

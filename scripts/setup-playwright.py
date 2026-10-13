@@ -28,39 +28,23 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-PLAYWRIGHT_REQ = "playwright>=1.40"
+PLAYWRIGHT_VERSION = "1.62.0"
+PLAYWRIGHT_REQ = f"playwright=={PLAYWRIGHT_VERSION}"
 BROWSER = "chromium"
 
 
-def browsers_root() -> Path:
-    """Directory where `playwright install` drops browsers."""
-    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-    if override:
-        return Path(override)
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "ms-playwright"
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "ms-playwright"
-    return Path.home() / ".cache" / "ms-playwright"
-
-
-def chromium_installed() -> bool:
-    """True when the bundled Chromium (or headless shell) is present.
-
-    Playwright installs per-revision dirs like ``chromium-1234`` and
-    ``chromium_headless_shell-1234`` (headless shell ships with the
-    regular ``chromium`` target since Playwright 1.49).
-    """
-    root = browsers_root()
-    if not root.is_dir():
-        return False
-    return any(p.name.startswith("chromium") and p.is_dir() for p in root.iterdir())
+def chromium_installed(py: str) -> bool:
+    """Check the target package's exact browser revision, not stale cache dirs."""
+    return probe(
+        py,
+        "from pathlib import Path; from playwright.sync_api import sync_playwright; "
+        "p = sync_playwright().start(); "
+        "print(Path(p.chromium.executable_path).is_file()); p.stop()",
+    ).lower() == "true"
 
 
 def probe(py: str, code: str) -> str:
@@ -75,12 +59,10 @@ def probe(py: str, code: str) -> str:
 
 
 def playwright_installed(py: str) -> bool:
-    """True when the target interpreter can import playwright."""
-    return (
-        probe(py, "import importlib.util; print(bool(importlib.util.find_spec('playwright')))")
-        .lower()
-        .endswith("true")
-    )
+    """True only for the tested package version in the target interpreter."""
+    return probe(
+        py, "import importlib.metadata; print(importlib.metadata.version('playwright'))"
+    ) == PLAYWRIGHT_VERSION
 
 
 def run(cmd: list[str], quiet: bool = False) -> int:
@@ -116,7 +98,7 @@ def main() -> int:
     missing = []
     if not playwright_installed(py):
         missing.append("package (playwright)")
-    if not chromium_installed():
+    if not chromium_installed(py):
         missing.append(f"browser ({BROWSER})")
 
     if args.check_only:
@@ -137,7 +119,9 @@ def main() -> int:
         if run([py, "-m", "pip", "install", "-q", PLAYWRIGHT_REQ], quiet=args.quiet) != 0:
             return 1
 
-    if "browser (chromium)" in missing:
+    # A package upgrade changes Chromium revision even if an old browser was
+    # present at the initial probe. Re-probe after installing the exact pin.
+    if not chromium_installed(py):
         print("Installing Chromium (~115 MB, one-time) ...")
         if run([py, "-m", "playwright", "install", BROWSER], quiet=args.quiet) != 0:
             return 1
@@ -146,7 +130,7 @@ def main() -> int:
     still_missing = []
     if not playwright_installed(py):
         still_missing.append("package (playwright)")
-    if not chromium_installed():
+    if not chromium_installed(py):
         still_missing.append(f"browser ({BROWSER})")
     if still_missing:
         print("STILL MISSING: " + ", ".join(still_missing))

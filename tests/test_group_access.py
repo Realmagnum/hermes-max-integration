@@ -56,7 +56,7 @@ def make_adapter(**extra):
     cfg = PlatformConfig(
         enabled=True,
         token="test-token",
-        extra={"token": "test-token", **extra},
+        extra={"token": "test-token", "allow_all_users": True, **extra},
     )
     return adapter.MaxAdapter(cfg)
 

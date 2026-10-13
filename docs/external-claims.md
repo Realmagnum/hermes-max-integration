@@ -14,7 +14,7 @@
 | "Webhook required for production" | **Confirmed** | dev.max.ru/docs-api, API recommendations | Kept, with a citation and the port 443 requirement |
 | "MAX uses Russian MinCifry CA certificates" | **Partially confirmed** | dev.max.ru/docs-api, POST /subscriptions | Clarified: trusted-CA **or** MinCifry cert; as of 2026-05-25 HTTP and self-signed are rejected |
 | "`display.platforms.max.fresh_final_after_seconds: 10` fixes reasoning in MAX" | **False** | core 0.21.3, `gateway/run_turn.py` | Replaced with `streaming.fresh_final_after_seconds` + a Telegram-only caveat |
-| `scripts/apply-core-fix.py` apply/revert | **Incompatible with core 0.21.3** | run against a core copy | Compatibility warning added |
+| Media-only routing through Hermes | **Core-version dependent** | public platform registration contract | No Core-editing workaround is shipped |
 
 ## 2. MAX API — host and authorization
 
@@ -75,12 +75,14 @@ Official requirements (dev.max.ru/docs-api/methods/POST/subscriptions):
 ## 7. Hermes core 0.21.3 — local verification
 
 - **Reasoning / fresh-final.** The key is read only from the top-level `streaming:` section (`gateway/config.py`, `StreamingConfig.from_dict`) and applied to **Telegram only**: `gateway/run_turn.py:2492` forces `0.0` for every other platform. The README's `display.platforms.max.fresh_final_after_seconds` shape works neither by key path nor by platform.
-- **`scripts/apply-core-fix.py`.** The script looks for the markers `# --- Non-media platforms ---` and `if media_files and not message.strip()`. Core 0.21.3 has neither (the section was reworked and now has a `_PLUGIN_STANDALONE_MEDIA` registry), so apply and revert both end with `❌ Could not find insertion marker in core file.` A run against a **copy** of core (the live file was untouched; sha256 identical before and after) confirmed the live install is not modified and media-only delivery is not enabled.
+- **Media-only delivery.** Historical checks found version-dependent routing limitations in Core. The plugin no longer ships a Core-editing workaround. Confirm delivery through the selected Core's public router; a standalone sender unit test does not establish media-only routing.
+
+**Router verification, 2026-10-13.** Integration tests against Core `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f` use real plugin registration and Core dispatch with mocked API/CDN transports (`tests/test_core_send_router.py`). Text and text-plus-file requests reach the registered MAX standalone sender. Successful attachment delivery reports `media_delivered=true`, preventing Core's unsupported-media warning. Missing files, failed upload/CDN or rejected attachment messages return an error with `media_requested`, `media_sent`, `text_delivered` and `partial_delivery`; previously delivered text/files are not described as a complete success. Core's public `_send_to_platform` still rejects MAX media-only requests before transport, although its lower `_send_via_adapter` dispatcher can deliver them. These isolated checks establish routing and result semantics, not live MAX delivery.
 - **Text limit.** `MAX_MESSAGE_LENGTH = 4000` in `adapter.py` matches the official MAX limit (4000 characters).
 
 ## 8. Follow-ups (outside DOC-10)
 
-1. Adapt `scripts/apply-core-fix.py` to the 0.21.3 core layout (or replace it with a supported mechanism).
+1. If the public router rejects media-only requests, request a generic plugin capability in Hermes Core and document the limitation until that API is available. Do not rewrite Core files or override private runtime objects.
 
 ## 9. Verifiability
 

@@ -25,7 +25,7 @@ MAX delivers updates through polling or webhooks. The adapter normalizes the eve
 
 ### Outbound messages
 
-Core invokes platform methods. The adapter formats and chunks text, throttles streaming edits, optionally renders Markdown tables as PNG, then uploads and sends media through MAX APIs and CDN. A separate `send_message_handler` supports standalone media delivery without a Core patch; verify its contract against `plugin.yaml` and current source.
+Core invokes platform methods. The adapter formats and chunks text, throttles streaming edits, optionally renders Markdown tables as PNG, then uploads and sends media through MAX APIs and CDN. The registered `standalone_sender_fn` supports standalone delivery when Core routes a request to it. Media-only routing depends on the selected Core version; the plugin never patches Core to enable it.
 
 ## Non-obvious invariants
 

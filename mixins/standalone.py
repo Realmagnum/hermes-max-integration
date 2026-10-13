@@ -14,6 +14,7 @@ try:
     from ..ssl_support import get_max_ssl_context
 except (ImportError, ValueError):
     from ssl_support import get_max_ssl_context
+from ..credential_support import get_max_secret
 from .media_upload import _ALLOWED_UPLOAD_HOSTS
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,7 @@ UPLOAD_DELAY = 2.0
 
 async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str) -> SendResult:
     """Send a message via Max API without the full adapter."""
-    extra = getattr(pconfig, "extra", {}) or {}
-    token = os.getenv("MAX_BOT_TOKEN") or getattr(pconfig, "token", "") or extra.get("token", "")
+    token = _standalone_get_token(pconfig)
     if not token:
         return SendResult(success=False, error="MAX_BOT_TOKEN not configured")
 
@@ -62,7 +62,7 @@ async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str)
 def _standalone_get_token(pconfig: PlatformConfig) -> str:
     """Extract MAX bot token from config/env in the standalone path."""
     extra = getattr(pconfig, "extra", {}) or {}
-    return (os.getenv("MAX_BOT_TOKEN") or getattr(pconfig, "token", "") or extra.get("token", "") or "").strip()
+    return get_max_secret("MAX_BOT_TOKEN", getattr(pconfig, "token", "") or extra.get("token", ""))
 
 
 async def _standalone_send(
@@ -76,7 +76,7 @@ async def _standalone_send(
 ) -> dict:
     """Standalone sender contract for send_message/cron delivery.
 
-    Supports native file delivery: extracts MEDIA: paths from ``message``,
+    Supports native file delivery from Core-provided ``media_files`` descriptors:
     uploads each file via the 3-step MAX protocol, and attaches them to the
     outgoing message. Works with or without a running gateway adapter.
     """
@@ -87,11 +87,25 @@ async def _standalone_send(
         return {"error": "MAX_BOT_TOKEN not configured"}
 
     headers = {"Authorization": token, "Content-Type": "application/json"}
+    requested_media = len(media_files or [])
+    delivered_media = 0
+    text_delivered = False
+    last_message_id: str | None = None
+
+    def delivery_error(reason):
+        return {
+            "error": f"{reason}: {delivered_media}/{requested_media} media files delivered",
+            "media_requested": requested_media,
+            "media_sent": delivered_media,
+            "media_delivered": False,
+            "text_delivered": text_delivered,
+            "partial_delivery": text_delivered or delivered_media > 0,
+            "message_id": last_message_id,
+        }
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0), verify=get_max_ssl_context()) as client:
             # 1. Send text message first
-            last_message_id: str | None = None
             if message and message.strip():
                 parts = chat_id.split(":", 1)
                 target_type = parts[0] if len(parts) > 1 else "user"
@@ -101,6 +115,9 @@ async def _standalone_send(
                 resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
+                if data.get("ok", True) is False:
+                    return delivery_error("MAX rejected the text message")
+                text_delivered = True
                 last_message_id = str(data.get("message", {}).get("message_id", "") or data.get("message", {}).get("body", {}).get("mid", ""))
 
             # 2. Upload and send each media file
@@ -234,7 +251,7 @@ async def _standalone_send(
                         resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
                         if resp.status_code in (200, 201):
                             data = resp.json()
-                            if data.get("ok", True) or "message" in data:
+                            if data.get("ok", True) is not False:
                                 last_message_id = str(
                                     data.get("message", {}).get("body", {}).get("mid", "")
                                     or data.get("message", {}).get("message_id", "")
@@ -258,8 +275,19 @@ async def _standalone_send(
                         break
                 if not _sent_ok:
                     continue
+                delivered_media += 1
 
-            return {"success": True, "message_id": last_message_id}
+            if delivered_media != requested_media:
+                return delivery_error("MAX attachment delivery incomplete")
+            if not text_delivered and not delivered_media:
+                return delivery_error("No deliverable text or media")
+            return {
+                "success": True,
+                "message_id": last_message_id,
+                "media_delivered": bool(requested_media),
+                "media_sent": delivered_media,
+                "text_delivered": text_delivered,
+            }
     except Exception as exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
         logger.error("MAX: standalone send failed: %s", exc)
-        return {"error": f"Max standalone send failed: {exc}"}
+        return delivery_error("MAX standalone send failed (see logs)")

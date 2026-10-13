@@ -218,7 +218,7 @@ class TestStandaloneSend:
 
     @pytest.mark.asyncio
     async def test_standalone_media_file_not_found(self):
-        """media_files with non-existent path should skip gracefully."""
+        """Missing media reports failure even when the text was delivered."""
         from gateway.config import PlatformConfig
         pconfig = PlatformConfig(enabled=True, token="test-token", extra={})
 
@@ -234,12 +234,16 @@ class TestStandaloneSend:
             mock_resp.json.return_value = {"message": {"message_id": "m-1"}}
             mock_client.post = AsyncMock(return_value=mock_resp)
 
-            # Non-existent file should be skipped, text still delivered
+            # Text is delivered, but the overall requested operation is incomplete
             result = await adapter._standalone_send(
                 pconfig, "user:42", "Text",
                 media_files=[("/nonexistent/file.pdf", False)],
             )
-            assert result.get("success") is True
+            assert "error" in result
+            assert result["text_delivered"] is True
+            assert result["partial_delivery"] is True
+            assert result["media_sent"] == 0
+            assert result["media_delivered"] is False
 
 
 # ── Tests for SSRF in standalone sender ──────────────────────────────────
@@ -271,7 +275,8 @@ class TestStandaloneSSRF:
                     pconfig, "user:42", "test",
                     media_files=[("/tmp/test.pdf", False)],
                 )
-            assert result.get("success") is True
+            assert "error" in result
+            assert result["media_delivered"] is False
 
 
 # ── Tests for _standalone_get_token ───────────────────────────────────────

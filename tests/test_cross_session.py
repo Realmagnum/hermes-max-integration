@@ -153,24 +153,24 @@ OTHER_USER_CFG = {
 
 class TestCrossSessionRouting:
     @pytest.mark.asyncio
-    async def test_default_config_passes_sessions_through_to_core(self):
-        a = make_adapter()
+    async def test_authorized_user_default_cross_session_passes_sessions_through_to_core(self):
+        a = make_adapter({"allowed_users": ["42"]})
         a._handle_cross_sessions = AsyncMock()
         event = await a._on_message_created(dm_update("/sessions"))
         a._handle_cross_sessions.assert_not_called()
         assert event is not None and event.text == "/sessions"
 
     @pytest.mark.asyncio
-    async def test_default_config_passes_resume_target_without_all(self):
-        a = make_adapter()
+    async def test_authorized_user_default_cross_session_passes_resume_target_without_all(self):
+        a = make_adapter({"allowed_users": ["42"]})
         event = await a._on_message_created(dm_update("/resume abc123"))
         assert event is not None
         assert event.text == "/resume abc123"
         assert "--all" not in event.text
 
     @pytest.mark.asyncio
-    async def test_default_config_passes_sessions_target_without_all(self):
-        a = make_adapter()
+    async def test_authorized_user_default_cross_session_passes_sessions_target_without_all(self):
+        a = make_adapter({"allowed_users": ["42"]})
         event = await a._on_message_created(dm_update("/sessions abc123"))
         assert event is not None
         assert event.text == "/sessions abc123"

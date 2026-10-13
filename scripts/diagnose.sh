@@ -32,21 +32,22 @@ check() {
 
 # ── Config ────────────────────────────────────────────────────────────
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-ENV_FILE="$HERMES_HOME/.env"
 CONFIG_FILE="$HERMES_HOME/config.yaml"
 GATEWAY_LOG="$HERMES_HOME/logs/gateway.log"
-MAX_API="https://platform-api2.max.ru"
+MAX_API="${MAX_API_BASE_URL:-https://platform-api2.max.ru}"
 
-# Parse KEY=VALUE from .env (skip comments, non-var lines)
-if [ -f "$ENV_FILE" ]; then
-    while IFS='=' read -r key val; do
-        if [ -n "$key" ] && [ -n "$val" ] && [ "${key#\#}" = "$key" ]; then
-            key="${key## }"; key="${key%% *}"
-            val="${val%%\#*}"; val="${val## }"
-            export "$key=$val" 2>/dev/null || true
-        fi
-    done < "$ENV_FILE"
-fi
+# The caller supplies MAX variables for the active profile. Never load a
+# credential file or put the token into a child process's command arguments.
+max_request() {
+    local escaped_token
+    case "${MAX_BOT_TOKEN:-}" in
+        *$'\r'*|*$'\n'*) return 1 ;;
+    esac
+    escaped_token="${MAX_BOT_TOKEN//\\/\\\\}"
+    escaped_token="${escaped_token//\"/\\\"}"
+    printf 'header = "Authorization: %s"\n' "$escaped_token" |
+        curl --config - -fs --max-time 10 "$@"
+}
 
 # Determine mode
 if [ -n "${MAX_WEBHOOK_URL:-}" ]; then
@@ -64,7 +65,7 @@ echo ""
 # ── 1. Plugin installed & enabled ────────────────────────────────────
 desc="Plugin installed & enabled"
 if command -v hermes &>/dev/null; then
-    plugin_line=$(hermes plugins list 2>/dev/null | grep "max-platform")
+    plugin_line=$(hermes plugins list 2>/dev/null | grep "max-platform" || true)
     if echo "$plugin_line" | grep -q "enabled"; then
         version=$(echo "$plugin_line" | sed 's/.*│ *//; s/ *│.*//')
         check 1 "$desc ($version)" "pass"
@@ -78,9 +79,9 @@ fi
 # ── 2. Gateway log: MAX connected ────────────────────────────────────
 desc="Gateway log: MAX connected"
 if [ -f "$GATEWAY_LOG" ]; then
-    last_conn=$(grep "MAX: connected" "$GATEWAY_LOG" 2>/dev/null | tail -1)
+    last_conn=$(grep "MAX: connected" "$GATEWAY_LOG" 2>/dev/null | tail -1 || true)
     if [ -n "$last_conn" ]; then
-        echo -e "       Last: $last_conn"
+        echo -e "       Connection record found (log contents withheld)"
         check 2 "$desc" "pass"
     else
         echo -e "       No 'MAX: connected' entries found"
@@ -108,7 +109,7 @@ else
         poll_ok=$(echo "$poll_lines" | grep -v "poll error" | grep -v "poll HTTP" || true)
         poll_err=$(echo "$poll_lines" | grep -E "poll error|poll HTTP" || true)
         if [ -n "$poll_ok" ]; then
-            echo -e "       Last: $(echo "$poll_ok" | tail -1)"
+            echo -e "       Polling record found (log contents withheld)"
             check 3 "$desc" "pass"
         elif [ -n "$poll_lines" ]; then
             echo -e "       Only error lines: $(echo "$poll_lines" | wc -l) entries"
@@ -149,8 +150,7 @@ else
         if [ -z "$recent_errs" ]; then
             check 4 "$desc" "pass"
         else
-            echo -e "       Last errors:"
-            echo "$recent_errs" | sed 's/^/       /'
+            echo -e "       Recent poll errors found; inspect the local log privately"
             check 4 "$desc" "fail"
         fi
     else
@@ -161,9 +161,7 @@ fi
 # ── 5. Subscription check ────────────────────────────────────────────
 desc="Subscription status"
 if [ -n "${MAX_BOT_TOKEN:-}" ]; then
-    subs=$(curl -s --max-time 10 \
-        -H "Authorization: $MAX_BOT_TOKEN" \
-        "$MAX_API/subscriptions" 2>/dev/null || echo "")
+    subs=$(max_request "$MAX_API/subscriptions" 2>/dev/null || echo "")
     if [ "$MODE" = "webhook" ]; then
         webhook_path="${MAX_WEBHOOK_URL:-unknown}"
         if python3 -c "import sys,json; d=json.loads(sys.argv[1]); sys.exit(0 if len(d.get('subscriptions',[])) > 0 else 1)" "$subs" 2>/dev/null; then
@@ -190,12 +188,14 @@ for s in d.get('subscriptions',[]):
                 check 5 "$desc (subscription mismatch)" "fail"
             fi
         else
-            echo -e "       Response: ${subs:0:200}"
+            echo -e "       No valid subscription response (body withheld)"
             check 5 "$desc (no active subscriptions)" "fail"
         fi
     else  # long polling
-        sub_count=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); print(len(d.get('subscriptions',[])))" "$subs" 2>/dev/null || echo "0")
-        if [ "$sub_count" = "0" ]; then
+        sub_count=$(python3 -c "import sys,json; d=json.loads(sys.argv[1]); subscriptions=d['subscriptions']; assert isinstance(subscriptions,list); print(len(subscriptions))" "$subs" 2>/dev/null || echo "invalid")
+        if [ "$sub_count" = "invalid" ]; then
+            check 5 "$desc (invalid API response)" "fail"
+        elif [ "$sub_count" = "0" ]; then
             check 5 "$desc (no stale subscriptions — good)" "pass"
         else
             echo -e "       WARNING: $sub_count stale subscription(s) will block polling!"
@@ -203,23 +203,21 @@ for s in d.get('subscriptions',[]):
         fi
     fi
 else
-    check 5 "$desc (MAX_BOT_TOKEN not found in .env)" "fail"
+    check 5 "$desc (MAX_BOT_TOKEN not found in caller environment)" "fail"
 fi
 
 # ── 6. Token valid ────────────────────────────────────────────────────
 desc="Bot token valid"
 if [ -n "${MAX_BOT_TOKEN:-}" ]; then
-    me=$(curl -s --max-time 10 \
-        -H "Authorization: $MAX_BOT_TOKEN" \
-        "$MAX_API/me" 2>/dev/null || echo "")
+    me=$(max_request "$MAX_API/me" 2>/dev/null || echo "")
     username=$(python3 -c "import sys,json; print(json.loads(sys.argv[1]).get('username',''))" "$me" 2>/dev/null || echo "")
     if [ -n "$username" ]; then
-        echo -e "       Bot: @$username"
+        echo -e "       Bot identity verified"
         check 6 "$desc" "pass"
     elif echo "$me" | grep -q "401\|Unauthorized"; then
         check 6 "$desc (401 — invalid token)" "fail"
     else
-        echo -e "       Response: ${me:0:200}"
+        echo -e "       No valid bot identity response (body withheld)"
         check 6 "$desc" "fail"
     fi
 else
@@ -229,7 +227,8 @@ fi
 # ── 7. E2E send (optional) ───────────────────────────────────────────
 desc="E2E send test"
 if [ "${1:-}" = "--send" ]; then
-    target_id="${MAX_HOME_CHANNEL:-${MAX_ALLOWED_USERS%%,*}}"
+    allowed_users="${MAX_ALLOWED_USERS:-}"
+    target_id="${MAX_HOME_CHANNEL:-${allowed_users%%,*}}"
     [ -z "$target_id" ] && target_id="${MAX_HOME_CHANNEL_THREAD_ID:-}"
     if [ -n "${MAX_BOT_TOKEN:-}" ] && [ -n "$target_id" ]; then
         # Extract numeric ID after colon if present (chat:286610019 → 286610019)
@@ -239,9 +238,8 @@ if [ "${1:-}" = "--send" ]; then
         if echo "$target_id" | grep -q "^chat:"; then
             param="chat_id"
         fi
-        result=$(curl -s --max-time 10 -X POST \
+        result=$(max_request -X POST \
             "$MAX_API/messages?${param}=${target_num:-$target_id}" \
-            -H "Authorization: $MAX_BOT_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"text":"✅ Diagnostics: bot OK","format":"markdown"}' 2>/dev/null || echo "{}")
         mid=$(python3 -c "
@@ -256,7 +254,7 @@ except: print('')
             echo -e "       mid: $mid"
             check 7 "$desc" "pass"
         else
-            echo -e "       Response: ${result:0:200}"
+            echo -e "       Message send failed (response body withheld)"
             check 7 "$desc" "fail"
         fi
     else

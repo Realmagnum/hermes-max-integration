@@ -56,6 +56,7 @@ try:
 except ImportError:  # pragma: no cover — older Hermes core
     _core_base = None  # type: ignore[assignment]
 
+from .credential_support import get_max_secret
 from .mixins.base import _http_body_snippet, _is_retryable_http_status
 from .mixins.buttons import ButtonsMixin
 from .mixins.callback_auth import CallbackAuthMixin
@@ -625,9 +626,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
 
         # Token
         self._token: str = (
-            os.getenv("MAX_BOT_TOKEN", "")
-            or getattr(config, "token", "")
-            or extra.get("token", "")
+            get_max_secret("MAX_BOT_TOKEN", getattr(config, "token", "") or extra.get("token", ""))
         )
 
         # Table-as-image (requires Pillow)
@@ -654,8 +653,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             or str(extra.get("path", DEFAULT_WEBHOOK_PATH))
         )
         self._webhook_secret: str = (
-            os.getenv("MAX_WEBHOOK_SECRET")
-            or str(extra.get("webhook_secret", ""))
+            get_max_secret("MAX_WEBHOOK_SECRET", str(extra.get("webhook_secret", "")))
         )
         self._webhook_url: str = (
             os.getenv("MAX_WEBHOOK_URL")
@@ -1055,7 +1053,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             self._download_client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self._inbound_media_timeout),
                 follow_redirects=False,
-                verify=ssl_ctx,
+                verify=True,
             )
             try:
                 ok = await self._verify_token_and_start(self._http_client)
@@ -1353,6 +1351,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             user = payload.get("user", {})
             cid = str(payload.get("chat_id", ""))
             uid = str(user.get("user_id", ""))
+            if not uid or (not self._allow_all_users and uid not in self._allowed_users_set):
+                return None
             payload_text = payload.get("payload", "")
             if cid and uid:
                 self._remember_dm(cid, uid)
@@ -1376,6 +1376,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if update_type == "bot_added":
             cid = str(payload.get("chat_id", ""))
             uid = str((payload.get("user") or {}).get("user_id", ""))
+            if (not uid or (not self._allow_all_users and uid not in self._allowed_users_set)
+                    or not self._group_message_allowed(uid, cid)):
+                return None
             source = self.build_source(
                 chat_id=f"chat:{cid}",
                 chat_name=cid,
@@ -1449,6 +1452,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             chat_type = "dm"
             scoped_chat_id = f"user:{user_id}"
 
+        # Access control
+        if not user_id or (not self._allow_all_users and user_id not in self._allowed_users_set):
+            logger.debug("MAX: ignoring message from unauthorized user %s", user_id)
+            return None
+
+        # Group access control
+        if chat_type == "group" and not self._group_message_allowed(user_id, chat_id_str):
+            logger.info(
+                "MAX: group message blocked: policy=%s user=%s chat=%s",
+                self._group_policy, user_id, chat_id_str,
+            )
+            return None
+
         # Store DM mapping
         if chat_id_str and user_id:
             self._remember_dm(chat_id_str, user_id)
@@ -1464,20 +1480,6 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                 self._stats["duplicate_suppressed"] += 1
                 return None
             self._remember_mid(mid, now)
-
-        # Access control
-        if (not self._allow_all_users and self._allowed_users_set
-                and user_id not in self._allowed_users_set):
-            logger.debug("MAX: ignoring message from unauthorized user %s", user_id)
-            return None
-
-        # Group access control
-        if chat_type == "group" and not self._group_message_allowed(user_id, chat_id_str):
-            logger.info(
-                "MAX: group message blocked: policy=%s user=%s chat=%s",
-                self._group_policy, user_id, chat_id_str,
-            )
-            return None
 
         # Extract media
         media_urls, media_types = await self._extract_inbound_media(update, message, body)
@@ -2749,7 +2751,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
 
         user = callback.get("user", {}) or payload.get("user", {})
         user_id = str(user.get("user_id", ""))
-        if not user_id:
+        if not user_id or (not self._allow_all_users and user_id not in self._allowed_users_set):
             return None
 
         # Extract chat info for routing.
@@ -2799,6 +2801,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             return None
         choice = parts[1]   # once / session / always / deny
         approval_id = parts[2]
+        pending = self._exec_approval_state.get(approval_id)
+        if choice not in {"once", "session", "always", "deny"}:
+            return None
+        if isinstance(pending, dict) and choice not in pending.get("allowed_choices", ["once", "session", "always", "deny"]):
+            return None
 
         record, reason = self._consume_interaction(
             "exec", approval_id, user_id=user_id, chat_id=chat_id, message_id=message_id,
@@ -3397,19 +3404,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
 # ═════════════════════════════════════════════════════════════════════════
 
 def check_max_requirements() -> bool:
-    """Check if aiohttp and httpx are available and token is configured."""
+    """Passive dependency probe; credential validation belongs to validate_config."""
     try:
         import aiohttp  # noqa: F401
         import httpx  # noqa: F401
     except ImportError:
         return False
-    return bool(os.getenv("MAX_BOT_TOKEN", "").strip())
+    return True
 
 
 def validate_config(config) -> bool:
     """Validate that the platform config has enough info to connect."""
     extra = getattr(config, "extra", {}) or {}
-    token = os.getenv("MAX_BOT_TOKEN") or getattr(config, "token", "") or extra.get("token", "")
+    token = get_max_secret("MAX_BOT_TOKEN", getattr(config, "token", "") or extra.get("token", ""))
     return bool(str(token).strip())
 
 
@@ -3420,7 +3427,7 @@ def is_connected(config) -> bool:
 
 def _env_enablement() -> dict | None:
     """Seed PlatformConfig.extra from env-only setups."""
-    token = os.getenv("MAX_BOT_TOKEN", "").strip()
+    token = get_max_secret("MAX_BOT_TOKEN")
     if not token:
         return None
 
@@ -3434,7 +3441,7 @@ def _env_enablement() -> dict | None:
         "MAX_GROUP_POLICY": "group_policy",
     }
     for env_name, key in str_vars.items():
-        value = os.getenv(env_name, "").strip()
+        value = get_max_secret(env_name) if env_name == "MAX_WEBHOOK_SECRET" else os.getenv(env_name, "").strip()
         if value:
             extra[key] = value
 
@@ -3451,7 +3458,7 @@ def _env_enablement() -> dict | None:
 
     allow_all = os.getenv("MAX_ALLOW_ALL_USERS", "").strip()
     if allow_all:
-        extra["allow_all_users"] = _coerce_bool(allow_all, True)
+        extra["allow_all_users"] = _coerce_bool(allow_all, False)
 
     home = os.getenv("MAX_HOME_CHANNEL", "").strip()
     if home:
@@ -3550,9 +3557,9 @@ def interactive_setup() -> None:
 
     print_header("Max (max.ru)")
 
-    existing_token = get_env_value("MAX_BOT_TOKEN")
+    existing_token = get_max_secret("MAX_BOT_TOKEN")
     if existing_token:
-        print_info(f"Max: already configured (token: {existing_token[:8]}...)")
+        print_info("Max: already configured (token present)")
         if not prompt_yes_no("Reconfigure Max?", False):
             return
 
@@ -3582,7 +3589,7 @@ def interactive_setup() -> None:
 
     print()
     print_info("🔒 Access control")
-    allow_all = prompt_yes_no("Allow all Max users to talk to the bot?", True)
+    allow_all = prompt_yes_no("Allow all Max users to talk to the bot?", False)
     if allow_all:
         save_env_value("MAX_ALLOW_ALL_USERS", "true")
         save_env_value("MAX_ALLOWED_USERS", "")

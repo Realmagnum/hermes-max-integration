@@ -11,33 +11,33 @@ authors = [
     {name = "Realmagnum / Hermes Agent community"}
 ]
 dependencies = [
-    "aiohttp>=3.9",
-    "httpx>=0.27",
+    "aiohttp>=3.14.3,<4",
+    "httpx>=0.28.1,<0.29",
 ]
 
 [project.optional-dependencies]
-stt = ["faster-whisper>=1.0"]
+stt = ["faster-whisper>=1.0,<2"]
 # Table-as-image: playwright is the primary HTML→PNG renderer; Pillow and
 # wcwidth form its fallback. All are declared in plugin.yaml too.
-tables = ["playwright>=1.40", "pillow>=12.3", "wcwidth>=0.2"]
+tables = ["playwright==1.62.0", "pillow>=12.3,<13", "wcwidth>=0.2,<1"]
 dev = [
-    "pytest>=8",
-    "pytest-asyncio>=0.24",
-    "pytest-mock>=3.14",
-    "ruff>=0.6",
-    # The suite imports the Hermes core (`gateway.config`,
-    # `gateway.platforms.base`): the adapter subclasses `BasePlatformAdapter`
-    # and tests/test_lifecycle.py asserts the inherited lifecycle contract it
-    # owns (`_running`, `_mark_connected`, `_mark_disconnected`, the
-    # `_expected_cancelled_tasks` bookkeeping). Without it, a clean
-    # `pytest` collection fails with `ModuleNotFoundError: gateway`.
-    #
-    # Pin policy: the contract above exists in the published 0.19.0 and is
-    # verified against 0.21.3 (the version the development checkout runs).
-    # `TestCoreContract` fails loudly if the installed core is older or has
-    # changed the contract, so the floor below is load-bearing — raise it when
-    # a newer core is verified, don't drop it.
-    "hermes-agent>=0.19",
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.24,<2",
+    "pytest-mock>=3.14,<4",
+    "ruff>=0.6,<1",
+    "PyYAML>=6.0.3,<7",
+    # The test suite imports gateway.config and gateway.platforms.base.
+    # Install the exact Core source fixture separately (see CI). Declaring
+    # hermes-agent here makes the plugin depend on its own workspace root
+    # under Hermes PM, even when the dev extra is not selected. PyPI 0.19
+    # is stale and must not replace the application checkout.
+]
+test = [
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.24,<2",
+    "pytest-mock>=3.14,<4",
+    "ruff>=0.6,<1",
+    "PyYAML>=6.0.3,<7",
 ]
 
 [build-system]
@@ -52,7 +52,7 @@ build-backend = "setuptools.build_meta"
 # `assets/` directories trigger "Multiple top-level packages discovered".
 # Declare the distribution contents explicitly instead.
 [tool.setuptools]
-py-modules = ["adapter", "ssl_support"]
+py-modules = ["adapter", "ssl_support", "credential_support"]
 
 [tool.setuptools.packages.find]
 include = ["mixins*"]

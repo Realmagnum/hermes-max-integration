@@ -29,6 +29,8 @@
 
 ## Быстрый старт
 
+Требуется Hermes Core **>=0.21.4**. Минимальный релиз проверен на `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` (0.21.4, Python 3.12); CI также проверяет более поздние baseline/current исходники. В Core 0.20 нет необходимого плагину entry point для нативного подтверждения команд.
+
 ```bash
 hermes plugins install Realmagnum/hermes-max-integration --enable
 hermes gateway setup
@@ -60,6 +62,10 @@ Telegram Bot API 10.1+ поддерживает таблицы через отд
 Для PNG-рендера Markdown-таблиц установите `MAX_TABLE_AS_IMAGE=true`. Основной рендерер — Playwright/Chromium, Pillow используется как fallback. Дополнительные зависимости должны быть установлены в том же Python-окружении, где работает Hermes Gateway. См. [docs/features_RU.md](docs/features_RU.md) и [docs/troubleshooting_RU.md](docs/troubleshooting_RU.md).
 
 ## Безопасность и приватность
+
+Плагин содержит российский корневой сертификат Russian Trusted Root CA и добавляет его только клиентам MAX API и загрузки исходящих файлов. Это расширяет их обычный набор доверенных CA. Скачивание вложений использует стандартное доверие TLS без дополнительного CA и сохраняет защиту от SSRF. См. [docs/security_RU.md](docs/security_RU.md).
+
+Проверенный набор зависимостей Core закрепляет PyJWT 2.13.0; аудит сообщает 14 advisories для этой версии. Аудит остаётся неуспешным до исправления ограничения upstream Core; исключения аудита и несовместимые подмены зависимостей не используются. См. [docs/external-claims_RU.md](docs/external-claims_RU.md).
 
 Исходящие API-запросы направляются только на настроенный endpoint MAX Bot API (`MAX_API_BASE_URL`, по умолчанию `https://platform-api2.max.ru`) и официальные медиа-хосты MAX (`*.max.ru`, `*.oneme.ru`). Скачанные медиафайлы и PNG-таблицы хранятся локально в `HERMES_HOME`. В плагине нет телеметрии, аналитики или кода автообновления; режим webhook требует `MAX_WEBHOOK_SECRET` (fail-closed). См. [docs/security_RU.md](docs/security_RU.md).
 

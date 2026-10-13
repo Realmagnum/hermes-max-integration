@@ -25,7 +25,7 @@ MAX доставляет updates через polling или webhook. Адапте
 
 ### Исходящие сообщения
 
-Core вызывает platform methods. Адаптер форматирует и делит текст на chunks, ограничивает частоту streaming edits, при необходимости превращает Markdown-таблицу в PNG и отправляет вложение через MAX upload API и CDN. Отдельный `send_message_handler` поддерживает standalone media delivery без патча Core; проверяйте контракт по `plugin.yaml` и текущему коду.
+Core вызывает platform methods. Адаптер форматирует и делит текст на chunks, ограничивает частоту streaming edits, при необходимости превращает Markdown-таблицу в PNG и отправляет вложение через MAX upload API и CDN. Зарегистрированный `standalone_sender_fn` выполняет standalone delivery, когда Core направляет запрос в него. Маршрутизация media-only зависит от выбранной версии Core; плагин не изменяет Core для её включения.
 
 ## Неочевидные инварианты
 

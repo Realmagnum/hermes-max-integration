@@ -73,7 +73,7 @@ def _noop_handler(request: httpx.Request):
 def _adapter(handler):
     from gateway.config import PlatformConfig
 
-    cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token"})
+    cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token", "allowed_users": ["95825064"]})
     a = adapter.MaxAdapter(cfg)
     a._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return a

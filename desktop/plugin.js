@@ -12,14 +12,67 @@ import {
   atom,
   compactNumber,
   host,
+  useI18n,
+  usePluginI18n,
   useValue
 } from '@hermes/plugin-sdk'
 import { useEffect, useMemo, useState } from 'react'
-import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
+import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'max-sessions-sidebar'
 const PLUGIN_NAME = 'MAX Messenger Sessions'
 const PLUGIN_ROUTE = '/max-sessions'
+
+// Plugin-scoped language packs. Desktop loads this entry as a standalone module;
+// .desktop.yaml packs extend Core's catalog, not this plugin's private keys.
+const messages = {
+  en: {
+    title: 'MAX Sessions',
+    subtitle: 'Conversations and group chats from MAX messenger (max.ru)',
+    refresh: 'Refresh',
+    search: 'Search by topic or message...',
+    loading: 'Loading conversations...',
+    empty: 'No MAX sessions found',
+    emptyDescription: 'No completed or active sessions from MAX users yet',
+    searchEmpty: 'Try a different search query',
+    loadError: error => `Could not load sessions: ${error}`,
+    fetchFailed: 'Failed to fetch sessions',
+    openError: error => `Could not open session: ${error}`,
+    untitled: 'Untitled',
+    tokenDetails: (input, output) => `Input: ${input}, Output: ${output}`,
+    tokens: count => `${count} tok`,
+    messageCount: 'Message count',
+    messages: count => `${count} msgs`,
+    open: 'Open MAX sessions',
+    openCommand: 'MAX: Open Sessions List',
+    toggleCommand: 'MAX: Toggle Statusbar Icon',
+    statusbarOn: 'MAX statusbar icon enabled',
+    statusbarOff: 'MAX statusbar icon disabled'
+  },
+  ru: {
+    title: 'Сессии MAX',
+    subtitle: 'Диалоги и групповые чаты мессенджера MAX (max.ru)',
+    refresh: 'Обновить',
+    search: 'Поиск по теме или сообщению...',
+    loading: 'Загрузка диалогов...',
+    empty: 'Сессии MAX не найдены',
+    emptyDescription: 'Пока нет завершённых или активных сессий от пользователей MAX',
+    searchEmpty: 'Попробуйте изменить поисковый запрос',
+    loadError: error => `Ошибка загрузки: ${error}`,
+    fetchFailed: 'Не удалось загрузить сессии',
+    openError: error => `Не удалось открыть сессию: ${error}`,
+    untitled: 'Без названия',
+    tokenDetails: (input, output) => `Вход: ${input}, Выход: ${output}`,
+    tokens: count => `${count} ток.`,
+    messageCount: 'Количество сообщений',
+    messages: count => `${count} сообщ.`,
+    open: 'Открыть сессии MAX',
+    openCommand: 'MAX: Открыть список сессий',
+    toggleCommand: 'MAX: Переключить значок в статусбаре',
+    statusbarOn: 'Иконка MAX включена в статусбаре',
+    statusbarOff: 'Иконка MAX отключена в статусбаре'
+  }
+}
 
 let pluginStorage = null
 const statusbarVisible = atom(true)
@@ -32,26 +85,28 @@ function saveSetting(key, value) {
   if (pluginStorage) pluginStorage.set(key, value)
 }
 
-function toggleStatusbar() {
+function toggleStatusbar(ctx) {
+  const t = ctx.i18n.t
   const next = !statusbarVisible.get()
   statusbarVisible.set(next)
   saveSetting('showStatusbar', next)
   if (host.notify) {
     host.notify({
       kind: 'info',
-      title: 'MAX Sessions',
-      message: next ? 'Иконка MAX включена в статусбаре' : 'Иконка MAX отключена в статусбаре'
+      title: t('title'),
+      message: t(next ? 'statusbarOn' : 'statusbarOff')
     })
   }
 }
 
 function MaxStatusbarChip() {
+  const t = usePluginI18n(PLUGIN_ID)
   const visible = useValue(statusbarVisible)
   if (!visible) return null
 
   return jsxs('button', {
     type: 'button',
-    title: 'Открыть сессии MAX',
+    title: t('open'),
     onClick: () => host.navigate(PLUGIN_ROUTE),
     style: {
       display: 'inline-flex',
@@ -86,34 +141,41 @@ function MaxStatusbarChip() {
   })
 }
 
-// Форматирование даты и времени с фиксированной шириной и строгим выравниванием
-const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric'
-})
+// Respect the user's Desktop locale rather than pinning dates to Russian.
+function dateTimeFormatters(locale) {
+  let dateFormatter, timeFormatter
+  try {
+    dateFormatter = new Intl.DateTimeFormat(locale || 'en', {
+      day: '2-digit', month: 'short', year: 'numeric'
+    })
+    timeFormatter = new Intl.DateTimeFormat(locale || 'en', {
+      hour: '2-digit', minute: '2-digit'
+    })
+  } catch {
+    return dateTimeFormatters('en')
+  }
+  return { dateFormatter, timeFormatter }
+}
 
-const timeFormatter = new Intl.DateTimeFormat('ru-RU', {
-  hour: '2-digit',
-  minute: '2-digit'
-})
-
-function formatDateTimeParts(ts) {
+function formatDateTimeParts(ts, formatters) {
   if (!ts) return { date: '—', time: '' }
   try {
     const raw = typeof ts === 'number' && ts < 1e12 ? ts * 1000 : Number(ts)
     const d = new Date(raw)
     if (Number.isNaN(d.getTime())) return { date: '—', time: '' }
     return {
-      date: dateFormatter.format(d),
-      time: timeFormatter.format(d)
+      date: formatters.dateFormatter.format(d),
+      time: formatters.timeFormatter.format(d)
     }
   } catch {
     return { date: String(ts), time: '' }
   }
 }
 
-function MaxSessionsView({ ctx }) {
+function MaxSessionsView() {
+  const t = usePluginI18n(PLUGIN_ID)
+  const { locale } = useI18n()
+  const formatters = useMemo(() => dateTimeFormatters(locale), [locale])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [sessions, setSessions] = useState([])
@@ -129,7 +191,7 @@ function MaxSessionsView({ ctx }) {
       setSessions(maxList)
     } catch (err) {
       console.error('[max-sessions] fetch error:', err)
-      setError(err?.message || 'Failed to fetch sessions')
+      setError({ message: err?.message })
     } finally {
       setLoading(false)
     }
@@ -167,8 +229,8 @@ function MaxSessionsView({ ctx }) {
       if (host.notify) {
         host.notify({
           kind: 'error',
-          title: 'MAX Sessions',
-          message: 'Could not open session: ' + (e?.message || String(e))
+          title: t('title'),
+          message: t('openError', e?.message || String(e))
         })
       }
     }
@@ -196,7 +258,7 @@ function MaxSessionsView({ ctx }) {
                     children: [
                       jsx('h1', {
                         className: 'text-base font-semibold tracking-tight text-foreground',
-                        children: 'Сессии MAX'
+                        children: t('title')
                       }),
                       jsx(Badge, {
                         variant: 'secondary',
@@ -206,13 +268,13 @@ function MaxSessionsView({ ctx }) {
                       totalTokensAll > 0 ? jsx(Badge, {
                         variant: 'outline',
                         className: 'font-mono text-xs px-2 py-0.5 text-muted-foreground border-border/80',
-                        children: `${compactNumber(totalTokensAll)} tok`
+                        children: t('tokens', compactNumber(totalTokensAll))
                       }) : null
                     ]
                   }),
                   jsx('span', {
                     className: 'text-xs text-muted-foreground',
-                    children: 'Диалоги и групповые чаты мессенджера MAX (max.ru)'
+                    children: t('subtitle')
                   })
                 ]
               })
@@ -231,7 +293,7 @@ function MaxSessionsView({ ctx }) {
                   className: 'flex items-center gap-1.5',
                   children: [
                     loading ? jsx(GlyphSpinner, { className: 'size-3.5' }) : jsx(Codicon, { name: 'refresh', className: 'text-xs' }),
-                    'Обновить'
+                    t('refresh')
                   ]
                 })
               })
@@ -253,7 +315,7 @@ function MaxSessionsView({ ctx }) {
                 className: 'absolute left-2.5 text-muted-foreground/60 text-sm pointer-events-none'
               }),
               jsx(Input, {
-                placeholder: 'Поиск по теме или сообщению...',
+                placeholder: t('search'),
                 value: search,
                 onChange: e => setSearch(e.target.value),
                 className: 'h-8 pl-8 pr-3 text-xs bg-muted/30 border-border/80 focus-visible:ring-1 focus-visible:ring-primary rounded-md'
@@ -269,19 +331,19 @@ function MaxSessionsView({ ctx }) {
         children: error
           ? jsx('div', {
               className: 'p-4 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-md',
-              children: `Ошибка загрузки: ${error}`
+              children: t('loadError', error.message || t('fetchFailed'))
             })
           : filtered.length === 0
           ? jsx(EmptyState, {
-              title: loading ? 'Загрузка диалогов...' : 'Сессии MAX не найдены',
-              description: search ? 'Попробуйте изменить поисковый запрос' : 'Пока нет завершённых или активных сессий от пользователей MAX'
+              title: t(loading ? 'loading' : 'empty'),
+              description: t(loading ? 'loading' : search ? 'searchEmpty' : 'emptyDescription')
             })
           : jsx('div', {
               className: 'divide-y divide-border/40 border border-border/60 rounded-lg overflow-hidden bg-card/20 shadow-xs',
               children: filtered.map(s => {
-                const title = s.title?.trim() || 'Без названия'
+                const title = s.title?.trim() || t('untitled')
                 const timestamp = s.last_active || s.last_activity_at || s.started_at
-                const { date, time } = formatDateTimeParts(timestamp)
+                const { date, time } = formatDateTimeParts(timestamp, formatters)
                 const totalTokens = (s.input_tokens || 0) + (s.output_tokens || 0)
                 const snippet = s.snippet || s.preview || null
 
@@ -334,18 +396,18 @@ function MaxSessionsView({ ctx }) {
                           children: [
                             totalTokens > 0 ? jsxs('div', {
                               className: 'flex items-center gap-1 text-[11px] text-muted-foreground/90 font-mono bg-muted/40 px-2 py-0.5 rounded border border-border/40',
-                              title: `Вход: ${s.input_tokens || 0}, Выход: ${s.output_tokens || 0}`,
+                              title: t('tokenDetails', s.input_tokens || 0, s.output_tokens || 0),
                               children: [
                                 jsx(Codicon, { name: 'symbol-numeric', className: 'text-[10px] text-muted-foreground/60' }),
-                                `${compactNumber(totalTokens)} tok`
+                                t('tokens', compactNumber(totalTokens))
                               ]
                             }) : null,
                             s.message_count ? jsxs('div', {
                               className: 'flex items-center gap-1 text-[11px] text-muted-foreground/70 font-mono px-1.5 py-0.5',
-                              title: 'Количество сообщений',
+                              title: t('messageCount'),
                               children: [
                                 jsx(Codicon, { name: 'mail', className: 'text-[10px] text-muted-foreground/50' }),
-                                `${s.message_count} сообщ.`
+                                t('messages', s.message_count)
                               ]
                             }) : null
                           ]
@@ -383,6 +445,8 @@ function MaxSessionsView({ ctx }) {
 }
 
 function register(ctx) {
+  ctx.i18n.register(messages)
+  const t = ctx.i18n.t
   pluginStorage = ctx.storage || null
   statusbarVisible.set(!!stored('showStatusbar', true))
 
@@ -390,7 +454,7 @@ function register(ctx) {
     id: 'page',
     area: ROUTES_AREA,
     data: { path: PLUGIN_ROUTE },
-    render: () => jsx(MaxSessionsView, { ctx })
+    render: () => jsx(MaxSessionsView, {})
   })
 
   ctx.register({
@@ -404,27 +468,41 @@ function register(ctx) {
     }
   })
 
-  ctx.register({
-    id: 'open',
-    area: PALETTE_AREA,
-    data: {
-      id: `${PLUGIN_ID}.open`,
-      label: 'MAX: Open Sessions List',
-      keywords: ['max', 'messenger', 'sessions', 'chat', 'макс', 'сообщения'],
-      run: () => host.navigate(PLUGIN_ROUTE)
-    }
-  })
-
-  ctx.register({
-    id: 'toggle-statusbar',
-    area: PALETTE_AREA,
-    data: {
-      id: `${PLUGIN_ID}.toggleStatusbar`,
-      label: 'MAX: Toggle Statusbar Icon',
-      keywords: ['max', 'statusbar', 'icon', 'sessions', 'макс', 'статусбар', 'значок'],
-      run: toggleStatusbar
-    }
-  })
+  // Palette labels are static contributions: rebuild through the public SDK
+  // when the user's locale changes. React views use the reactive scoped hook.
+  let paletteDisposers = []
+  const registerPalette = () => {
+    paletteDisposers.forEach(dispose => dispose())
+    paletteDisposers = [
+      ctx.register({
+        id: 'open',
+        area: PALETTE_AREA,
+        data: {
+          id: `${PLUGIN_ID}.open`,
+          label: t('openCommand'),
+          keywords: ['max', 'messenger', 'sessions', 'chat', 'макс', 'сообщения'],
+          run: () => host.navigate(PLUGIN_ROUTE)
+        }
+      }),
+      ctx.register({
+        id: 'toggle-statusbar',
+        area: PALETTE_AREA,
+        data: {
+          id: `${PLUGIN_ID}.toggleStatusbar`,
+          label: t('toggleCommand'),
+          keywords: ['max', 'statusbar', 'icon', 'sessions', 'макс', 'статусбар', 'значок'],
+          run: () => toggleStatusbar(ctx)
+        }
+      })
+    ]
+  }
+  registerPalette()
+  // Older supported SDKs lack the static-contribution subscription. Their
+  // page, statusbar and notifications still follow the active locale; palette
+  // labels refresh on plugin reload instead of crashing registration.
+  if (typeof ctx.i18n.onLocaleChange === 'function') {
+    ctx.i18n.onLocaleChange(registerPalette)
+  }
 
   if (STATUSBAR_AREAS && STATUSBAR_AREAS.right) {
     ctx.register({
