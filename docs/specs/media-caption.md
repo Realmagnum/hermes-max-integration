@@ -14,6 +14,7 @@ Use the public `transform_llm_output` hook for MAX agent replies before Core med
 | CAP-002 | Caption contains authored text | Preserve it exactly; text-only sends remain unchanged | Implemented; isolated acceptance passed |
 | CAP-003 | MAX agent reply contains only MEDIA markers | Public hook adds first filename before Core extraction; real public router accepts transformed text plus file; other platforms and already-captioned replies unchanged | Implemented; isolated acceptance passed |
 | CAP-004 | Direct adapter/standalone sends an uncaptioned attachment | Outbound attachment payload carries fallback text; existing failure and partial-delivery semantics preserved | Implemented; isolated acceptance passed |
+| CAP-005 | Model is asked to send a local file in MAX | Registered platform hint explains existing-file creation/access and a final MEDIA line without a separate API tool; nonexistent files must not be invented | Implemented; registration checked; live model behavior pending |
 
 ## Evidence
 

@@ -3624,6 +3624,12 @@ def register(ctx) -> None:
             "Max supports markdown formatting (**bold**, *italic*, `code`, ```blocks```). "
             "Messages are limited to 4000 characters. "
             "You can send images using markdown ![alt](url) syntax. "
+            "To send a local file to the user in this MAX chat, create or locate the file using your available "
+            "file/terminal tools, then include MEDIA:<absolute-file-path> on its own line in your FINAL reply "
+            "(no quotes or code fences). The gateway uploads and delivers that attachment; a separate MAX API "
+            "tool or Telegram sender is not needed. For a file-only reply, return just the MEDIA line; "
+            "the plugin adds the filename (or File) as its caption. Use only an existing file you are allowed "
+            "to send; if file creation/access fails, explain the failure instead of inventing a path or claiming delivery. "
             "Voice messages are automatically transcribed — the transcription appears in the message text. "
             "Keep responses clear and well-structured."
         ),

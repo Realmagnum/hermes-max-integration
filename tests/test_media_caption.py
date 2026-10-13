@@ -49,6 +49,11 @@ def test_real_plugin_registration_exposes_output_hook(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     manager = PluginManager()
     adapter.register(PluginContext(PluginManifest(name="max-platform", source="user", kind="platform"), manager))
+    from gateway.platform_registry import platform_registry
+
+    hint = platform_registry.get("max").platform_hint
+    assert "MEDIA:<absolute-file-path>" in hint and "FINAL reply" in hint
+    assert "existing file" in hint
     assert manager.invoke_hook("transform_llm_output", response_text="MEDIA:/tmp/report.pdf", platform="max") == [
         "report.pdf\nMEDIA:/tmp/report.pdf"
     ]

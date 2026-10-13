@@ -6,6 +6,8 @@ All notable changes to the hermes-max-integration plugin.
 
 ### Fixed
 
+- **CAP-005:** platform instructions explain final `MEDIA:<absolute-file-path>` replies for local file delivery, avoiding a needless search for a separate MAX sending tool. Actual model compliance and live receipt remain pending.
+
 - **CAP-001–004:** uncaptioned MAX agent MEDIA replies gain the first filename before Core delivery through the public output hook; direct attachment sends use basename or `File`. Authored text is preserved. See [caption contracts](docs/specs/media-caption.md). Direct CLI media-only routing still requires caller-provided text.
 
 - **MS-001/002:** setup stays private and preserves existing allowlists; denied media/commands/callbacks/start events stop before downloads or Core dispatch.
