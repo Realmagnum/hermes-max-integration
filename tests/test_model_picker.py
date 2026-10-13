@@ -129,12 +129,14 @@ class TestSendModelPicker:
         )
         assert a._model_picker_state["chat:777"]["owner_user_id"] == "7"
 
-        await a.send_model_picker(
+        a._http_client.post.reset_mock()
+        result = await a.send_model_picker(
             chat_id="chat:777", providers=[], current_model="m", current_provider="p",
-            session_key="s", on_model_selected=on_selected,
+            session_key="unknown-session", on_model_selected=on_selected,
         )
-        # No identity available up front in a group — bound on the first tap.
-        assert a._model_picker_state["chat:777"]["owner_user_id"] == ""
+        assert not result.success
+        a._http_client.post.assert_not_called()
+        assert a._model_picker_state["chat:777"]["owner_user_id"] == "7"
 
     @pytest.mark.asyncio
     async def test_no_client(self):
@@ -379,7 +381,7 @@ class TestModelPickerIsolation:
 
     @pytest.mark.asyncio
     async def test_second_user_cannot_drive_group_picker(self):
-        """Two users in one group: the first tapper owns the session, the second is refused."""
+        """An unowned group session cannot be claimed by either tapper."""
         a = self._make_adapter()
         calls = []
 
@@ -387,28 +389,28 @@ class TestModelPickerIsolation:
             calls.append((chat_id, model_id, provider_slug))
             return "switched"
 
-        # Nobody known up front in a group: the first tap binds the session.
+        # Neither user can claim a session with no original requester.
         a._model_picker_state["chat:777"] = _picker_state(
             owner_user_id="", provider_msg_id="mid-live", model_msg_id="mid-models",
             providers=self._providers(), on_model_selected=on_selected,
         )
-
         await a._on_callback(_callback("model:pick:deepseek-v3:deepseek", user_id=42, mid="mid-models", chat_id=777))
-        assert len(calls) == 1
-        assert a._model_picker_state == {}  # the pick consumed the session
+        await a._on_callback(_callback("model:pick:deepseek-v3:deepseek", user_id=99, mid="mid-models", chat_id=777))
+        assert calls == []
+        assert a._model_picker_state["chat:777"]["owner_user_id"] == ""
 
-        # Same chat, a stranger taps the (fresh) session's buttons.
+        # A picker explicitly bound to the requester refuses the stranger.
         a._model_picker_state["chat:777"] = _picker_state(
             owner_user_id="42", provider_msg_id="mid-live", model_msg_id="mid-models",
             providers=self._providers(), on_model_selected=on_selected,
         )
         await a._on_callback(_callback("model:pick:deepseek-v3:deepseek", user_id=99, mid="mid-models", chat_id=777))
-        assert len(calls) == 1  # the stranger's tap changed nothing
+        assert len(calls) == 0  # the stranger's tap changed nothing
         assert "chat:777" in a._model_picker_state  # session still live for its owner
 
         # The owner can still use it.
         await a._on_callback(_callback("model:pick:deepseek-v3:deepseek", user_id=42, mid="mid-models", chat_id=777))
-        assert len(calls) == 2
+        assert len(calls) == 1
 
     @pytest.mark.asyncio
     async def test_dm_session_not_reachable_from_another_user(self):
@@ -469,15 +471,15 @@ class TestModelPickerIsolation:
         assert calls == ["m1"]
 
     @pytest.mark.asyncio
-    async def test_tap_without_message_id_still_honoured(self):
-        """Payloads that hide the pressed message keep working (owner binding still applies)."""
+    async def test_tap_without_message_id_is_inert(self):
+        """A callback without a bound message cannot act on a newer picker."""
         a = self._make_adapter()
         a._model_picker_state["user:42"] = _picker_state(
             owner_user_id="42", provider_msg_id="mid-001", providers=self._providers(),
         )
-
         await a._on_callback(_callback("model:provider:deepseek", user_id=42))
-        a._http_client.post.assert_called_once()
+        a._http_client.post.assert_not_called()
+        assert "user:42" in a._model_picker_state
 
     @pytest.mark.asyncio
     async def test_stale_tap_does_not_bind_unowned_group_session(self):
@@ -491,10 +493,10 @@ class TestModelPickerIsolation:
         await a._on_callback(_callback("model:provider:deepseek", user_id=99, mid="mid-old", chat_id=777))
         assert a._model_picker_state["chat:777"]["owner_user_id"] == ""
 
-        # The owner's tap on the live message binds the session and works.
+        # Neither user's tap can claim an unowned session.
         await a._on_callback(_callback("model:provider:deepseek", user_id=42, mid="mid-live", chat_id=777))
-        assert a._model_picker_state["chat:777"]["owner_user_id"] == "42"
-        a._http_client.post.assert_called_once()
+        assert a._model_picker_state["chat:777"]["owner_user_id"] == ""
+        a._http_client.post.assert_not_called()
 
     # ── TTL ──────────────────────────────────────────────────────────────
 
@@ -563,8 +565,11 @@ class TestModelPickerIsolation:
         assert extract({}) == ""
 
     def test_owner_derivation(self):
-        owner_of = adapter.MaxAdapter._model_picker_owner
-        assert owner_of("user:42", None) == "42"
-        assert owner_of("chat:777", None) == ""            # unknowable up front
-        assert owner_of("chat:777", {"user_id": 7}) == "7"
-        assert owner_of("user:42", {"owner_user_id": 9}) == "9"
+        a = self._make_adapter()
+        assert a._model_picker_owner("user:42", None) == "42"
+        assert a._model_picker_owner("chat:777", None) == ""
+        assert a._model_picker_owner("chat:777", {"user_id": 7}) == "7"
+        assert a._model_picker_owner("user:42", {"owner_user_id": 9}) == "9"
+        a._remember_interaction_owner(session_key="s42", chat_id="chat:777", user_id="42")
+        assert a._model_picker_owner("chat:777", None, "s42") == "42"
+        assert a._model_picker_owner("chat:777", None, "other") == ""

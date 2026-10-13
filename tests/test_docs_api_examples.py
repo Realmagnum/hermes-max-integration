@@ -197,6 +197,8 @@ async def test_documented_callback_fixture_routes():
         "on_model_selected": on_selected,
         "current_model": "gpt-4",
         "current_provider": "openrouter",
+        "owner_user_id": user_id,
+        "model_msg_id": "mid-picker-1",
     }
     a.send = AsyncMock()
     a.delete_message = AsyncMock(return_value=MagicMock(success=True))
