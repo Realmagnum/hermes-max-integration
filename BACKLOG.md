@@ -6,12 +6,11 @@ Reviewed 2026-10-13 against implementation `71fb947`. Completed work is removed 
 
 ## Acceptance still outstanding
 
-Execution resumed on 2026-10-13. Completed items (CODE-06, BUILD-02, DOC-10, CAT-01, INT-01) were verified and moved to [changelog](CHANGELOG.md) and [Micro-Specs](docs/specs/). Remaining work to complete before release publication and repeat catalog review:
+Execution resumed on 2026-10-13. Completed items (CODE-06, BUILD-02, DOC-10, CAT-01, INT-01) were verified and moved to [changelog](CHANGELOG.md) and [Micro-Specs](docs/specs/). Follow-up acceptance and catalog review remaining after v2.11.0 publication:
 
 - [ ] **BUILD-01 / DOC-08 · P1 — Final directory-plugin admission and remote-source install.** Minimum-Core clean install and wheel build pass; earlier source admission succeeded. **Acceptance:** validate the final immutable candidate with `hermes plugins validate <plugin-path> --install-deps`; reject both dependency-failure fallback messages; confirm directory assets/runtime import and record remote repository/SHA. A Python wheel is not the complete Hermes directory bundle. GitHub/Gitea equivalence is unverified.
 - [ ] **BUILD-03 / MS-009 / MS-010 · P1 — Final CI and dependency audit.** Workflow coverage and install-failure detection exist; pinned Core PyJWT 2.13.0 produces 14 advisories. **Acceptance:** record exact candidate CI and base/test/table/STT audit results; resolve the upstream constraint compatibly. No ignored advisories or incompatible override. The old Gitea-runner criterion is unverified; record the actual remote platform.
 - [ ] **CAT-02 / MS-011 · P1 — Complete live delivery and approvals.** Live text, file delivery, model picker and clarify prompts are confirmed in MAX; standalone text+file has API readback. **Acceptance:** verify live execution approval prompt selection (`_send_exec_approval_prompt`) with real offered choices in the running gateway. Commit no real credentials/recipients.
-- [ ] **REL-01 / REL-008 · P1 — Complete release.** Prepare the final version, paired changelogs, immutable source/artifacts and checksums after open acceptance passes. **Acceptance:** verify installation from the released artifact and record exact evidence. Release publication is pending; tests from older commits do not qualify a new candidate.
 - [ ] **CAT-03 / MS-012 · Deferred until release — Catalog publication and repeat review.** The user explicitly postponed catalog PR changes and the reviewer response until a complete release. Afterwards, repin released SHA/image/docs, run schema/admission checks and provide exact CI/evidence links. Preparation of the generic Core media issue remains open; nothing was published during this pause.
 
 ## Recently closed in this cycle (verified evidence recorded)
@@ -22,7 +21,9 @@ Execution resumed on 2026-10-13. Completed items (CODE-06, BUILD-02, DOC-10, CAT
 - **CAT-01 / MS-006:** Desktop UI visual acceptance completed (EN default, RU pack, date localization); recorded static manifest description limitation.
 - **DOC-10 / REL-005:** External claims verification register refreshed on 2026-10-13 (`docs/external-claims.md`).
 
-Latest CI evidence for documentation baseline `887611a`: [GitHub Actions run 38408393501](https://github.com/Realmagnum/hermes-max-integration/actions/runs/38408393501) passed minimum Python 3.12, baseline/current Python 3.14 and security jobs; dependency audit failed with 14 PyJWT 2.13.0 advisories. BUILD-03 remains open. Python 3.11 installation was started, but its result and acceptance tests were not collected; BUILD-02 remains open.
+Historical CI evidence for documentation baseline `887611a`: [GitHub Actions run 38408393501](https://github.com/Realmagnum/hermes-max-integration/actions/runs/38408393501) passed minimum Python 3.12, baseline/current Python 3.14 and security jobs; dependency audit failed with 14 PyJWT 2.13.0 advisories. BUILD-03 remains open. Python 3.11 investigation was later superseded by the verified Python >=3.12 support policy; BUILD-02 is closed.
+
+Release publication completed on 2026-10-14: [v2.11.0](https://github.com/Realmagnum/hermes-max-integration/releases/tag/v2.11.0), tag commit `50c7a9a7c16b6207a079b7b883718dd863e9e951`, English notes, complete directory ZIP, wheel and SHA256SUMS. [Exact candidate CI](https://github.com/Realmagnum/hermes-max-integration/actions/runs/38473952610) passed minimum/baseline/current tests and directory admission plus security; dependency audit failed with 14 upstream PyJWT advisories. Publication does not close BUILD-03, remote-source installation or live execution-approval acceptance.
 
 ## Closing a task
 
