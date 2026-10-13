@@ -2,7 +2,7 @@
 
 [Russian version](BACKLOG_RU.md)
 
-Reviewed 2026-10-13 against implementation `71fb947`. Completed work is removed from this list; audit IDs and evidence remain in the [Micro-Spec](docs/specs/catalog-review-137501.md) and [changelog](CHANGELOG.md). The original audit of `b004c573318f1d5e521255531d1943cc8a8b8b90` remains in Git history. Old checkboxes do not establish current defects.
+Reviewed 2026-10-13 against implementation `71fb947`. Completed work is removed from this list; audit IDs and evidence remain in the [Micro-Spec](docs/specs/20261013-catalog-review-137501.md) and [changelog](CHANGELOG.md). The original audit of `b004c573318f1d5e521255531d1943cc8a8b8b90` remains in Git history. Old checkboxes do not establish current defects.
 
 ## Acceptance still outstanding
 

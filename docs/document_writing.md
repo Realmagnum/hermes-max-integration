@@ -45,4 +45,6 @@ Write Markdown without manual line wrapping inside paragraphs. Use tables only f
 
 Follow [Development with Micro-Spec](micro-spec-development.md) for when to specify, contract structure, implementation, acceptance, and handoff. Trivial edits do not need a persistent spec; reuse an existing contract before creating another.
 
+All spec pairs use `YYYYMMDD-topic.md` / `YYYYMMDD-topic_RU.md`, with a shared, immutable contract creation date. Keep amendment dates and status inside the file; after the naming migration, retain the dated filenames and keep references current. Date alone does not establish precedence.
+
 Persist cross-session behavior contracts in `docs/specs/`, with stable MS IDs, trigger/result, falsifiable acceptance, source/code/test links, exact implementation/Core revisions and actual status. Keep implementation separate from verification; publish no secrets or local personal paths. Update EN/RU together. Link completed work from the changelog and remove it from the active backlog; retain residual acceptance conditions explicitly.

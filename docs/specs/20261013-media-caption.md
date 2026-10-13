@@ -1,6 +1,6 @@
 # Media caption fallback — Micro-Spec
 
-[Russian version](media-caption_RU.md)
+[Russian version](20261013-media-caption_RU.md)
 
 Source: user request, 2026-10-13: unnamed text for a file becomes its filename, otherwise `File`. Baseline: plugin `3df6518`; inspected Core `7157422022ff06f3e632d1dd394ee1253b17ad37` and upstream `4957bbd0a0f6a1c3fe8217dc4a66d072971f5b63`.
 

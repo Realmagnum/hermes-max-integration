@@ -17,7 +17,7 @@ Reuse an existing feature spec when it covers the requested change. Specify the 
 ## Start from the actual baseline
 
 1. Read applicable `AGENTS.md`, inspect the documentation tree, and open notes for the affected area. Check branch, working diff, plugin revision, and relevant tests; preserve unrelated work.
-2. Read relevant specs and [backlog](../BACKLOG.md). Establish which record is current, which is historical or superseded, and which depends on another. Existing examples are [catalog review](specs/catalog-review-137501.md), [interactive questions](specs/interactive-questions.md), and [release readiness](specs/release-readiness.md).
+2. Read relevant specs and [backlog](../BACKLOG.md). Establish which record is current, which is historical or superseded, and which depends on another. Existing examples are [catalog review](specs/20261013-catalog-review-137501.md), [interactive questions](specs/20261013-interactive-questions.md), and [release readiness](specs/20261013-release-readiness.md).
 3. Verify claims about code, public Core APIs, dependency versions, and test results against the checkout. Read the exact Core/Python fixtures from `.github/workflows/ci.yml`; a label such as "current" is not an immutable revision or proof of compatibility with today's upstream.
 4. For a bug, capture input, expected result, actual result, and the failing path. Separate observed facts, assumptions, and unresolved questions. A stale "planned" row does not disprove later code, and a commit does not establish acceptance: reconcile with evidence before updating status.
 
@@ -51,6 +51,8 @@ Assumptions / dependencies: <verified, assumed, or unresolved>
 ```
 
 Use descriptive filenames under `docs/specs/`; do not create an index or a second persistent contract when an existing spec suffices. Never invent a test path or mark a proposed check as existing. One test can cover related requirements, and one requirement can need multiple checks.
+
+All specs use `YYYYMMDD-topic.md`, for example `20261013-media-caption.md`, with the Russian counterpart `20261013-media-caption_RU.md`. The prefix is the contract's creation date in the project's working timezone; both language versions share that date even if translated later. Keep the date and filename unchanged through implementation, corrections, and completion. Record amendment and verification dates inside the file; keep status there rather than adding a `done-` prefix. Continue the same spec for work under the same contract; create a new dated file for an independent contract and link its predecessor when relevant. Existing specs were migrated to this format on 2026-10-14 using their recorded creation dates, with repository references updated. Date order aids navigation; explicit scope, dependencies, and supersession determine precedence.
 
 ## Implement and verify
 

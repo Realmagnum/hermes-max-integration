@@ -1,8 +1,8 @@
 # Release readiness — Micro-Spec
 
-[Russian version](release-readiness_RU.md)
+[Russian version](20261013-release-readiness_RU.md)
 
-Date: 2026-10-13. Status: in progress — acceptance contracts REL-001, REL-003, REL-005, REL-006 verified. Baseline: `63846af6ca9d585ae16167684d2c5324c3c8c876`. Source: user instruction to complete backlog acceptance before catalog PR update or reviewer reply. Refines [catalog contracts](catalog-review-137501.md); preserves their IDs.
+Date: 2026-10-13. Status: in progress — acceptance contracts REL-001, REL-003, REL-005, REL-006 verified. Baseline: `63846af6ca9d585ae16167684d2c5324c3c8c876`. Source: user instruction to complete backlog acceptance before catalog PR update or reviewer reply. Refines [catalog contracts](20261013-catalog-review-137501.md); preserves their IDs.
 
 ## Scope and boundaries
 
@@ -19,7 +19,7 @@ Complete independently verifiable backlog acceptance and prepare a reproducible 
 | REL-005 | Mutable platform claims are published | Verify official API host, registration rules, limits, webhook/TLS and Core contract separately; record source/date/version and EN/RU parity | DOC-10; external-claims EN/RU | Verified; register refreshed on 2026-10-13 |
 | REL-006 | Desktop renders default/en/ru/unknown locale | Observe labels, dates, loading/empty/error/search and locale changes; record SDK version and static-palette reload limits | CAT-01 / MS-006; Desktop and locale tests | Verified; visual acceptance completed. Limitation: manifest description is static |
 | REL-007 | Approved live bot receives text/file/approval input | Exact reply and attachment reach the user; denied user has no effects; offered approval choices resolve once in the correct session; foreign/repeated actions fail | CAT-02 / MS-011; router/file/callback tests | Partial; text/file/clarify verified live, live exec approval prompt selection pending |
-| REL-008 | Release gates are evaluated after fixes | Version/manifest/package/changelog agree; clean artifact includes required directory files; checksums and installation evidence refer to exact source; release notes expose remaining limitations. Decide full-release readiness from recorded gates | Release scripts, changelog, [interactive contracts](interactive-questions.md) | Planned; no release created |
+| REL-008 | Release gates are evaluated after fixes | Version/manifest/package/changelog agree; clean artifact includes required directory files; checksums and installation evidence refer to exact source; release notes expose remaining limitations. Decide full-release readiness from recorded gates | Release scripts, changelog, [interactive contracts](20261013-interactive-questions.md) | Planned; no release created |
 
 ## Evidence and continuation
 

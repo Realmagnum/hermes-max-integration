@@ -1,6 +1,6 @@
 # Ревью каталога MAX — Micro-Spec
 
-[Английская версия](catalog-review-137501.md)
+[Английская версия](20261013-catalog-review-137501.md)
 
 Дата: 2026-10-13. Реализация: [`71fb947`](https://github.com/Realmagnum/hermes-max-integration/commit/71fb947ea7e3ba0c2ffc8dc88b7606e9b879869d), ветка `fix/catalog-review-137501`. Документ фиксирует реализованное поведение и фактическую приёмку; завершение ревью или выпуска не заявляется.
 

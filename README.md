@@ -63,7 +63,7 @@ Useful for task lists, monitoring summaries and reports. Rendering is optional; 
 
 Ask the agent to create and send a file. It returns `MEDIA:<absolute-file-path>` in its final reply; the gateway uploads the attachment. With no authored text, the plugin adds its filename, or `File` if unavailable. Live file delivery was confirmed by the user on 2026-10-14.
 
-Direct `hermes send` and cron paths without the output hook still need text: `report.pdf MEDIA:/path/report.pdf`. See [caption contracts](docs/specs/media-caption.md).
+Direct `hermes send` and cron paths without the output hook still need text: `report.pdf MEDIA:/path/report.pdf`. See [caption contracts](docs/specs/20261013-media-caption.md).
 
 ## ⌨️ Slash commands
 
@@ -88,7 +88,7 @@ Details: [security](docs/security.md), [dated compatibility evidence](docs/exter
 |---|---|
 | Install, configure or diagnose | [Setup](docs/setup.md) · [Troubleshooting](docs/troubleshooting.md) |
 | Understand behavior and internals | [Features](docs/features.md) · [Architecture](docs/architecture.md) · [API](docs/api.md) |
-| Develop or verify a change | [Micro-Spec workflow](docs/micro-spec-development.md) · [Catalog contracts](docs/specs/catalog-review-137501.md) · [Backlog](BACKLOG.md) |
+| Develop or verify a change | [Micro-Spec workflow](docs/micro-spec-development.md) · [Catalog contracts](docs/specs/20261013-catalog-review-137501.md) · [Backlog](BACKLOG.md) |
 
 `scripts/diagnose.sh --send` sends a real message; use only an approved recipient. Offline checks and test instructions are in [setup](docs/setup.md).
 

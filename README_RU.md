@@ -63,7 +63,7 @@ hermes gateway setup
 
 Попросите агента создать и отправить файл. Он возвращает `MEDIA:<absolute-file-path>` в финальном ответе; gateway загружает вложение. Без авторского текста плагин добавляет имя файла либо `File`, если имя недоступно. Пользователь подтвердил живую доставку файла 2026-10-14.
 
-Прямой `hermes send` и пути cron без output hook по-прежнему требуют текста: `report.pdf MEDIA:/path/report.pdf`. См. [контракты подписей](docs/specs/media-caption_RU.md).
+Прямой `hermes send` и пути cron без output hook по-прежнему требуют текста: `report.pdf MEDIA:/path/report.pdf`. См. [контракты подписей](docs/specs/20261013-media-caption_RU.md).
 
 ## ⌨️ Slash-команды
 
@@ -88,7 +88,7 @@ hermes gateway setup
 |---|---|
 | Установить, настроить, найти причину сбоя | [Установка](docs/setup_RU.md) · [Диагностика](docs/troubleshooting_RU.md) |
 | Разобраться в поведении и устройстве | [Возможности](docs/features_RU.md) · [Архитектура](docs/architecture_RU.md) · [API](docs/api_RU.md) |
-| Разработать или проверить изменение | [Micro-Spec](docs/micro-spec-development_RU.md) · [Контракты каталога](docs/specs/catalog-review-137501_RU.md) · [Backlog](BACKLOG_RU.md) |
+| Разработать или проверить изменение | [Micro-Spec](docs/micro-spec-development_RU.md) · [Контракты каталога](docs/specs/20261013-catalog-review-137501_RU.md) · [Backlog](BACKLOG_RU.md) |
 
 `scripts/diagnose.sh --send` отправляет реальное сообщение; используйте только одобренного адресата. Локальные проверки и запуск тестов описаны в [инструкции установки](docs/setup_RU.md).
 

@@ -1,6 +1,6 @@
 # Interactive MAX questions — Micro-Spec
 
-[Russian version](interactive-questions_RU.md)
+[Russian version](20261013-interactive-questions_RU.md)
 
 Date: 2026-10-13. Status: specified, implementation pending. Source: the user's request to expose an interactive question action to the MAX agent and return button answers to the same session. Baseline `887611a`; approved live target is the existing test installation. Rendering methods already exist; their presence does not prove tool availability or correct callback handling.
 

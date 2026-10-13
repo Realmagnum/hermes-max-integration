@@ -1,8 +1,8 @@
 # Готовность релиза — Micro-Spec
 
-[Английская версия](release-readiness.md)
+[Английская версия](20261013-release-readiness.md)
 
-Дата: 2026-10-13. Статус: в процессе выполнения — ключевые критерии REL-001, REL-003, REL-005, REL-006 подтверждены. База: `63846af6ca9d585ae16167684d2c5324c3c8c876`. Источник: поручение закрыть backlog и подготовить полноценный релиз до изменений каталожного PR и ответа ревьюеру. Уточняет [контракты каталога](catalog-review-137501_RU.md), сохраняя их ID.
+Дата: 2026-10-13. Статус: в процессе выполнения — ключевые критерии REL-001, REL-003, REL-005, REL-006 подтверждены. База: `63846af6ca9d585ae16167684d2c5324c3c8c876`. Источник: поручение закрыть backlog и подготовить полноценный релиз до изменений каталожного PR и ответа ревьюеру. Уточняет [контракты каталога](20261013-catalog-review-137501_RU.md), сохраняя их ID.
 
 ## Объём и границы
 
@@ -19,7 +19,7 @@
 | REL-005 | Публикуются изменяемые platform claims | Отдельно сверить official API host, правила регистрации, limits, webhook/TLS и Core contract; записать source/date/version, сохранить EN/RU parity | DOC-10; external-claims EN/RU | Проверено; реестр обновлён на дату 2026-10-13 |
 | REL-006 | Desktop отображает default/en/ru/unknown locale | Наблюдать labels, dates, loading/empty/error/search и смену локали; записать SDK version и reload limits статических palette strings | CAT-01 / MS-006; Desktop/locale tests | Проверено; визуальная приёмка завершена. Ограничение: описание плагина в каталоге статично |
 | REL-007 | Согласованный live bot получает text/file/approval input | Пользователь получает точный ответ и вложение; denied user не вызывает effects; offered approval choices однократно разрешаются в правильной session; чужие/повторные действия отклоняются | CAT-02 / MS-011; router/file/callback tests | Частично; текст/файл/clarify проверены вживую; живое подтверждение exec approval ожидает |
-| REL-008 | После исправлений оценивается release gate | Version/manifest/package/changelog согласованы; clean artifact содержит нужные файлы каталога; checksums/install evidence относятся к exact source; release notes раскрывают ограничения. Готовность полноценного релиза определяется записанными gates | Release scripts, changelog, [interactive contracts](interactive-questions_RU.md) | Запланировано; релиз не создан |
+| REL-008 | После исправлений оценивается release gate | Version/manifest/package/changelog согласованы; clean artifact содержит нужные файлы каталога; checksums/install evidence относятся к exact source; release notes раскрывают ограничения. Готовность полноценного релиза определяется записанными gates | Release scripts, changelog, [interactive contracts](20261013-interactive-questions_RU.md) | Запланировано; релиз не создан |
 
 ## Доказательства и продолжение
 

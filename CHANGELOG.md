@@ -8,7 +8,7 @@ Compared against the immutable `v2.10.2` tag (`bcbf7696a99e81db1679671f979726d5b
 
 ### Added
 
-- **File-only MAX agent replies:** public `transform_llm_output` hook inserts the first filename before Core delivery; direct attachment sends use basename or `File`, preserving authored captions. Platform instructions explain final `MEDIA:<absolute-file-path>` replies. User confirmed live file delivery on 2026-10-14. [CAP-001–005](docs/specs/media-caption.md).
+- **File-only MAX agent replies:** public `transform_llm_output` hook inserts the first filename before Core delivery; direct attachment sends use basename or `File`, preserving authored captions. Platform instructions explain final `MEDIA:<absolute-file-path>` replies. User confirmed live file delivery on 2026-10-14. [CAP-001–005](docs/specs/20261013-media-caption.md).
 - **Presentation and documentation:** banner, compact illustrated capability table and the existing PNG-table example in both READMEs; durable architecture notes, Micro-Spec contracts and acceptance/handoff records.
 - **Regression coverage:** real Core send-router and clarify-queue tests, catalog access/security cases, diagnostics privacy, requester-bound picker and Desktop locale harness.
 
