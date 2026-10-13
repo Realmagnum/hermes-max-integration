@@ -90,7 +90,7 @@ Direct `hermes send` and cron paths without the output hook still need text: `re
 - Local media stays under `HERMES_HOME`. No plugin telemetry or self-updating code. API endpoint: `MAX_API_BASE` (`https://platform-api2.max.ru`); official media hosts: `*.max.ru`, `*.oneme.ru`.
 - The pinned CI Core dependency audit reports 14 PyJWT 2.13.0 advisories. This remains an open upstream constraint; no audit exclusions or incompatible overrides are used.
 
-Details: [security](docs/security.md), [dated compatibility evidence](docs/external-claims.md) and [outstanding work](BACKLOG.md). Changes since `v2.10.2` are **unreleased**; see the [changelog](CHANGELOG.md).
+Details: [security](docs/security.md), [dated compatibility evidence](docs/external-claims.md) and [outstanding work](BACKLOG.md). Changes since `v2.10.2` are consolidated in **v2.11.0**; see the [changelog](CHANGELOG.md).
 
 ## License and credits
 

@@ -34,3 +34,7 @@ Complete independently verifiable backlog acceptance and prepare a reproducible 
 ## Handoff to the next agent
 
 Continue on `fix/catalog-review-137501` from commit `63846af`. The core contracts for clarify (Q-001–006), model picker requester binding (REL-001), Python matrix (REL-003), Desktop visual check (REL-006) and external claims (REL-005) are verified. Next: complete live execution approval verification (`_send_exec_approval_prompt`), directory admission validation with `--install-deps`, and evaluate final release gates. Do not edit catalog PR or reply to reviewer until full release is prepared.
+
+## v2.11.0 publication amendment — 2026-10-14
+
+The user explicitly requested release 2.11.0 with English release notes. Prepare an immutable candidate, exact-version artifacts and checksums; publish with the documented upstream PyJWT audit findings and pending live execution-approval acceptance, without claiming all earlier gates passed. REL-004 and REL-007 remain partial. GitHub is the release destination; the legacy Gitea-only tag script is not used. Catalog PR/reviewer actions are separate and are not included in this publication request.

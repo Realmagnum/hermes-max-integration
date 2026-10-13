@@ -90,7 +90,7 @@ hermes gateway setup
 - Локальные медиа остаются в `HERMES_HOME`. Нет телеметрии и кода автообновления плагина. API endpoint: `MAX_API_BASE` (`https://platform-api2.max.ru`); официальные медиа-хосты: `*.max.ru`, `*.oneme.ru`.
 - Аудит закреплённых в CI зависимостей Core сообщает 14 advisories PyJWT 2.13.0. Ограничение upstream остаётся открытым; исключения аудита и несовместимые подмены не используются.
 
-Подробности: [безопасность](docs/security_RU.md), [датированные проверки совместимости](docs/external-claims_RU.md) и [оставшиеся задачи](BACKLOG_RU.md). Изменения после `v2.10.2` **ещё не выпущены**; см. [changelog](CHANGELOG_RU.md).
+Подробности: [безопасность](docs/security_RU.md), [датированные проверки совместимости](docs/external-claims_RU.md) и [оставшиеся задачи](BACKLOG_RU.md). Изменения после `v2.10.2` объединены в **v2.11.0**; см. [changelog](CHANGELOG_RU.md).
 
 ## Лицензия и благодарности
 

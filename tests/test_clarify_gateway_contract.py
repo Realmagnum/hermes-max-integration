@@ -1,5 +1,6 @@
 """Native MAX clarify callbacks against the installed Core gateway registry."""
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -110,6 +111,12 @@ async def test_open_ended_uses_core_text_queue_and_tool_result():
     assert core.get_pending_for_session("session-a").awaiting_text
     assert core.attempt_text_response_for_session("session-a", "at home") == core.TEXT_RESOLVED
     assert core.wait_for_response("q-a", 0.01) == "at home"
-    result = clarify_tool([{"question": "Pick", "choices": ["One", "Two"]}],
-                          callback=lambda questions: {"answers": {"q0": "Two"}, "outcome": "submitted"})
+    if "question" in inspect.signature(clarify_tool).parameters:
+        # Released minimum/baseline Core accepts one question and a string result.
+        result = clarify_tool("Pick", choices=["One", "Two"],
+                              callback=lambda question, choices, **kwargs: "Two")
+    else:
+        # Later Core accepts a question batch and its structured answer envelope.
+        result = clarify_tool([{"question": "Pick", "choices": ["One", "Two"]}],
+                              callback=lambda questions: {"answers": {"q0": "Two"}, "outcome": "submitted"})
     assert '"user_response": "Two"' in result

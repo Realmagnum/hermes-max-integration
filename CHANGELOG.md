@@ -2,14 +2,15 @@
 
 All notable changes to the hermes-max-integration plugin.
 
-## [Unreleased] — Changes since v2.10.2, 2026-10-14
+## [2.11.0] — 2026-10-14
 
-Compared against the immutable `v2.10.2` tag (`bcbf7696a99e81db1679671f979726d5b5c2833b`). These changes are merged into main; no new version or release tag is created by this update. [Compare with v2.10.2](https://github.com/Realmagnum/hermes-max-integration/compare/v2.10.2...main).
+Compared against the immutable `v2.10.2` tag (`bcbf7696a99e81db1679671f979726d5b5c2833b`). This release consolidates all changes since that version. [Compare with v2.10.2](https://github.com/Realmagnum/hermes-max-integration/compare/v2.10.2...v2.11.0).
 
 ### Added
 
 - **File-only MAX agent replies:** public `transform_llm_output` hook inserts the first filename before Core delivery; direct attachment sends use basename or `File`, preserving authored captions. Platform instructions explain final `MEDIA:<absolute-file-path>` replies. User confirmed live file delivery on 2026-10-14. [CAP-001–005](docs/specs/20261013-media-caption.md).
 - **Presentation and documentation:** banner, compact illustrated capability table and the existing PNG-table example in both READMEs; durable architecture notes, Micro-Spec contracts and acceptance/handoff records.
+- **Clarify test compatibility:** the real tool-result regression uses the public single-question API on minimum/baseline Core and the batch API on later Core.
 - **Regression coverage:** real Core send-router and clarify-queue tests, catalog access/security cases, diagnostics privacy, requester-bound picker and Desktop locale harness.
 
 ### Fixed
@@ -33,8 +34,8 @@ Compared against the immutable `v2.10.2` tag (`bcbf7696a99e81db1679671f979726d5b
 
 ### Verification and limitations
 
-- Full plugin suite: **796 passed** on Core `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f`; subsequent instruction update: **27 focused tests passed**. Wheel build includes the caption helper. Earlier released-minimum Core 0.21.4/Python 3.12 checks remain dated evidence; the latest caption runtime was not retested on that minimum.
-- User confirmed live file delivery, model picker and clarify; Desktop EN/RU/date inspection is recorded. Final remote-source admission, live execution-approval selection and release publication remain open.
+- Full plugin suite: **796 passed** on Core `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f`; subsequent instruction update: **27 focused tests passed**. Wheel build includes the caption helper. Earlier released-minimum Core 0.21.4/Python 3.12 checks remain dated evidence; exact release-candidate CI provides updated matrix evidence.
+- User confirmed live file delivery, model picker and clarify; Desktop EN/RU/date inspection is recorded. Final remote-source admission, live execution-approval selection remain open.
 - Pinned CI Core PyJWT 2.13.0 audit reports **14 advisories**. No vulnerability exclusions or incompatible overrides; this is an unresolved release constraint.
 - **CAT-01 / MS-006:** static English description in Capabilities → Plugins is bound to the installed Desktop source build `0.0.0`, commit `7157422022ff06f3e632d1dd394ee1253b17ad37` (checked 2026-10-14); loader/renderer evidence and upgrade recheck conditions are in [Desktop features](docs/features.md). This is separate from older-SDK palette reload behavior. Visual acceptance stays closed. [Remaining work](BACKLOG.md).
 
