@@ -6,6 +6,6 @@ The extraction of adapter responsibilities into `mixins/` is complete. This page
 
 - Current implementation: inspect `adapter.py`, `mixins/`, and `plugin.yaml`.
 - Current architecture: `architecture.md`.
-- Current outstanding audit items: `BACKLOG.md`.
+- Current outstanding audit items: [BACKLOG.md](../BACKLOG.md).
 
 Before reviving an archived task, verify it against current code and tests, then record it in the backlog.

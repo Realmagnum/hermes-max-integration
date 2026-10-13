@@ -40,3 +40,7 @@ When updating documentation:
 5. Run `python scripts/check_docs_links.py`, `python scripts/check-ru-en-parity.py`, `python scripts/check-doc-claims.py`, `python scripts/check-config-reference.py`, then relevant tests.
 
 Write Markdown without manual line wrapping inside paragraphs. Use tables only for genuinely tabular references. Use relative internal links without a leading `/` or `../` when a repository-root-relative path works. State uncertainty plainly; include a source and verification date for external or version-dependent claims.
+
+## Behavior specifications
+
+Persist cross-session behavior contracts in `docs/specs/`, with stable MS IDs, trigger/result, falsifiable acceptance, source/code/test links, exact implementation/Core revisions and actual status. Keep implementation separate from verification; publish no secrets or local personal paths. Update EN/RU together. Link completed work from the changelog and remove it from the active backlog; retain residual acceptance conditions explicitly.

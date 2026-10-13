@@ -27,6 +27,8 @@
 
 Основные документы в `docs/` пишутся на английском (`name.md`), русские переводы — `name_RU.md`. `README.md` — английский, `README_RU.md` — русский.
 
+[Micro-Spec и приёмка](docs/specs/catalog-review-137501_RU.md); [оставшаяся работа](BACKLOG_RU.md); [история изменений](CHANGELOG_RU.md).
+
 ## Быстрый старт
 
 Требуется Hermes Core **>=0.21.4**. Минимальный релиз проверен на `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` (0.21.4, Python 3.12); CI также проверяет более поздние baseline/current исходники. В Core 0.20 нет необходимого плагину entry point для нативного подтверждения команд.
@@ -67,7 +69,7 @@ Telegram Bot API 10.1+ поддерживает таблицы через отд
 
 Проверенный набор зависимостей Core закрепляет PyJWT 2.13.0; аудит сообщает 14 advisories для этой версии. Аудит остаётся неуспешным до исправления ограничения upstream Core; исключения аудита и несовместимые подмены зависимостей не используются. См. [docs/external-claims_RU.md](docs/external-claims_RU.md).
 
-Исходящие API-запросы направляются только на настроенный endpoint MAX Bot API (`MAX_API_BASE_URL`, по умолчанию `https://platform-api2.max.ru`) и официальные медиа-хосты MAX (`*.max.ru`, `*.oneme.ru`). Скачанные медиафайлы и PNG-таблицы хранятся локально в `HERMES_HOME`. В плагине нет телеметрии, аналитики или кода автообновления; режим webhook требует `MAX_WEBHOOK_SECRET` (fail-closed). См. [docs/security_RU.md](docs/security_RU.md).
+Исходящие API-запросы направляются только на endpoint MAX Bot API, закреплённый в плагине (`MAX_API_BASE`, `https://platform-api2.max.ru`) и официальные медиа-хосты MAX (`*.max.ru`, `*.oneme.ru`). Скачанные медиафайлы и PNG-таблицы хранятся локально в `HERMES_HOME`. В плагине нет телеметрии, аналитики или кода автообновления; режим webhook требует `MAX_WEBHOOK_SECRET` (fail-closed). См. [docs/security_RU.md](docs/security_RU.md).
 
 ## Проверки и диагностика
 

@@ -28,6 +28,8 @@ For a compact document map, run `tree docs`. Read [docs/architecture.md](docs/ar
 
 Project documents use English `name.md` with Russian `name_RU.md` counterparts. `README.md` is English and `README_RU.md` is Russian.
 
+[Micro-Spec and acceptance evidence](docs/specs/catalog-review-137501.md); [outstanding work](BACKLOG.md); [change history](CHANGELOG.md).
+
 ## Quick start
 
 Requires Hermes Core **>=0.21.4**. The released minimum is verified at `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` (0.21.4, Python 3.12), alongside later baseline/current source fixtures in CI. Core 0.20 lacks the native execution-approval entry point required by this plugin.
@@ -68,7 +70,7 @@ The plugin bundles a Russian Trusted Root CA and adds it to the MAX API and uplo
 
 The tested Core dependency set currently pins PyJWT 2.13.0; the dependency audit reports 14 advisories for that version. The audit remains failing until the upstream Core constraint is fixed; no audit exclusions or incompatible dependency overrides are used. See [docs/external-claims.md](docs/external-claims.md).
 
-Outbound API requests go only to the configured MAX Bot API endpoint (`MAX_API_BASE_URL`, default `https://platform-api2.max.ru`) and official MAX media hosts (`*.max.ru`, `*.oneme.ru`). Downloaded media and rendered table images are stored locally under `HERMES_HOME`. The plugin includes no telemetry, analytics, or self-updating code; webhook mode requires `MAX_WEBHOOK_SECRET` (fail-closed). See [docs/security.md](docs/security.md).
+Outbound API requests go only to the MAX Bot API endpoint fixed in the plugin (`MAX_API_BASE`, `https://platform-api2.max.ru`) and official MAX media hosts (`*.max.ru`, `*.oneme.ru`). Downloaded media and rendered table images are stored locally under `HERMES_HOME`. The plugin includes no telemetry, analytics, or self-updating code; webhook mode requires `MAX_WEBHOOK_SECRET` (fail-closed). See [docs/security.md](docs/security.md).
 
 ## Troubleshooting and checks
 
