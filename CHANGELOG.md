@@ -4,7 +4,7 @@ All notable changes to the hermes-max-integration plugin.
 
 ## [Unreleased]
 
-- **Catalog review submission:** published [PR #138075](https://github.com/NousResearch/hermes-agent/pull/138075) for immutable v2.11.0 and a [reviewer response](https://github.com/NousResearch/hermes-agent/pull/137501#issuecomment-6156793138) with fix evidence and remaining limitations. Old #137501 is retained as Draft; repeat-review decision pending. [MS-012](docs/specs/20261013-catalog-review-137501.md).
+- **Catalog review submission:** original [PR #137501](https://github.com/NousResearch/hermes-agent/pull/137501) repinned to immutable v2.11.0 (commit `1321548cfe`), description and reviewer response updated; ready for repeat review. Temporary #138075 closed as a duplicate. Review decision pending. [MS-012](docs/specs/20261013-catalog-review-137501.md).
 
 ## [2.11.0] — 2026-10-14
 
