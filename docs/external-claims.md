@@ -1,8 +1,8 @@
 # External and unconfirmed claims — verification register (DOC-10)
 
-**Verification date:** 2026-09-16.
+**Verification date:** 2026-09-16 (initial baseline); refreshed **2026-10-13** against released Hermes Core 0.21.4 and current MAX API specifications.
 **Scope:** README / README_RU / docs/setup* claims about the MAX API and platform requirements, Telegram capabilities, and Hermes core behaviour.
-**Method:** reconciled against the official MAX documentation (`dev.max.ru/docs-api`), the official Telegram Bot API documentation (`core.telegram.org/bots/api`) and the actual Hermes 0.21.3 core source (`~/.hermes/hermes-agent`). No live API calls; no production tokens or messages were used.
+**Method:** reconciled against the official MAX documentation (`dev.max.ru/docs-api`), the official Telegram Bot API documentation (`core.telegram.org/bots/api`), and actual Hermes Core sources (released minimum 0.21.4 `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` and current fixture `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f`). No production tokens or messages were used.
 
 ## 1. Change summary
 
@@ -72,9 +72,11 @@ Official requirements (dev.max.ru/docs-api/methods/POST/subscriptions):
 - Classic modes (`Markdown`, `MarkdownV2`, `HTML`) support bold/italic/underline/strikethrough/spoiler/quote/code/links and contain no tables.
 - **Bot API 10.1 (June 11, 2026)** added Rich Messages: `RichBlockTable`, `RichBlockTableCell`, the `sendRichMessage` method, and the `rich_message` field on `Message`. Tables are available only through that path.
 
-## 7. Hermes core 0.21.3 — local verification
+## 7. Hermes Core >=0.21.4 — local verification
 
-- **Reasoning / fresh-final.** The key is read only from the top-level `streaming:` section (`gateway/config.py`, `StreamingConfig.from_dict`) and applied to **Telegram only**: `gateway/run_turn.py:2492` forces `0.0` for every other platform. The README's `display.platforms.max.fresh_final_after_seconds` shape works neither by key path nor by platform.
+- **Reasoning / fresh-final.** The key is read only from the top-level `streaming:` section (`gateway/config.py`, `StreamingConfig.from_dict`) and applied to **Telegram only**: `gateway/run_turn.py` forces `0.0` for every other platform. The README's `display.platforms.max.fresh_final_after_seconds` shape works neither by key path nor by platform.
+- **Python version matrix.** Verified across minimum Core 0.21.4 on Python 3.12 and later Core on Python 3.14. Python 3.11 is not supported.
+- **Interactive questions.** Native integration with Hermes Core `clarify` tool (`tools.clarify_gateway`, `tools.clarify_tool`) verified: choices resolved with label strings, Other text prompt supported, duplicate MessageEvent suppressed.
 - **Media-only delivery.** Historical checks found version-dependent routing limitations in Core. The plugin no longer ships a Core-editing workaround. Confirm delivery through the selected Core's public router; a standalone sender unit test does not establish media-only routing.
 
 **Router verification, 2026-10-13.** Integration tests against Core `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f` use real plugin registration and Core dispatch with mocked API/CDN transports (`tests/test_core_send_router.py`). Text and text-plus-file requests reach the registered MAX standalone sender. Successful attachment delivery reports `media_delivered=true`, preventing Core's unsupported-media warning. Missing files, failed upload/CDN or rejected attachment messages return an error with `media_requested`, `media_sent`, `text_delivered` and `partial_delivery`; previously delivered text/files are not described as a complete success. Core's public `_send_to_platform` still rejects MAX media-only requests before transport, although its lower `_send_via_adapter` dispatcher can deliver them. These isolated checks establish routing and result semantics, not live MAX delivery.

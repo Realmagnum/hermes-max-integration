@@ -27,7 +27,7 @@
 
 Основные документы в `docs/` пишутся на английском (`name.md`), русские переводы — `name_RU.md`. `README.md` — английский, `README_RU.md` — русский.
 
-[Micro-Spec и приёмка](docs/specs/catalog-review-137501_RU.md); [оставшаяся работа](BACKLOG_RU.md); [история изменений](CHANGELOG_RU.md).
+[Разработка по Micro-Spec](docs/micro-spec-development_RU.md): требования, реализация, проверка и передача работы. [Контракты каталога и evidence приёмки](docs/specs/catalog-review-137501_RU.md); [оставшаяся работа](BACKLOG_RU.md); [история изменений](CHANGELOG_RU.md).
 
 ## Быстрый старт
 

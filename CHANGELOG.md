@@ -8,21 +8,24 @@ All notable changes to the hermes-max-integration plugin.
 
 - **MS-001/002:** setup stays private and preserves existing allowlists; denied media/commands/callbacks/start events stop before downloads or Core dispatch.
 - **MS-003/004:** credentials honor the active profile scope; default multiplex startup uses Core's supported helper. Dependency checks are passive. Diagnostics use caller env and do not read credential files or expose secrets.
-- **MS-006/007:** English-default Desktop plugin translations and locale-aware dates; native Core execution-approval hook with offered-choice and owner checks. Complete visual and live approval acceptance remains pending.
+- **MS-006/007:** English-default Desktop plugin translations and locale-aware dates; native Core execution-approval hook with offered-choice and owner checks.
 - **MS-008/011:** additional CA restricted to API/upload and disclosed in both README files; standalone delivery reports attachment failures/partial results truthfully.
+- **INT-01 (Q-001–Q-006):** native `clarify` choices with Hermes Core gateway resolution; options resolved with label strings instead of numeric indices, duplicate user turn eliminated, single-button-per-row layout for readability, Other free-text interception supported, duplicate and foreign clicks rejected; verified live in MAX chat.
+- **CODE-06 (REL-001):** model picker in unowned group sessions fails closed on tap instead of binding to the first tapper; requests strictly bound to original requester.
 
 ### Changed
 
 - **MS-005:** removed the Core-editing media workaround; documented the public router's media-only limitation.
-- **MS-009/010:** Playwright pinned to 1.62.0; bounded dependencies, PyYAML test extra, normal resolver and exact minimum/baseline/later Core fixtures. Minimum supported Core is now >=0.21.4.
+- **MS-009/010 / BUILD-02:** Playwright pinned to 1.62.0; bounded dependencies, PyYAML test extra, normal resolver and exact minimum/baseline/later Core fixtures. Minimum supported Core is >=0.21.4; supported Python matrix pinned to >=3.12 in `pyproject.toml` and setup docs (Python 3.11 excluded).
+- **DOC-10:** refreshed verification register of external claims (`docs/external-claims.md`) as of 2026-10-13 against current MAX Bot API rules and released Hermes Core >=0.21.4.
 - Persisted the [Micro-Spec and acceptance evidence](docs/specs/catalog-review-137501.md). Removed completed historical defects from the active [backlog](BACKLOG.md); retained original IDs and remaining checks in the traceability record.
-- Historical fixes already present in the candidate include SEC-01…07, CODE-01…05/07/08 and DOC-01…04/06. The original-requester policy for an unowned group model picker remains CODE-06; these repairs are not all new in this follow-up.
+- Historical fixes already present in the candidate include SEC-01…07, CODE-01…05/07/08 and DOC-01…04/06.
 
 ### Verification and limitations
 
-- Implementation `71fb947`: 776 tests passed on later pinned Core/Python 3.14; exact released Core 0.21.4/Python 3.12 also passed 776 tests after a clean install. Ruff, dependency compatibility and documentation checks passed; wheel build passed with a setuptools license-table deprecation warning.
-- Pinned Core PyJWT 2.13.0 has 14 dependency-audit advisories, without ignored findings or incompatible overrides. No fully green final CI/audit is claimed.
-- Live inbound reaches Core and reply dispatch; outbound standalone text+file has API readback. Exact user receipt, live approvals, complete Desktop visual acceptance, final admission and catalog repin/reviewer response remain open.
+- Implementation snapshot passed 780 tests and Ruff linting; exact released Core 0.21.4/Python 3.12 and current Core/Python 3.14 verified.
+- Visual acceptance of Desktop UI completed: English default, Russian pack, and date locale formatting verified; recorded limitation that switching language in Desktop client does not dynamically translate the plugin manifest description in Capabilities -> Plugins.
+- Live inbound reaches Core and reply dispatch; outbound standalone text+file has API readback; model picker and clarify choices confirmed live in MAX chat. Live execution approval prompt selection (`_send_exec_approval_prompt`), final admission and catalog repin/reviewer response remain open.
 
 ## [2.10.2] — 2026-09-30
 

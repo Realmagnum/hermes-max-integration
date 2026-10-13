@@ -1,8 +1,8 @@
 # Реестр внешних и неподтверждённых утверждений (DOC-10)
 
-**Дата сверки источников:** 2026-09-16. Даты — исторические; перед практическим использованием перепроверьте внешние требования.
+**Дата сверки источников:** 2026-09-16 (исходный baseline); обновлено **2026-10-13** по релизному Hermes Core 0.21.4 и актуальным спецификациям MAX API.
 **Область:** утверждения о MAX API, требованиях платформы, возможностях Telegram и поведении Hermes Core в README и документации настройки.
-**Метод:** сопоставление с официальной документацией MAX (`dev.max.ru/docs-api`), Telegram Bot API (`core.telegram.org/bots/api`) и исходниками Hermes Core 0.21.3 (`~/.hermes/hermes-agent`). Живые API-вызовы не выполнялись; production-токены и сообщения не использовались.
+**Метод:** сопоставление с официальной документацией MAX (`dev.max.ru/docs-api`), Telegram Bot API (`core.telegram.org/bots/api`) и исходниками Hermes Core (релизный минимум 0.21.4 `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` и текущий fixture `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f`). Production-токены и сообщения не использовались.
 
 ## 1. Итоги сверки
 
@@ -72,9 +72,11 @@
 - Обычные режимы (`Markdown`, `MarkdownV2`, `HTML`) поддерживают форматирование, но не таблицы.
 - **Bot API 10.1 (11 июня 2026 года)** добавил Rich Messages: `RichBlockTable`, `RichBlockTableCell`, `sendRichMessage` и поле `rich_message` у `Message`. Таблицы доступны только через этот интерфейс.
 
-## 7. Hermes Core 0.21.3: локальная проверка
+## 7. Hermes Core >=0.21.4 — локальная проверка
 
-- **Reasoning / fresh-final.** Ключ читается только из верхнеуровневой секции `streaming:` (`gateway/config.py`, `StreamingConfig.from_dict`) и применяется **только к Telegram**: `gateway/run_turn.py:2492` задаёт `0.0` для остальных платформ. Конфигурация `display.platforms.max.fresh_final_after_seconds` неверна и по пути ключа, и по применению к платформе.
+- **Reasoning / fresh-final.** Ключ читается только из верхнеуровневой секции `streaming:` (`gateway/config.py`, `StreamingConfig.from_dict`) и применяется **только к Telegram**: `gateway/run_turn.py` принудительно выставляет `0.0` для всех остальных платформ. Путь `display.platforms.max.fresh_final_after_seconds` не работает ни по ключу, ни по платформе.
+- **Матрица версий Python.** Проверено на minimum Core 0.21.4 под Python 3.12 и later Core под Python 3.14. Python 3.11 не поддерживается.
+- **Интерактивные вопросы.** Нативная интеграция с инструментом `clarify` Hermes Core (`tools.clarify_gateway`, `tools.clarify_tool`) проверена: варианты выбора разрешаются строкой метки, поддерживается ввод текста Other, подавлен искусственный дублирующий MessageEvent.
 - **Доставка media-only.** Исторические проверки обнаруживали ограничения маршрутизации в зависимости от версии Core. Плагин больше не поставляет обход с изменением Core. Проверяйте доставку через публичный router выбранного Core: unit-тест standalone sender не доказывает маршрутизацию media-only.
 
 **Проверка router, 2026-10-13.** Интеграционные тесты на Core `ca13a7828acd2ba8c75e1c1d1694cbc1aee7df3f` используют настоящую регистрацию плагина и dispatch Core с подменёнными API/CDN транспортами (`tests/test_core_send_router.py`). Текст и текст с файлом доходят до зарегистрированного standalone sender MAX. Подтверждённая доставка вложений возвращает `media_delivered=true`, предотвращая предупреждение Core о неподдерживаемых вложениях. Отсутствующий файл, ошибка upload/CDN или отклонённая отправка вложения возвращают ошибку с `media_requested`, `media_sent`, `text_delivered` и `partial_delivery`; уже доставленные текст/файлы не выдаются за полный успех. Публичный `_send_to_platform` Core по-прежнему отклоняет MAX media-only до обращения к транспорту, хотя нижний dispatch `_send_via_adapter` умеет их доставлять. Эти изолированные проверки подтверждают маршрутизацию и смысл результата, но не реальную доставку MAX.

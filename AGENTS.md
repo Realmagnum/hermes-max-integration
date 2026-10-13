@@ -20,6 +20,12 @@ The adapter supports polling and webhook delivery. Before changing modes, inspec
 
 Do not run commands that delete or modify subscriptions without explicit authorization. A diagnostic that sends a message (`--send`) has an external side effect; use only with an approved recipient.
 
+## Development with Micro-Spec
+
+Before a non-trivial behavior change, read [the Micro-Spec workflow](docs/micro-spec-development.md) and relevant `docs/specs/` contracts. Define the change delta, stable IDs, observable results, and falsifiable acceptance before implementation. Reuse existing IDs and persist cross-session work as EN/RU specs; trivial edits need only an expected result and relevant check.
+
+Continue authorized implementation without a routine spec-approval round. Keep implementation and verification separate, link actual evidence to IDs and tested plugin/Core revisions, and leave unperformed live/visual acceptance pending. A source plan is not execution authority. Finish by updating affected docs and remaining backlog; external writes and production operations still need their corresponding authorization.
+
 ## Development invariants
 
 - Keep package-relative imports and verify plugin-loader behavior, not only direct imports from the repository working directory.

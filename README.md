@@ -28,7 +28,7 @@ For a compact document map, run `tree docs`. Read [docs/architecture.md](docs/ar
 
 Project documents use English `name.md` with Russian `name_RU.md` counterparts. `README.md` is English and `README_RU.md` is Russian.
 
-[Micro-Spec and acceptance evidence](docs/specs/catalog-review-137501.md); [outstanding work](BACKLOG.md); [change history](CHANGELOG.md).
+[Development with Micro-Spec](docs/micro-spec-development.md) explains requirements, implementation, verification, and handoff. [Catalog contracts and acceptance evidence](docs/specs/catalog-review-137501.md); [outstanding work](BACKLOG.md); [change history](CHANGELOG.md).
 
 ## Quick start
 

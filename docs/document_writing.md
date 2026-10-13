@@ -43,4 +43,6 @@ Write Markdown without manual line wrapping inside paragraphs. Use tables only f
 
 ## Behavior specifications
 
+Follow [Development with Micro-Spec](micro-spec-development.md) for when to specify, contract structure, implementation, acceptance, and handoff. Trivial edits do not need a persistent spec; reuse an existing contract before creating another.
+
 Persist cross-session behavior contracts in `docs/specs/`, with stable MS IDs, trigger/result, falsifiable acceptance, source/code/test links, exact implementation/Core revisions and actual status. Keep implementation separate from verification; publish no secrets or local personal paths. Update EN/RU together. Link completed work from the changelog and remove it from the active backlog; retain residual acceptance conditions explicitly.
