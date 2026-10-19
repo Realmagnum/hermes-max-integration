@@ -61,3 +61,6 @@ namespaces = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.uv.sources]
+hermes-agent = { workspace = true }
