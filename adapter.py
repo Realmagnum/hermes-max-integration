@@ -2788,6 +2788,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             return await self._handle_clarify_callback(data, user_id, payload, scoped_chat_id, message_id)
         elif prefix == "model":
             return await self._handle_model_callback(data, user_id, payload, scoped_chat_id, message_id)
+        elif prefix == "session":
+            return await self._handle_session_callback(data, user_id, scoped_chat_id, message_id)
         else:
             logger.warning("MAX: unknown callback prefix: %s", prefix)
             return None

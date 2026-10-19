@@ -38,7 +38,7 @@ from .base import MaxBaseMixin
 logger = logging.getLogger(__name__)
 
 #: Interaction kinds that keep bound state in ``_pending_interactions``.
-INTERACTION_KINDS = ("exec", "sc", "clarify")
+INTERACTION_KINDS = ("exec", "sc", "clarify", "session")
 
 #: How long a prompt's buttons stay usable. Nothing legitimate resolves an
 #: approval/clarify card after this window; keeping state forever just widens
@@ -67,6 +67,7 @@ class CallbackAuthMixin(MaxBaseMixin):
         self._exec_approval_state = self._pending_interactions["exec"]
         self._slash_confirm_state = self._pending_interactions["sc"]
         self._clarify_state = self._pending_interactions["clarify"]
+        self._session_picker_state = self._pending_interactions["session"]
         # session_key -> owner user id, learned from inbound messages.
         self._session_owners: dict[str, str] = {}
         # scoped chat id -> last inbound sender (group fallback when the
