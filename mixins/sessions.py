@@ -52,7 +52,9 @@ class SessionsMixin(MaxBaseMixin):
     ) -> tuple[str, list[list[dict[str, str]]]]:
         rows = rows[:MAX_SESSIONS]
         header = (f"🔍 **Сессии по запросу «{_clean_text(search, 80)}»**" if search
-                  else "📋 **Выбор сессии** (все платформы / all platforms):")
+                  else ("📋 **Выбор сессии** (все платформы / all platforms):" if any(
+                      str(row.get("source", "")).lower() != "max" for row in rows
+                  ) else "📋 **Выбор сессии** (только MAX):"))
         lines = [header, ""]
         keyboard: list[list[dict[str, str]]] = []
         buttons: list[dict[str, str]] = []
@@ -98,7 +100,7 @@ class SessionsMixin(MaxBaseMixin):
         return text, keyboard
 
     @staticmethod
-    def _query_sessions(search: str | None) -> list[dict]:
+    def _query_sessions(search: str | None, include_all: bool = False) -> list[dict]:
         from hermes_state import SessionDB
 
         kwargs: dict = {
@@ -108,7 +110,10 @@ class SessionsMixin(MaxBaseMixin):
         }
         if search:
             kwargs["search_query"] = search
-        return SessionDB().list_sessions_rich(**kwargs)
+        rows = SessionDB().list_sessions_rich(**kwargs)
+        if not include_all and not search:
+            rows = [row for row in rows if str(row.get("source", "")).lower() == "max"]
+        return rows
 
     @staticmethod
     def _session_context(session_id: str) -> tuple[str, str, str]:
@@ -131,22 +136,28 @@ class SessionsMixin(MaxBaseMixin):
                 last, role = content, msg_role
         return first, last, role
 
-    async def _handle_cross_sessions(
-        self, text: str, chat_id: str, user_id: str = "",
-    ) -> None:
-        """Handle /sessions and /resume (no-arg) with an owner-only picker."""
+    async def _handle_cross_sessions(self, text: str, chat_id: str, user_id: str = "") -> None:
+        """Handle /sessions and /resume (no-arg) with an owner‑only picker.
+        Supports:
+        - `/sessions` → only MAX platform sessions.
+        - `/sessions all` → all platforms.
+        - `/sessions search <query>` → search across all platforms.
+        """
         if not self._cross_session_allowed(user_id):
             logger.warning("MAX: cross-session request denied: user=%r chat=%r", user_id, chat_id)
             return
         args = text[len("/sessions"):].strip()
-        search: str | None = None
-        if args.lower() == "search" or args.lower().startswith("search "):
+        args_lower = args.lower()
+        include_all = args_lower == "all"
+        search = None
+        if args_lower == "search" or args_lower.startswith("search "):
             search = args[6:].strip()
             if not search:
                 await self.send(chat_id, "Usage: `/sessions search <query>`")
                 return
+        query = search if search else None
         try:
-            rows = await asyncio.to_thread(self._query_sessions, search)
+            rows = await asyncio.to_thread(self._query_sessions, query, include_all=include_all or bool(query))
         except ImportError:
             await self.send(chat_id, "⚠️ Session store not available")
             return
@@ -157,10 +168,25 @@ class SessionsMixin(MaxBaseMixin):
         if not rows:
             await self.send(chat_id, "📭 **Сессии не найдены** (No sessions found)")
             return
-        await self._post_session_picker(chat_id, user_id, rows, search)
+        # Determine mode based on arguments
+        mode = "max"  # default: only MAX sessions
+        if args_lower == "all":
+            mode = "all"
+        elif args_lower == "max":
+            mode = "max"
+        elif args_lower.startswith("search"):
+            mode = "search"  # keep all for search
+        # Filter rows according to mode
+        if mode == "max":
+            rows = [r for r in rows if str(r.get("source", "")).lower() == "max"]
+        # else mode "all" or "search" keep all rows
+        await self._post_session_picker(chat_id, user_id, rows, search, include_all=mode != "max")
+        # Send usage hint after the picker message
+        await self.send(chat_id, "`/resume <id>` — переключиться на сессию\n`/sessions search <query>` — поиск по сессиям")
 
     async def _post_session_picker(
         self, chat_id: str, user_id: str, rows: list[dict], search: str | None,
+        include_all: bool = False,
     ) -> dict | None:
         interaction_id = uuid.uuid4().hex[:12]
         body, keyboard = self._session_picker_card(rows, search, interaction_id)
@@ -180,6 +206,7 @@ class SessionsMixin(MaxBaseMixin):
         )
         record["rows"] = rows[:MAX_SESSIONS]
         record["search"] = search
+        record["include_all"] = include_all or bool(search)
         return record
 
     async def _handle_session_callback(
@@ -215,13 +242,16 @@ class SessionsMixin(MaxBaseMixin):
         if action == "refresh":
             search = record.get("search")
             try:
-                fresh = await asyncio.to_thread(self._query_sessions, search)
+                fresh = await asyncio.to_thread(
+                    self._query_sessions, search, include_all=bool(record.get("include_all"))
+                )
             except Exception as exc:  # noqa: BLE001 — adapter must not crash
                 logger.warning("MAX: session refresh failed: %s", exc)
                 fresh = []
             await self._remove_picker_message(scoped_chat, message_id, "🔄 Обновление…")
             if fresh:
-                await self._post_session_picker(scoped_chat, user_id, fresh, search)
+                await self._post_session_picker(scoped_chat, user_id, fresh, search,
+                                                include_all=bool(record.get("include_all")))
             else:
                 await self.send(scoped_chat, "📭 **Сессии не найдены**")
             return None

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import adapter
+from gateway.platforms.base import SendResult
 
 # Env names that must not leak from the ambient test environment.
 _ENV_VARS = (
@@ -312,7 +313,7 @@ class TestCrossSessionHandlerGuard:
         fake_state.rows = [
             {
                 "id": "abcdef1234567890",
-                "source": "cli",
+                "source": "max",
                 "title": "Zabbix deploy",
                 "preview": "line one\nline two",
             },
@@ -325,6 +326,7 @@ class TestCrossSessionHandlerGuard:
         ]
         a = make_adapter(OWNER_CFG)
         a.send = AsyncMock()
+        a._post_interactive = AsyncMock(return_value=SendResult(success=True, message_id="picker1"))
 
         await a._handle_cross_sessions("/sessions", "user:42", "42")
 
@@ -332,12 +334,12 @@ class TestCrossSessionHandlerGuard:
         assert fake_state.query_calls == [
             {"limit": 15, "include_archived": False, "order_by_last_active": True}
         ]
-        assert a.send.await_count == 2
-        listing = a.send.await_args_list[0].args[1]
-        assert "all platforms" in listing
+        assert a._post_interactive.await_count == 1
+        listing = a._post_interactive.await_args.args[1]
         assert "Zabbix deploy" in listing
-        assert "abcdef123456" in listing
-        assert "Traefik" in listing
+        assert "Traefik" not in listing
+        assert "all platforms" not in listing
+        assert a.send.await_count == 1
 
     @pytest.mark.asyncio
     async def test_handler_search_passes_query_and_denies_nothing(self, fake_state):
@@ -346,6 +348,7 @@ class TestCrossSessionHandlerGuard:
         ]
         a = make_adapter(OWNER_CFG)
         a.send = AsyncMock()
+        a._post_interactive = AsyncMock(return_value=SendResult(success=True, message_id="picker1"))
 
         await a._handle_cross_sessions("/sessions search traefik", "user:42", "42")
 
@@ -357,8 +360,9 @@ class TestCrossSessionHandlerGuard:
                 "search_query": "traefik",
             }
         ]
-        listing = a.send.await_args_list[0].args[1]
+        listing = a._post_interactive.await_args.args[1]
         assert "traefik" in listing
+        assert a.send.await_count == 1  # usage hint only; list is in picker
 
     @pytest.mark.asyncio
     async def test_handler_reports_empty_result(self, fake_state):
