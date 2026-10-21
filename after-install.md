@@ -10,3 +10,15 @@
 6. Verify with `hermes gateway status` and the local health endpoint. `scripts/diagnose.sh --send` sends a real message and requires an approved recipient.
 
 See `docs/setup.md`, `docs/security.md`, and `docs/troubleshooting.md` for current details. Official MAX references and last-checked dates are tracked in `docs/external-claims.md`.
+
+## Owner session picker
+
+Despite its name, `MAX_CROSS_SESSION=true` also enables the MAX-only button picker. Configure `MAX_CROSS_SESSION_USERS` explicitly. When disabled or when the caller is not an owner, `/sessions` and `/resume` remain Core commands without plugin buttons. A closed bot may use its user allowlist as the owner fallback; `MAX_ALLOW_ALL_USERS=true` disables that fallback. Never grant cross-platform history access to every visitor.
+
+After configuration and an authorized restart, use the gateway Python and active profile:
+
+```bash
+python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profile-env
+```
+
+Replace the placeholder with your ID. Expect JSON `handler=plugin`, `reason=owner_picker_ready`, `dispatch_matches_policy=true`, exit 0. The check sends no messages and reads no history; health and import are insufficient. Then verify `/sessions` and buttons manually in MAX. See [diagnostics](docs/troubleshooting.md).

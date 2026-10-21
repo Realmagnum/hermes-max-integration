@@ -33,8 +33,12 @@ class FakeSessionDB:
     def __init__(self):
         pass
 
+    def close(self):
+        pass
+
     def list_sessions_rich(self, **kwargs):
-        return list(FakeSessionDB.rows)
+        rows = [row for row in FakeSessionDB.rows if not kwargs.get("source") or row["source"] == kwargs["source"]]
+        return rows[:kwargs["limit"]]
 
     def get_messages(self, session_id: str, include_ancestors: bool = True, **kwargs):
         return list(FakeSessionDB.messages.get(session_id, []))
@@ -106,7 +110,7 @@ class TestInteractiveSessionPicker:
             {"id": f"s-{i}", "source": "cli", "title": f"Task {i}", "preview": ""}
             for i in range(1, 13)
         ]
-        _, keyboard = a._session_picker_card(fake_12, interaction_id="act789")
+        _, keyboard = a._session_picker_card(fake_12, interaction_id="act789", limit=12)
 
         # Row 1: 5 buttons
         assert len(keyboard[0]) == 5

@@ -688,12 +688,30 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         self._cross_session = _coerce_bool(
             os.getenv("MAX_CROSS_SESSION") or extra.get("cross_session", False), False
         )
+        raw_limit = os.getenv("MAX_SESSIONS_LIMIT", extra.get("sessions_limit", 10))
+        try:
+            if isinstance(raw_limit, bool) or not str(raw_limit).strip().isdigit():
+                raise ValueError("not an integer")
+            self._sessions_limit = int(raw_limit)
+            if not 1 <= self._sessions_limit <= 20:
+                raise ValueError("outside 1..20")
+        except (TypeError, ValueError):
+            logger.warning("MAX: invalid sessions_limit; using default 10 (allowed: 1..20)")
+            self._sessions_limit = 10
+        self._sessions_default_all = _coerce_bool(
+            os.getenv("MAX_SESSIONS_DEFAULT_ALL", extra.get("sessions_default_all", False)), False,
+        )
         raw_cross_users = os.getenv("MAX_CROSS_SESSION_USERS") or extra.get("cross_session_users", "")
         if isinstance(raw_cross_users, (list, tuple, set)):
             raw_cross_users = ",".join(str(value) for value in raw_cross_users)
         self._cross_session_users = set(_parse_list(str(raw_cross_users or "")))
         if not self._cross_session_users and not self._allow_all_users:
             self._cross_session_users = set(self._allowed_users_set)
+        routing = self.session_routing_status()
+        logger.info(
+            "MAX: session routing handler=%s reason=%s limit=%s default_scope=%s",
+            routing["handler"], routing["reason"], routing["limit"], routing["default_scope"],
+        )
 
         # Group access control
         raw_group_policy = (
@@ -867,6 +885,27 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if not self._cross_session or not str(user_id or ""):
             return False
         return str(user_id) in self._cross_session_users
+
+    def session_routing_status(self, user_id: str | None = None) -> dict[str, Any]:
+        """Describe routing without exposing owners, credentials or session contents.
+
+        Without a caller this reports readiness for configured owners; it does
+        not grant access to an anonymous caller.
+        """
+        if not self._cross_session:
+            reason = "feature_disabled"
+        elif not self._cross_session_users:
+            reason = "owners_missing"
+        elif user_id is not None and not self._cross_session_allowed(user_id):
+            reason = "caller_not_owner"
+        else:
+            reason = "owner_picker_ready"
+        return {
+            "handler": "plugin" if reason == "owner_picker_ready" else "core",
+            "reason": reason,
+            "limit": self._sessions_limit,
+            "default_scope": "all" if self._sessions_default_all else "max",
+        }
 
     @staticmethod
     def _callback_message_id(payload: dict[str, Any]) -> str:
@@ -1540,21 +1579,20 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                     text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else "[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
+        session_command = text.split(maxsplit=1)[0] if text and text.strip() else ""
+        if session_command in {"/sessions", "/resume"}:
+            routing = self.session_routing_status(str(user_id or ""))
+            logger.info("MAX: session command routing handler=%s reason=%s", routing["handler"], routing["reason"])
         if text and self._cross_session and self._cross_session_allowed(user_id):
-            if text.startswith('/sessions'):
-                args = text[len('/sessions'):].strip()
-                if args and args.lower() != 'search' and not args.lower().startswith('search '):
-                    # Has a target ID → let core handle with --all override
-                    text = f"/resume --all {args}"
-                else:
-                    # Plain /sessions or /sessions search → our handler (all platforms)
-                    await self._handle_cross_sessions(text, scoped_chat_id, user_id)
-                    return None
-            elif text.startswith('/resume'):
+            command = text.split(maxsplit=1)[0]
+            if command == '/sessions':
+                await self._handle_cross_sessions(text, scoped_chat_id, user_id)
+                return None
+            elif command == '/resume':
                 if '--all' not in text and '--cross-room' not in text:
                     parts = text.split(maxsplit=1)
                     if len(parts) == 1:
-                        # /resume with no args → our handler (all platforms)
+                        # /resume with no args → picker using configured scope
                         await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
                         return None
                     else:
@@ -2550,8 +2588,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             return SendResult(success=False, error="Not connected")
         try:
             await self.send_action(chat_id, "sending_photo")
-        except Exception:  # noqa: BLE001, S110
-            pass
+        except Exception as exc:  # noqa: BLE001 — action failure must not block delivery
+            logger.debug("Failed to send photo action: %s", exc)
         parts = chat_id.split(":", 1)
         target_type = parts[0] if len(parts) > 1 else "user"
         target_id = parts[1] if len(parts) > 1 else chat_id
@@ -2609,8 +2647,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
 
         try:
             await self.send_action(chat_id, "sending_photo")
-        except Exception:  # noqa: BLE001, S110
-            pass
+        except Exception as exc:  # noqa: BLE001 — action failure must not block delivery
+            logger.debug("Failed to send photo action: %s", exc)
 
         # Upload all images concurrently
         tokens: list[str] = []
@@ -3459,6 +3497,11 @@ def _env_enablement() -> dict | None:
     if cross:
         extra["cross_session"] = _coerce_bool(cross, True)
 
+    for key, env_name in (("sessions_limit", "MAX_SESSIONS_LIMIT"),
+                          ("sessions_default_all", "MAX_SESSIONS_DEFAULT_ALL")):
+        if env_name in os.environ:
+            extra[key] = os.environ[env_name]
+
     group_users = os.getenv("MAX_GROUP_ALLOWED_USERS", "").strip()
     if group_users:
         extra["group_allow_from"] = [part.strip() for part in group_users.split(",") if part.strip()]
@@ -3496,6 +3539,9 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "group_allow_chats": "MAX_GROUP_ALLOWED_CHATS",
         "download_allowed_hosts": "MAX_DOWNLOAD_ALLOWED_HOSTS",
         "cross_session": "MAX_CROSS_SESSION",
+        "cross_session_users": "MAX_CROSS_SESSION_USERS",
+        "sessions_limit": "MAX_SESSIONS_LIMIT",
+        "sessions_default_all": "MAX_SESSIONS_DEFAULT_ALL",
     }
 
     for key, env_name in mapping.items():

@@ -175,8 +175,8 @@ class MediaUploadMixin(MaxBaseMixin):
         action = action_map.get(mtype, "sending_file")
         try:
             await self.send_action(chat_id, action)
-        except Exception:  # noqa: BLE001, S110
-            pass
+        except Exception as exc:  # noqa: BLE001 — action failure must not block media delivery
+            logger.debug("Failed to send action %s: %s", action, exc)
 
         # Normalize audio to a Max-accepted container regardless of what the
         # TTS provider emitted (wav/flac/m4a are rejected by the CDN with 415).

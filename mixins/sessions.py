@@ -10,8 +10,6 @@ from .base import MaxBaseMixin
 
 logger = logging.getLogger(__name__)
 MAX_MESSAGE_LENGTH = 4000
-MAX_SESSIONS = 15
-SEARCH_SESSIONS = 20
 PICKER_TTL_SECONDS = 900.0
 QUOTE_LIMIT = 96
 CONTEXT_QUOTE_LIMIT = 280
@@ -49,19 +47,24 @@ class SessionsMixin(MaxBaseMixin):
 
     def _session_picker_card(
         self, rows: list[dict], search: str | None = None, interaction_id: str = "",
+        *, include_all: bool = True, limit: int | None = None,
     ) -> tuple[str, list[list[dict[str, str]]]]:
-        rows = rows[:MAX_SESSIONS]
+        rows = rows[:self._sessions_limit if limit is None else limit]
         header = (f"🔍 **Сессии по запросу «{_clean_text(search, 80)}»**" if search
-                  else "📋 **Выбор сессии** (все платформы / all platforms):")
+                  else ("📋 **Выбор сессии** (все платформы / all platforms):" if include_all
+                        else "📋 **Выбор сессии** (только MAX):"))
         lines = [header, ""]
         keyboard: list[list[dict[str, str]]] = []
         buttons: list[dict[str, str]] = []
+        item_budget = (MAX_MESSAGE_LENGTH - 550) // max(1, len(rows))
+        title_limit = min(60, max(16, item_budget // 4))
+        quote_limit = min(QUOTE_LIMIT, max(0, item_budget - 160))
         for index, session in enumerate(rows, 1):
             source = str(session.get("source") or "?")
             emoji = SOURCE_EMOJI.get(source, "📄")
-            title = _clean_text(session.get("title") or "(без названия)", 60)
+            title = _clean_text(session.get("title") or "(без названия)", title_limit)
             raw_quote = " ".join(str(session.get("preview") or "").split())
-            quote = _clean_text(raw_quote, QUOTE_LIMIT)
+            quote = _clean_text(raw_quote, quote_limit)
             stamp = _format_timestamp(session.get("last_active") or session.get("started_at"))
             sid = str(session.get("id") or "")[:12]
             try:
@@ -70,7 +73,7 @@ class SessionsMixin(MaxBaseMixin):
                 count = 0
             lines.append(f"**{index}.** {emoji} **{_clean_text(source, 20)}** — {title}")
             if quote:
-                suffix = "…" if len(raw_quote) > QUOTE_LIMIT else ""
+                suffix = "…" if len(raw_quote) > quote_limit else ""
                 lines.append(f"   _«{quote}{suffix}»_")
             lines.append(f"   🕒 `{stamp}` • 💬 {count} сообщ.")
             if sid:
@@ -92,23 +95,29 @@ class SessionsMixin(MaxBaseMixin):
              "payload": f"session:{interaction_id}:cancel"},
         ])
         lines.append("Нажмите кнопку с номером нужной сессии.")
+        lines.append("`/resume <id>` — переключиться • `/sessions all` — все платформы")
+        lines.append("`/sessions search <query>` — поиск по сессиям")
         text = "\n".join(lines)
-        if len(text) > MAX_MESSAGE_LENGTH - 100:
-            text = text[:MAX_MESSAGE_LENGTH - 120] + "…"
         return text, keyboard
 
     @staticmethod
-    def _query_sessions(search: str | None) -> list[dict]:
+    def _query_sessions(search: str | None, include_all: bool = False, limit: int = 10) -> list[dict]:
         from hermes_state import SessionDB
 
         kwargs: dict = {
-            "limit": SEARCH_SESSIONS if search else MAX_SESSIONS,
+            "limit": limit,
             "include_archived": False,
             "order_by_last_active": True,
         }
         if search:
             kwargs["search_query"] = search
-        return SessionDB().list_sessions_rich(**kwargs)
+        if not include_all and not search:
+            kwargs["source"] = "max"
+        db = SessionDB()
+        try:
+            return db.list_sessions_rich(**kwargs)[:limit]
+        finally:
+            db.close()
 
     @staticmethod
     def _session_context(session_id: str) -> tuple[str, str, str]:
@@ -131,22 +140,30 @@ class SessionsMixin(MaxBaseMixin):
                 last, role = content, msg_role
         return first, last, role
 
-    async def _handle_cross_sessions(
-        self, text: str, chat_id: str, user_id: str = "",
-    ) -> None:
-        """Handle /sessions and /resume (no-arg) with an owner-only picker."""
+    async def _handle_cross_sessions(self, text: str, chat_id: str, user_id: str = "") -> None:
+        """Handle /sessions and /resume (no-arg) with an owner‑only picker.
+        Supports:
+        - `/sessions` → only MAX platform sessions.
+        - `/sessions all` → all platforms.
+        - `/sessions search <query>` → search across all platforms.
+        """
         if not self._cross_session_allowed(user_id):
             logger.warning("MAX: cross-session request denied: user=%r chat=%r", user_id, chat_id)
             return
-        args = text[len("/sessions"):].strip()
-        search: str | None = None
-        if args.lower() == "search" or args.lower().startswith("search "):
-            search = args[6:].strip()
-            if not search:
-                await self.send(chat_id, "Usage: `/sessions search <query>`")
-                return
+        parts = text.split(maxsplit=1)
+        args = parts[1].strip() if len(parts) > 1 else ""
+        mode_parts = args.split(maxsplit=1)
+        mode = mode_parts[0] if mode_parts else ""
+        query = mode_parts[1] if len(mode_parts) > 1 else ""
+        mode = mode.lower()
+        search = query.strip() if mode == "search" else None
+        if not parts or parts[0] != "/sessions" or mode not in {"", "max", "all", "search"} or (mode == "search" and not search) or (mode in {"all", "max"} and query):
+            await self.send(chat_id, "Usage: `/sessions [max|all]` or `/sessions search <query>`; `/resume <id>`")
+            return
+        include_all = mode in {"all", "search"} or (not mode and self._sessions_default_all)
+        limit = self._sessions_limit
         try:
-            rows = await asyncio.to_thread(self._query_sessions, search)
+            rows = await asyncio.to_thread(self._query_sessions, search, include_all=include_all, limit=limit)
         except ImportError:
             await self.send(chat_id, "⚠️ Session store not available")
             return
@@ -157,29 +174,29 @@ class SessionsMixin(MaxBaseMixin):
         if not rows:
             await self.send(chat_id, "📭 **Сессии не найдены** (No sessions found)")
             return
-        await self._post_session_picker(chat_id, user_id, rows, search)
+        await self._post_session_picker(chat_id, user_id, rows, search, include_all=include_all, limit=limit)
 
     async def _post_session_picker(
         self, chat_id: str, user_id: str, rows: list[dict], search: str | None,
+        include_all: bool = False, limit: int | None = None,
     ) -> dict | None:
         interaction_id = uuid.uuid4().hex[:12]
-        body, keyboard = self._session_picker_card(rows, search, interaction_id)
+        limit = self._sessions_limit if limit is None else limit
+        rows = rows[:limit]
+        body, keyboard = self._session_picker_card(rows, search, interaction_id, include_all=include_all, limit=limit)
         result = await self._post_interactive(chat_id, body, keyboard)
         if not result.success or not result.message_id:
             await self.send(chat_id, body)
-            await self.send(
-                chat_id,
-                "`/resume <id>` — переключиться на сессию\n"
-                "`/sessions search <query>` — поиск по сессиям",
-            )
             return None
         record = self._register_interaction(
             "session", interaction_id,
             owner_user_id=str(user_id), chat_id=chat_id, message_id=result.message_id,
             ttl=PICKER_TTL_SECONDS,
         )
-        record["rows"] = rows[:MAX_SESSIONS]
+        record["rows"] = rows
+        record["limit"] = limit
         record["search"] = search
+        record["include_all"] = include_all or bool(search)
         return record
 
     async def _handle_session_callback(
@@ -200,7 +217,7 @@ class SessionsMixin(MaxBaseMixin):
             index = int(parts[3])
             if not 1 <= index <= len(pending.get("rows") or []):
                 return None
-        elif action not in {"refresh", "cancel"}:
+        elif action not in {"refresh", "cancel"} or len(parts) != 3:
             return None
         record, _reason = self._consume_interaction(
             "session", interaction_id,
@@ -215,13 +232,20 @@ class SessionsMixin(MaxBaseMixin):
         if action == "refresh":
             search = record.get("search")
             try:
-                fresh = await asyncio.to_thread(self._query_sessions, search)
+                fresh = await asyncio.to_thread(
+                    self._query_sessions, search, include_all=bool(record.get("include_all")),
+                    limit=record.get("limit", self._sessions_limit),
+                )
             except Exception as exc:  # noqa: BLE001 — adapter must not crash
                 logger.warning("MAX: session refresh failed: %s", exc)
-                fresh = []
+                await self._remove_picker_message(scoped_chat, message_id, "⚠️ Не удалось обновить список сессий.")
+                await self.send(scoped_chat, "⚠️ Не удалось обновить список сессий. Повторите /sessions.")
+                return None
             await self._remove_picker_message(scoped_chat, message_id, "🔄 Обновление…")
             if fresh:
-                await self._post_session_picker(scoped_chat, user_id, fresh, search)
+                await self._post_session_picker(scoped_chat, user_id, fresh, search,
+                                                include_all=bool(record.get("include_all")),
+                                                limit=record.get("limit", self._sessions_limit))
             else:
                 await self.send(scoped_chat, "📭 **Сессии не найдены**")
             return None
@@ -235,7 +259,7 @@ class SessionsMixin(MaxBaseMixin):
         except Exception as exc:  # noqa: BLE001 — context reminder is best-effort
             logger.debug("MAX: session context unavailable: %s", exc)
             first = last = role = ""
-        await self._remove_picker_message(scoped_chat, message_id, "")
+        await self._remove_picker_message(scoped_chat, message_id, "✅ Сессия выбрана")
         event = self._session_resume_event(scoped_chat, user_id, session_id, interaction_id)
 
         try:

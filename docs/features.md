@@ -233,15 +233,19 @@ method name: `send_voice()` sends `type=audio`, `send_document()` sends
 
 ### How it works
 
-Adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` without platform filter.
+Adapter intercepts `/sessions` and `/resume` before Core. By default, SessionDB filters MAX before limiting the result; archived sessions remain excluded.
 
 ### Commands
 
 | Command | Action |
 |---------|--------|
-| `/sessions` | Last 15 sessions from all platforms |
-| `/sessions search <q>` | Search all sessions |
+| `/sessions` | Up to N recent MAX sessions; all platforms when sessions_default_all=true |
+| `/sessions all` | Up to N sessions across platforms regardless of the default |
+| `/sessions max` | Up to N MAX sessions regardless of the default |
+| `/sessions search <q>` | Up to N matching sessions across all platforms |
 | `/resume <id>` | Switch to any session |
+
+N is configured by `MAX_SESSIONS_LIMIT` / `sessions_limit` (default 10, range 1–20). `MAX_SESSIONS_DEFAULT_ALL` / `sessions_default_all` controls plain `/sessions` and no-argument `/resume` (false). Environment overrides configuration. Refresh preserves the original scope, query and count. Use `/resume <id>` to switch; unknown `/sessions` arguments produce usage guidance. Long lists shorten titles and quotes while retaining a visible entry for every button.
 
 ### Setup
 
@@ -250,12 +254,15 @@ Adapter intercepts `/sessions` and `/resume` before core, queries `SessionDB` wi
 platforms:
   max:
     extra:
+      cross_session: true
+      sessions_limit: 10
+      sessions_default_all: false
       cross_session_users:
-        - "95825064"  # your MAX user_id
+        - "OWNER_MAX_USER_ID"  # your MAX user_id
 ```
 
-Environment variable: `MAX_CROSS_SESSION_USERS="95825064"`.
-Enable/disable: `MAX_CROSS_SESSION=false` in `.env` (default: `false`).
+Environment variable: `MAX_CROSS_SESSION_USERS="OWNER_MAX_USER_ID"`.
+Despite its name, `MAX_CROSS_SESSION=true` also enables the MAX-only button picker. Configure `MAX_CROSS_SESSION_USERS` explicitly. When disabled or when the caller is not an owner, `/sessions` and `/resume` remain Core commands without plugin buttons. A closed bot may use its user allowlist as the owner fallback; `MAX_ALLOW_ALL_USERS=true` disables that fallback. Never grant cross-platform history access to every visitor.
 
 ## Standalone Sender
 

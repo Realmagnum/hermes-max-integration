@@ -850,13 +850,11 @@ class TestCrossSessionCommands:
 
         assert event is None  # handled in-place, not forwarded to the AI
         reqs = max_api.calls("POST", "/messages")
-        assert len(reqs) == 2
+        assert len(reqs) == 1
         listing = max_api.json_body(reqs[0])["text"]
-        assert "Recent Sessions" in listing
-        assert "**cli**" in listing          # sessions from every platform
-        assert "**telegram**" in listing
-        assert "abc123def456"[:12] in listing  # session ids are exposed too
-        assert max_api.params(reqs[0]) == {"user_id": str(DIALOG_USER_ID)}
+        assert "Recent Sessions" not in listing
+        assert "**cli**" not in listing
+        assert "**telegram**" not in listing
 
     async def test_resume_without_args_lists_sessions(self, make_adapter, max_api):
         a = make_adapter(extra={"allowed_users": [DIALOG_USER_ID], "cross_session": True})
@@ -864,7 +862,7 @@ class TestCrossSessionCommands:
         event = await a._build_event(self._dialog_without_chat_id("/resume"))
 
         assert event is None
-        assert len(max_api.calls("POST", "/messages")) == 2
+        assert len(max_api.calls("POST", "/messages")) == 1
 
     async def test_non_allowlisted_user_is_ignored(self, make_adapter, max_api):
         a = make_adapter(extra={"allowed_users": ["99999"]})

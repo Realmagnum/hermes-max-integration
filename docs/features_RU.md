@@ -232,15 +232,19 @@ _ALLOWED_UPLOAD_HOSTS = {
 
 ### Как это работает
 
-Адаптер перехватывает `/sessions` и `/resume` до передачи в Core и запрашивает `SessionDB` без фильтра платформы.
+Адаптер перехватывает `/sessions` и `/resume` до передачи в Core. По умолчанию фильтр MAX применяется в `SessionDB` до ограничения количества; архивные сессии исключены.
 
 ### Команды
 
 | Command | Action |
 |---------|--------|
-| `/sessions` | Last 15 sessions from all platforms |
-| `/sessions search <q>` | Search all sessions |
+| `/sessions` | До N последних MAX-сессий; все платформы при sessions_default_all=true |
+| `/sessions all` | До N сессий всех платформ независимо от default |
+| `/sessions max` | До N MAX-сессий независимо от default |
+| `/sessions search <q>` | До N совпадений по всем платформам |
 | `/resume <id>` | Switch to any session |
+
+N задаётся `MAX_SESSIONS_LIMIT` / `sessions_limit` (по умолчанию 10, диапазон 1–20). Режим обычных `/sessions` и `/resume` без аргументов задаётся `MAX_SESSIONS_DEFAULT_ALL` / `sessions_default_all` (false). Окружение приоритетнее конфигурации. Refresh сохраняет режим, запрос и лимит исходного списка. Для переключения используйте `/resume <id>`; неизвестные аргументы `/sessions` дают подсказку. При длинном списке сокращаются заголовки и цитаты, но каждая кнопка сохраняет видимую строку.
 
 ### Настройка
 
@@ -249,12 +253,15 @@ _ALLOWED_UPLOAD_HOSTS = {
 platforms:
   max:
     extra:
+      cross_session: true
+      sessions_limit: 10
+      sessions_default_all: false
       cross_session_users:
-        - "95825064"  # ваш MAX user_id
+        - "OWNER_MAX_USER_ID"  # ваш MAX user_id
 ```
 
-Переменная окружения: `MAX_CROSS_SESSION_USERS="95825064"`.
-Включение: `MAX_CROSS_SESSION=false` in `.env` (default: `false`).
+Переменная окружения: `MAX_CROSS_SESSION_USERS="OWNER_MAX_USER_ID"`.
+Несмотря на имя, `MAX_CROSS_SESSION=true` включает и MAX-список с кнопками. Укажите `MAX_CROSS_SESSION_USERS` явно. Если флаг выключен или пользователь не является владельцем, `/sessions` и `/resume` остаются командами Core без кнопок плагина. При закрытом боте список разрешённых пользователей служит fallback владельцев; при `MAX_ALLOW_ALL_USERS=true` fallback отключён. Не включайте межплатформенный доступ всем посетителям.
 
 ## Автономная отправка
 

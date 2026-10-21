@@ -4,6 +4,10 @@ All notable changes to the hermes-max-integration plugin.
 
 ## [Unreleased]
 
+- **Session diagnostics:** explicit Core/picker reasons, safe logs, read-only post-install dispatch check, owner setting in manifest/Desktop and clarified MAX_CROSS_SESSION wording. User confirmed all live session scenarios on c5e41ac. [SLP-007–008](docs/specs/20261021-session-list-policy.md).
+
+- **Session listing:** default count 10 and configurable MAX/all-platform default; fix `/sessions all` routing, filtering before LIMIT, refresh policy retention and long-list/button consistency. [SLP-001–006](docs/specs/20261021-session-list-policy.md).
+
 - **Catalog review submission:** original [PR #137501](https://github.com/NousResearch/hermes-agent/pull/137501) repinned to immutable v2.11.0 (commit `1321548cfe`), description and reviewer response updated; ready for repeat review. Temporary #138075 closed as a duplicate. Review decision pending. [MS-012](docs/specs/20261013-catalog-review-137501.md).
 
 ## [2.11.0] — 2026-10-14

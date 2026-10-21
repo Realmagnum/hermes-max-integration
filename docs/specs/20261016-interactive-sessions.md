@@ -2,6 +2,7 @@
 
 [Russian version](20261016-interactive-sessions_RU.md)
 
+Amendment 2026-10-21: list scope and count are superseded by [SLP-001–006](20261021-session-list-policy.md). Other interactive picker contracts remain applicable.
 Date: 2026-10-16. Status: specified, implementation in progress. Source: user request for interactive cross-platform session listing and selection via MAX inline buttons, message auto-cleanup on cancel/selection, and context restoration summary. Baseline commit: `877df52`; target deployment: SRV-TEST test gateway installation.
 
 ## Intent and boundaries

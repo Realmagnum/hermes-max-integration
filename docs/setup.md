@@ -2,9 +2,28 @@
 
 Minimum supported Core: **>=0.21.4**. Minimum supported Python: **>=3.12** (verified on Python 3.12 with minimum Core 0.21.4 and Python 3.14 with current Core; Python 3.11 is not supported). The exact released fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` uses Python 3.12 because that release requires Python >=3.11,<3.14. Later baseline/current fixtures use Python 3.14. The isolated minimum-Core candidate passed its full suite and dependency compatibility checks on 2026-10-13; the dated results and limits are recorded in [catalog acceptance evidence](specs/20261013-catalog-review-137501.md).
 
-The current suite collects **803 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
+The current suite collects **848 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
 
 MAX agent replies containing only MEDIA markers receive the first filename through the public Core output hook before delivery. Direct attachment sends also use a filename, or `File` when unavailable; authored captions are preserved. See [caption contracts](specs/20261013-media-caption.md). Direct `hermes send` and cron paths without that hook still need text, for example `report.pdf MEDIA:/path/report.pdf`.
+
+## Owner session picker after installation
+
+Despite its name, `MAX_CROSS_SESSION=true` also enables the MAX-only button picker. Configure `MAX_CROSS_SESSION_USERS` explicitly. When disabled or when the caller is not an owner, `/sessions` and `/resume` remain Core commands without plugin buttons. A closed bot may use its user allowlist as the owner fallback; `MAX_ALLOW_ALL_USERS=true` disables that fallback. Never grant cross-platform history access to every visitor.
+
+```bash
+MAX_CROSS_SESSION=true
+MAX_CROSS_SESSION_USERS=OWNER_MAX_USER_ID
+MAX_SESSIONS_LIMIT=10
+MAX_SESSIONS_DEFAULT_ALL=false
+```
+
+Replace `OWNER_MAX_USER_ID` with your ID. Save settings through the normal profile configuration path and apply them with an authorized gateway restart. Do not change general bot access to obtain buttons. Import/doctor and health do not prove command routing. In the same Python environment and profile as the gateway, run:
+
+```bash
+python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profile-env
+```
+
+Expect `handler=plugin`, `reason=owner_picker_ready`, `dispatch_matches_policy=true` and exit 0 (JSON output). The command uses Core configuration/registry and checks four commands through dispatch, replacing the session handler before history reads or delivery. `--load-profile-env` explicitly reads the active profile .env through Core; shell environment retains priority. Without it, supply the already-loaded profile settings. This checks a new isolated process, not the running gateway memory or button delivery; follow it with a real `/sessions` at the bot. It never enables the feature automatically or prints IDs/secrets.
 
 ## Environment Variables
 
@@ -24,8 +43,10 @@ MAX agent replies containing only MEDIA markers receive the first filename throu
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Auto-install Playwright + Chromium on first render |
 | `MAX_HOME_CHANNEL` | ❌ | — | Default channel for cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
-| `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; requires explicit opt-in |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Owner-only session picker with buttons, including MAX-only mode; disabled uses Core commands |
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Owners allowed to use cross-platform sessions |
+| `MAX_SESSIONS_LIMIT` | ❌ | `10` | List/search count: integer 1–20; invalid values use 10 with a warning |
+| `MAX_SESSIONS_DEFAULT_ALL` | ❌ | `false` | Plain /sessions lists all platforms when true; otherwise MAX only |
 | `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `allowlist` or `open` |
 | `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook only on loopback for development |
 | `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Minimum interval between streaming edits of one message |
@@ -74,6 +95,8 @@ YAML keys are promoted to adapter `extra`; environment values take precedence.
 | `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Allowed groups |
 | `cross_session` | `MAX_CROSS_SESSION` | Enable cross-platform sessions |
 | `cross_session_users` | `MAX_CROSS_SESSION_USERS` | Owners allowed to use cross-platform sessions |
+| `sessions_limit` | `MAX_SESSIONS_LIMIT` | List/search count, default 10 |
+| `sessions_default_all` | `MAX_SESSIONS_DEFAULT_ALL` | All platforms by default, default false |
 | `home_channel` | `MAX_HOME_CHANNEL` | cron/send_message target |
 | `table_as_image` | `MAX_TABLE_AS_IMAGE` | Render markdown tables as PNG |
 | `edit_throttle` | `MAX_EDIT_THROTTLE` | Minimum streaming-edit interval |

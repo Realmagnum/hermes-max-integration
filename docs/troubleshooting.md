@@ -1,5 +1,19 @@
 # Troubleshooting
 
+## Session command routing
+
+If `/sessions` shows the old text without buttons, check [owner setup](setup.md). Startup log `MAX: session routing` reports handler, reason, count and default scope; command log `MAX: session command routing` reports only handler and reason. These records contain neither the search query nor IDs. The name `MAX_CROSS_SESSION` is retained for compatibility, but the flag also enables MAX-only button listing.
+
+| Reason | Meaning |
+|---|---|
+| `feature_disabled` | Flag disabled; Core handles commands |
+| `owners_missing` | Flag enabled without owners; Core handles commands |
+| `caller_not_owner` | Caller is not an owner; commands remain with Core |
+| `owner_picker_ready` | Owner uses the plugin picker |
+| `configuration_or_runtime_error` | Diagnostic process could not load configuration/runtime; check Python, profile and installation |
+
+After installation, run `python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profile-env` in the gateway environment. Exit 0 means plugin routing for all four checked commands; exit 1 means Core routing, rejection or error. Do not publish your own ID with the command in shared reports. Loading .env is explicit and scoped to the active profile. The script blocks network, does not call the history handler and sends no messages. It does not prove the running process was restarted; correlate it with the startup log and a manual button check.
+
 ## Safe diagnostics
 
 Start with read-only checks. Never place bot tokens in shell arguments or publish them in logs. `--send` performs a real outbound message and must only be used with an approved recipient.
