@@ -130,4 +130,3 @@ def test_installed_profile_cli_matrix(tmp_path):
         assert token not in result.stdout + result.stderr
         assert "private-secret-marker" not in result.stdout + result.stderr
         assert config_file.read_bytes() == before
-
