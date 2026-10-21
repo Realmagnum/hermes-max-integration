@@ -2,7 +2,7 @@
 
 Минимальный поддерживаемый Core: **>=0.21.4**. Минимальный поддерживаемый Python: **>=3.12** (проверено на Python 3.12 с minimum Core 0.21.4 и Python 3.14 с current Core; Python 3.11 не поддерживается). Точный релизный fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` использует Python 3.12: этот релиз требует Python >=3.11,<3.14. Более поздние baseline/current исходники используют Python 3.14. Изолированный кандидат с минимальным Core прошёл свою полную тестовую suite и проверку совместимости зависимостей 2026-10-13; датированные результаты и ограничения сохранены в [evidence приёмки каталога](specs/20261013-catalog-review-137501_RU.md).
 
-Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **803 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
+Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **836 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
 
 Ответы агента MAX только с MEDIA markers получают первое имя файла через публичный output hook Core до доставки. Прямая отправка вложений также использует имя файла либо `File`, если имя недоступно; авторские подписи сохраняются. См. [контракты подписей](specs/20261013-media-caption_RU.md). Прямой `hermes send` и пути cron без этого hook по-прежнему требуют текста, например `report.pdf MEDIA:/path/report.pdf`.
 
@@ -26,6 +26,8 @@
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
 | `MAX_CROSS_SESSION` | ❌ | `false` | Кроссплатформенные /sessions и /resume; требуется явное включение |
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Владельцы, которым разрешены кроссплатформенные сессии |
+| `MAX_SESSIONS_LIMIT` | ❌ | `10` | Количество результатов списка/поиска: целое 1–20; неверное значение даёт 10 с предупреждением |
+| `MAX_SESSIONS_DEFAULT_ALL` | ❌ | `false` | Обычный /sessions показывает все платформы при true; иначе только MAX |
 | `MAX_GROUP_POLICY` | ❌ | `allowlist` | Политика групп: `allowlist` или `open` |
 | `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета только на loopback в разработке |
 | `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Минимальный интервал между streaming-правками одного сообщения |
@@ -74,6 +76,8 @@
 | `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Разрешённые группы |
 | `cross_session` | `MAX_CROSS_SESSION` | Включить кроссплатформенные сессии |
 | `cross_session_users` | `MAX_CROSS_SESSION_USERS` | Владельцы, которым разрешены кроссплатформенные сессии |
+| `sessions_limit` | `MAX_SESSIONS_LIMIT` | Лимит списка и поиска, по умолчанию 10 |
+| `sessions_default_all` | `MAX_SESSIONS_DEFAULT_ALL` | Все платформы по умолчанию, default false |
 | `home_channel` | `MAX_HOME_CHANNEL` | Получатель cron/send_message |
 | `table_as_image` | `MAX_TABLE_AS_IMAGE` | Рендерить Markdown-таблицы в PNG |
 | `edit_throttle` | `MAX_EDIT_THROTTLE` | Минимальный интервал streaming-правок |

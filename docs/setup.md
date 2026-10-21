@@ -2,7 +2,7 @@
 
 Minimum supported Core: **>=0.21.4**. Minimum supported Python: **>=3.12** (verified on Python 3.12 with minimum Core 0.21.4 and Python 3.14 with current Core; Python 3.11 is not supported). The exact released fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` uses Python 3.12 because that release requires Python >=3.11,<3.14. Later baseline/current fixtures use Python 3.14. The isolated minimum-Core candidate passed its full suite and dependency compatibility checks on 2026-10-13; the dated results and limits are recorded in [catalog acceptance evidence](specs/20261013-catalog-review-137501.md).
 
-The current suite collects **803 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
+The current suite collects **836 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
 
 MAX agent replies containing only MEDIA markers receive the first filename through the public Core output hook before delivery. Direct attachment sends also use a filename, or `File` when unavailable; authored captions are preserved. See [caption contracts](specs/20261013-media-caption.md). Direct `hermes send` and cron paths without that hook still need text, for example `report.pdf MEDIA:/path/report.pdf`.
 
@@ -26,6 +26,8 @@ MAX agent replies containing only MEDIA markers receive the first filename throu
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Default channel name |
 | `MAX_CROSS_SESSION` | ❌ | `false` | Cross-platform /sessions and /resume; requires explicit opt-in |
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Owners allowed to use cross-platform sessions |
+| `MAX_SESSIONS_LIMIT` | ❌ | `10` | List/search count: integer 1–20; invalid values use 10 with a warning |
+| `MAX_SESSIONS_DEFAULT_ALL` | ❌ | `false` | Plain /sessions lists all platforms when true; otherwise MAX only |
 | `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `allowlist` or `open` |
 | `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook only on loopback for development |
 | `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Minimum interval between streaming edits of one message |
@@ -74,6 +76,8 @@ YAML keys are promoted to adapter `extra`; environment values take precedence.
 | `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Allowed groups |
 | `cross_session` | `MAX_CROSS_SESSION` | Enable cross-platform sessions |
 | `cross_session_users` | `MAX_CROSS_SESSION_USERS` | Owners allowed to use cross-platform sessions |
+| `sessions_limit` | `MAX_SESSIONS_LIMIT` | List/search count, default 10 |
+| `sessions_default_all` | `MAX_SESSIONS_DEFAULT_ALL` | All platforms by default, default false |
 | `home_channel` | `MAX_HOME_CHANNEL` | cron/send_message target |
 | `table_as_image` | `MAX_TABLE_AS_IMAGE` | Render markdown tables as PNG |
 | `edit_throttle` | `MAX_EDIT_THROTTLE` | Minimum streaming-edit interval |

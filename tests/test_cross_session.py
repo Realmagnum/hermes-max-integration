@@ -16,9 +16,9 @@ from typing import ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
+from gateway.platforms.base import SendResult
 
 import adapter
-from gateway.platforms.base import SendResult
 
 # Env names that must not leak from the ambient test environment.
 _ENV_VARS = (
@@ -66,9 +66,13 @@ class FakeSessionDB:
     def __init__(self):
         FakeSessionDB.init_calls += 1
 
+    def close(self):
+        pass
+
     def list_sessions_rich(self, **kwargs):
         FakeSessionDB.query_calls.append(kwargs)
-        return list(FakeSessionDB.rows)
+        rows = [row for row in FakeSessionDB.rows if not kwargs.get("source") or row["source"] == kwargs["source"]]
+        return rows[:kwargs["limit"]]
 
 
 @pytest.fixture
@@ -204,12 +208,12 @@ class TestCrossSessionRouting:
         assert event is None
 
     @pytest.mark.asyncio
-    async def test_owner_sessions_target_rewritten_for_core(self):
+    async def test_owner_sessions_arguments_go_to_handler(self):
         a = make_adapter(OWNER_CFG)
         a._handle_cross_sessions = AsyncMock()
         event = await a._on_message_created(dm_update("/sessions abc123"))
-        a._handle_cross_sessions.assert_not_called()
-        assert event is not None and event.text == "/resume --all abc123"
+        a._handle_cross_sessions.assert_called_once_with("/sessions abc123", "user:42", "42")
+        assert event is None
 
     @pytest.mark.asyncio
     async def test_owner_resume_target_rewritten_for_core(self):
@@ -332,14 +336,14 @@ class TestCrossSessionHandlerGuard:
 
         assert fake_state.init_calls == 1
         assert fake_state.query_calls == [
-            {"limit": 15, "include_archived": False, "order_by_last_active": True}
+            {"limit": 10, "include_archived": False, "order_by_last_active": True, "source": "max"}
         ]
         assert a._post_interactive.await_count == 1
         listing = a._post_interactive.await_args.args[1]
         assert "Zabbix deploy" in listing
         assert "Traefik" not in listing
         assert "all platforms" not in listing
-        assert a.send.await_count == 1
+        assert a.send.await_count == 0
 
     @pytest.mark.asyncio
     async def test_handler_search_passes_query_and_denies_nothing(self, fake_state):
@@ -354,7 +358,7 @@ class TestCrossSessionHandlerGuard:
 
         assert fake_state.query_calls == [
             {
-                "limit": 20,
+                "limit": 10,
                 "include_archived": False,
                 "order_by_last_active": True,
                 "search_query": "traefik",
@@ -362,7 +366,7 @@ class TestCrossSessionHandlerGuard:
         ]
         listing = a._post_interactive.await_args.args[1]
         assert "traefik" in listing
-        assert a.send.await_count == 1  # usage hint only; list is in picker
+        assert a.send.await_count == 0  # guidance is inside picker
 
     @pytest.mark.asyncio
     async def test_handler_reports_empty_result(self, fake_state):

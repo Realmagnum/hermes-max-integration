@@ -232,15 +232,19 @@ _ALLOWED_UPLOAD_HOSTS = {
 
 ### Как это работает
 
-Адаптер перехватывает `/sessions` и `/resume` до передачи в Core и запрашивает `SessionDB` без фильтра платформы.
+Адаптер перехватывает `/sessions` и `/resume` до передачи в Core. По умолчанию фильтр MAX применяется в `SessionDB` до ограничения количества; архивные сессии исключены.
 
 ### Команды
 
 | Command | Action |
 |---------|--------|
-| `/sessions` | Last 15 sessions from all platforms |
-| `/sessions search <q>` | Search all sessions |
+| `/sessions` | До N последних MAX-сессий; все платформы при sessions_default_all=true |
+| `/sessions all` | До N сессий всех платформ независимо от default |
+| `/sessions max` | До N MAX-сессий независимо от default |
+| `/sessions search <q>` | До N совпадений по всем платформам |
 | `/resume <id>` | Switch to any session |
+
+N задаётся `MAX_SESSIONS_LIMIT` / `sessions_limit` (по умолчанию 10, диапазон 1–20). Режим обычных `/sessions` и `/resume` без аргументов задаётся `MAX_SESSIONS_DEFAULT_ALL` / `sessions_default_all` (false). Окружение приоритетнее конфигурации. Refresh сохраняет режим, запрос и лимит исходного списка. Для переключения используйте `/resume <id>`; неизвестные аргументы `/sessions` дают подсказку. При длинном списке сокращаются заголовки и цитаты, но каждая кнопка сохраняет видимую строку.
 
 ### Настройка
 

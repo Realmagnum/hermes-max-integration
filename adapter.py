@@ -688,6 +688,19 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         self._cross_session = _coerce_bool(
             os.getenv("MAX_CROSS_SESSION") or extra.get("cross_session", False), False
         )
+        raw_limit = os.getenv("MAX_SESSIONS_LIMIT", extra.get("sessions_limit", 10))
+        try:
+            if isinstance(raw_limit, bool) or not str(raw_limit).strip().isdigit():
+                raise ValueError("not an integer")
+            self._sessions_limit = int(raw_limit)
+            if not 1 <= self._sessions_limit <= 20:
+                raise ValueError("outside 1..20")
+        except (TypeError, ValueError):
+            logger.warning("MAX: invalid sessions_limit; using default 10 (allowed: 1..20)")
+            self._sessions_limit = 10
+        self._sessions_default_all = _coerce_bool(
+            os.getenv("MAX_SESSIONS_DEFAULT_ALL", extra.get("sessions_default_all", False)), False,
+        )
         raw_cross_users = os.getenv("MAX_CROSS_SESSION_USERS") or extra.get("cross_session_users", "")
         if isinstance(raw_cross_users, (list, tuple, set)):
             raw_cross_users = ",".join(str(value) for value in raw_cross_users)
@@ -1541,20 +1554,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
 
         # ── Cross-platform session commands (bypass platform scoping) ──
         if text and self._cross_session and self._cross_session_allowed(user_id):
-            if text.startswith('/sessions'):
-                args = text[len('/sessions'):].strip()
-                if args and args.lower() != 'search' and not args.lower().startswith('search '):
-                    # Has a target ID → let core handle with --all override
-                    text = f"/resume --all {args}"
-                else:
-                    # Plain /sessions or /sessions search → our handler (all platforms)
-                    await self._handle_cross_sessions(text, scoped_chat_id, user_id)
-                    return None
-            elif text.startswith('/resume'):
+            command = text.split(maxsplit=1)[0]
+            if command == '/sessions':
+                await self._handle_cross_sessions(text, scoped_chat_id, user_id)
+                return None
+            elif command == '/resume':
                 if '--all' not in text and '--cross-room' not in text:
                     parts = text.split(maxsplit=1)
                     if len(parts) == 1:
-                        # /resume with no args → our handler (all platforms)
+                        # /resume with no args → picker using configured scope
                         await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
                         return None
                     else:
@@ -3459,6 +3467,11 @@ def _env_enablement() -> dict | None:
     if cross:
         extra["cross_session"] = _coerce_bool(cross, True)
 
+    for key, env_name in (("sessions_limit", "MAX_SESSIONS_LIMIT"),
+                          ("sessions_default_all", "MAX_SESSIONS_DEFAULT_ALL")):
+        if env_name in os.environ:
+            extra[key] = os.environ[env_name]
+
     group_users = os.getenv("MAX_GROUP_ALLOWED_USERS", "").strip()
     if group_users:
         extra["group_allow_from"] = [part.strip() for part in group_users.split(",") if part.strip()]
@@ -3496,6 +3509,8 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "group_allow_chats": "MAX_GROUP_ALLOWED_CHATS",
         "download_allowed_hosts": "MAX_DOWNLOAD_ALLOWED_HOSTS",
         "cross_session": "MAX_CROSS_SESSION",
+        "sessions_limit": "MAX_SESSIONS_LIMIT",
+        "sessions_default_all": "MAX_SESSIONS_DEFAULT_ALL",
     }
 
     for key, env_name in mapping.items():
