@@ -45,6 +45,7 @@ def _clean_webhook_env(monkeypatch):
 def _make_adapter(**extra):
     from adapter import MaxAdapter
 
+    extra.setdefault("port", _free_port())
     cfg = PlatformConfig(enabled=True, token="tok", extra={"token": "tok", **extra})
     return MaxAdapter(cfg)
 
