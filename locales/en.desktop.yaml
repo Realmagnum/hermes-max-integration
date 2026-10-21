@@ -38,8 +38,8 @@ messaging.fieldCopy.MAX_TABLE_AS_IMAGE.label: "Tables as Images"
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.help: "Render markdown tables as PNG images via Pillow/Playwright (true/false)."
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.placeholder: "false"
 
-messaging.fieldCopy.MAX_CROSS_SESSION.label: "Cross-Platform Sessions"
-messaging.fieldCopy.MAX_CROSS_SESSION.help: "Allow trusted users to manage sessions from other platforms (true/false)."
+messaging.fieldCopy.MAX_CROSS_SESSION.label: "Owner-only session picker"
+messaging.fieldCopy.MAX_CROSS_SESSION.help: "Enable the button picker for MAX sessions and optional all-platform listing/search (true/false, default false). Requires configured owners; disabled uses Core commands."
 messaging.fieldCopy.MAX_CROSS_SESSION.placeholder: "false"
 
 messaging.fieldCopy.MAX_EDIT_THROTTLE.label: "Streaming Edit Throttle"
@@ -50,3 +50,6 @@ messaging.fieldCopy.MAX_SESSIONS_LIMIT.label: "Session count"
 messaging.fieldCopy.MAX_SESSIONS_LIMIT.help: "List/search results: integer 1–20, default 10. Invalid values use 10."
 messaging.fieldCopy.MAX_SESSIONS_DEFAULT_ALL.label: "All platforms by default"
 messaging.fieldCopy.MAX_SESSIONS_DEFAULT_ALL.help: "Show all platforms for /sessions and no-argument /resume (true/false, default false)."
+
+messaging.fieldCopy.MAX_CROSS_SESSION_USERS.label: "Session picker owners"
+messaging.fieldCopy.MAX_CROSS_SESSION_USERS.help: "Comma-separated owner MAX IDs. With an open bot, explicit owners are mandatory; other users retain Core commands."

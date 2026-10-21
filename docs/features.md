@@ -254,12 +254,15 @@ N is configured by `MAX_SESSIONS_LIMIT` / `sessions_limit` (default 10, range 1â
 platforms:
   max:
     extra:
+      cross_session: true
+      sessions_limit: 10
+      sessions_default_all: false
       cross_session_users:
-        - "95825064"  # your MAX user_id
+        - "OWNER_MAX_USER_ID"  # your MAX user_id
 ```
 
-Environment variable: `MAX_CROSS_SESSION_USERS="95825064"`.
-Enable/disable: `MAX_CROSS_SESSION=false` in `.env` (default: `false`).
+Environment variable: `MAX_CROSS_SESSION_USERS="OWNER_MAX_USER_ID"`.
+Despite its name, `MAX_CROSS_SESSION=true` also enables the MAX-only button picker. Configure `MAX_CROSS_SESSION_USERS` explicitly. When disabled or when the caller is not an owner, `/sessions` and `/resume` remain Core commands without plugin buttons. A closed bot may use its user allowlist as the owner fallback; `MAX_ALLOW_ALL_USERS=true` disables that fallback. Never grant cross-platform history access to every visitor.
 
 ## Standalone Sender
 

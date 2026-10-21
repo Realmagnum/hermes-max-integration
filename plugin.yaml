@@ -67,8 +67,11 @@ optional_env:
     description: "Render markdown tables as images via Pillow (true/false, default: false)"
     prompt: "Render tables as images"
   - name: MAX_CROSS_SESSION
-    description: "Enable cross-platform session listing for explicitly trusted users only (true/false, default: false)"
-    prompt: "Cross-platform session commands"
+    description: "Enable the owner-only session picker with buttons, including MAX-only listing (true/false, default: false)"
+    prompt: "Owner-only session picker"
+  - name: MAX_CROSS_SESSION_USERS
+    description: "Comma-separated owner MAX user IDs for the picker and cross-platform search; never grants access to everyone"
+    prompt: "Session picker owner IDs"
   - name: MAX_SESSIONS_LIMIT
     description: "Session list/search count, integer 1–20, default 10; invalid values use 10"
     prompt: "Session count (1–20)"

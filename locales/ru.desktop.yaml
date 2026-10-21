@@ -38,8 +38,8 @@ messaging.fieldCopy.MAX_TABLE_AS_IMAGE.label: "Таблицы как изобр�
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.help: "Рендерить Markdown-таблицы в виде картинок через Pillow/Playwright (true/false)."
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.placeholder: "false"
 
-messaging.fieldCopy.MAX_CROSS_SESSION.label: "Кросс-платформенные сессии"
-messaging.fieldCopy.MAX_CROSS_SESSION.help: "Разрешить доверенным пользователям управление сессиями других платформ (true/false)."
+messaging.fieldCopy.MAX_CROSS_SESSION.label: "Список сессий с кнопками для владельца"
+messaging.fieldCopy.MAX_CROSS_SESSION.help: "Включить список MAX-сессий с кнопками и межплатформенные список/поиск (true/false, по умолчанию false). Нужны владельцы; при выключении команды обрабатывает Core."
 messaging.fieldCopy.MAX_CROSS_SESSION.placeholder: "false"
 
 messaging.fieldCopy.MAX_EDIT_THROTTLE.label: "Интервал стриминга сообщений"
@@ -50,3 +50,6 @@ messaging.fieldCopy.MAX_SESSIONS_LIMIT.label: "Количество сессий
 messaging.fieldCopy.MAX_SESSIONS_LIMIT.help: "Результатов списка/поиска: целое 1–20, по умолчанию 10. Неверное значение заменяется на 10."
 messaging.fieldCopy.MAX_SESSIONS_DEFAULT_ALL.label: "Все платформы по умолчанию"
 messaging.fieldCopy.MAX_SESSIONS_DEFAULT_ALL.help: "Показывать все платформы для /sessions и /resume без аргументов (true/false, по умолчанию false)."
+
+messaging.fieldCopy.MAX_CROSS_SESSION_USERS.label: "Владельцы списка сессий"
+messaging.fieldCopy.MAX_CROSS_SESSION_USERS.help: "MAX ID владельцев через запятую. Для открытого бота обязательны явные владельцы; остальные пользователи сохраняют команды Core."

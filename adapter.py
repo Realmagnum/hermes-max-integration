@@ -707,6 +707,11 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         self._cross_session_users = set(_parse_list(str(raw_cross_users or "")))
         if not self._cross_session_users and not self._allow_all_users:
             self._cross_session_users = set(self._allowed_users_set)
+        routing = self.session_routing_status()
+        logger.info(
+            "MAX: session routing handler=%s reason=%s limit=%s default_scope=%s",
+            routing["handler"], routing["reason"], routing["limit"], routing["default_scope"],
+        )
 
         # Group access control
         raw_group_policy = (
@@ -880,6 +885,27 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if not self._cross_session or not str(user_id or ""):
             return False
         return str(user_id) in self._cross_session_users
+
+    def session_routing_status(self, user_id: str | None = None) -> dict[str, Any]:
+        """Describe routing without exposing owners, credentials or session contents.
+
+        Without a caller this reports readiness for configured owners; it does
+        not grant access to an anonymous caller.
+        """
+        if not self._cross_session:
+            reason = "feature_disabled"
+        elif not self._cross_session_users:
+            reason = "owners_missing"
+        elif user_id is not None and not self._cross_session_allowed(user_id):
+            reason = "caller_not_owner"
+        else:
+            reason = "owner_picker_ready"
+        return {
+            "handler": "plugin" if reason == "owner_picker_ready" else "core",
+            "reason": reason,
+            "limit": self._sessions_limit,
+            "default_scope": "all" if self._sessions_default_all else "max",
+        }
 
     @staticmethod
     def _callback_message_id(payload: dict[str, Any]) -> str:
@@ -1553,6 +1579,10 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                     text = (text + f"\n[Location: {payload_att.get('latitude','')},{payload_att.get('longitude','')}]").strip() if text else "[Location: ...]"
 
         # ── Cross-platform session commands (bypass platform scoping) ──
+        session_command = text.split(maxsplit=1)[0] if text and text.strip() else ""
+        if session_command in {"/sessions", "/resume"}:
+            routing = self.session_routing_status(str(user_id or ""))
+            logger.info("MAX: session command routing handler=%s reason=%s", routing["handler"], routing["reason"])
         if text and self._cross_session and self._cross_session_allowed(user_id):
             command = text.split(maxsplit=1)[0]
             if command == '/sessions':
@@ -3509,6 +3539,7 @@ def _apply_yaml_config(yaml_cfg: dict, platform_cfg: dict) -> dict | None:
         "group_allow_chats": "MAX_GROUP_ALLOWED_CHATS",
         "download_allowed_hosts": "MAX_DOWNLOAD_ALLOWED_HOSTS",
         "cross_session": "MAX_CROSS_SESSION",
+        "cross_session_users": "MAX_CROSS_SESSION_USERS",
         "sessions_limit": "MAX_SESSIONS_LIMIT",
         "sessions_default_all": "MAX_SESSIONS_DEFAULT_ALL",
     }

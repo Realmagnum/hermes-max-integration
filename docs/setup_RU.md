@@ -2,9 +2,28 @@
 
 Минимальный поддерживаемый Core: **>=0.21.4**. Минимальный поддерживаемый Python: **>=3.12** (проверено на Python 3.12 с minimum Core 0.21.4 и Python 3.14 с current Core; Python 3.11 не поддерживается). Точный релизный fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` использует Python 3.12: этот релиз требует Python >=3.11,<3.14. Более поздние baseline/current исходники используют Python 3.14. Изолированный кандидат с минимальным Core прошёл свою полную тестовую suite и проверку совместимости зависимостей 2026-10-13; датированные результаты и ограничения сохранены в [evidence приёмки каталога](specs/20261013-catalog-review-137501_RU.md).
 
-Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **837 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
+Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **848 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
 
 Ответы агента MAX только с MEDIA markers получают первое имя файла через публичный output hook Core до доставки. Прямая отправка вложений также использует имя файла либо `File`, если имя недоступно; авторские подписи сохраняются. См. [контракты подписей](specs/20261013-media-caption_RU.md). Прямой `hermes send` и пути cron без этого hook по-прежнему требуют текста, например `report.pdf MEDIA:/path/report.pdf`.
+
+## Список сессий владельца после установки
+
+Несмотря на имя, `MAX_CROSS_SESSION=true` включает и MAX-список с кнопками. Укажите `MAX_CROSS_SESSION_USERS` явно. Если флаг выключен или пользователь не является владельцем, `/sessions` и `/resume` остаются командами Core без кнопок плагина. При закрытом боте список разрешённых пользователей служит fallback владельцев; при `MAX_ALLOW_ALL_USERS=true` fallback отключён. Не включайте межплатформенный доступ всем посетителям.
+
+```bash
+MAX_CROSS_SESSION=true
+MAX_CROSS_SESSION_USERS=OWNER_MAX_USER_ID
+MAX_SESSIONS_LIMIT=10
+MAX_SESSIONS_DEFAULT_ALL=false
+```
+
+Замените `OWNER_MAX_USER_ID` своим ID. Сохраните настройки штатным способом профиля и примените их согласованным перезапуском gateway. Не меняйте общий доступ к боту ради кнопок. Import/doctor и health не доказывают маршрутизацию команды. В том же Python и профиле, что использует gateway, выполните:
+
+```bash
+python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profile-env
+```
+
+Ожидается `handler=plugin`, `reason=owner_picker_ready`, `dispatch_matches_policy=true` и exit 0 (вывод — JSON). Команда использует Core config/registry и проверяет dispatch четырёх команд, подменяя session handler до чтения истории и отправки сообщений. `--load-profile-env` явно читает .env активного профиля через Core; shell environment приоритетнее. Без этой опции нужны уже загруженные настройки профиля. Это проверка нового изолированного процесса, не инспекция памяти работающего gateway и не проверка доставки кнопок; после неё подтвердите реальный `/sessions` у бота. Диагностика не включает функцию автоматически и не печатает ID или секреты.
 
 ## Переменные окружения
 
@@ -24,7 +43,7 @@
 | `MAX_AUTO_INSTALL_PLAYWRIGHT` | ❌ | `false` | Автоматически установить Playwright и Chromium при первом рендере |
 | `MAX_HOME_CHANNEL` | ❌ | — | Канал по умолчанию для cron/send_message |
 | `MAX_HOME_CHANNEL_NAME` | ❌ | — | Имя канала по умолчанию |
-| `MAX_CROSS_SESSION` | ❌ | `false` | Кроссплатформенные /sessions и /resume; требуется явное включение |
+| `MAX_CROSS_SESSION` | ❌ | `false` | Список сессий с кнопками для владельца, включая режим только MAX; выключено — команды Core |
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Владельцы, которым разрешены кроссплатформенные сессии |
 | `MAX_SESSIONS_LIMIT` | ❌ | `10` | Количество результатов списка/поиска: целое 1–20; неверное значение даёт 10 с предупреждением |
 | `MAX_SESSIONS_DEFAULT_ALL` | ❌ | `false` | Обычный /sessions показывает все платформы при true; иначе только MAX |
