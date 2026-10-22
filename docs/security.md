@@ -1,5 +1,7 @@
 # Honest security model
 
+See [group access and ID discovery](group-access.md) for trusted/mixed groups and first-install defaults.
+
 This document describes **what the plugin actually protects and what it does not**. It reflects the available audit notes and regression tests; it does not promise absolute security.
 
 ## Status and scope

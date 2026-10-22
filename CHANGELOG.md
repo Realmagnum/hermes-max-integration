@@ -4,6 +4,8 @@ All notable changes to the hermes-max-integration plugin.
 
 ## [Unreleased]
 
+- **Group access:** enforce group policy before every button callback; expose group/webhook fields in Desktop, correct numeric ID examples, persist safe onboarding defaults and document ID discovery, family and mixed groups. [GRP-001–004](docs/specs/20261022-group-access.md).
+
 - **Session diagnostics:** explicit Core/picker reasons, safe logs, read-only post-install dispatch check, owner setting in manifest/Desktop and clarified MAX_CROSS_SESSION wording. User confirmed all live session scenarios on c5e41ac. [SLP-007–008](docs/specs/20261021-session-list-policy.md).
 
 - **Session listing:** default count 10 and configurable MAX/all-platform default; fix `/sessions all` routing, filtering before LIMIT, refresh policy retention and long-list/button consistency. [SLP-001–006](docs/specs/20261021-session-list-policy.md).

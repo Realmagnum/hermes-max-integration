@@ -1,8 +1,10 @@
 # Установка и конфигурация
 
+См. [групповой доступ и получение ID](group-access_RU.md): доверенные/смешанные группы и значения первой установки.
+
 Минимальный поддерживаемый Core: **>=0.21.4**. Минимальный поддерживаемый Python: **>=3.12** (проверено на Python 3.12 с minimum Core 0.21.4 и Python 3.14 с current Core; Python 3.11 не поддерживается). Точный релизный fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` использует Python 3.12: этот релиз требует Python >=3.11,<3.14. Более поздние baseline/current исходники используют Python 3.14. Изолированный кандидат с минимальным Core прошёл свою полную тестовую suite и проверку совместимости зависимостей 2026-10-13; датированные результаты и ограничения сохранены в [evidence приёмки каталога](specs/20261013-catalog-review-137501_RU.md).
 
-Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **848 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
+Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **891 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
 
 Ответы агента MAX только с MEDIA markers получают первое имя файла через публичный output hook Core до доставки. Прямая отправка вложений также использует имя файла либо `File`, если имя недоступно; авторские подписи сохраняются. См. [контракты подписей](specs/20261013-media-caption_RU.md). Прямой `hermes send` и пути cron без этого hook по-прежнему требуют текста, например `report.pdf MEDIA:/path/report.pdf`.
 
@@ -47,7 +49,7 @@ python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profi
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Владельцы, которым разрешены кроссплатформенные сессии |
 | `MAX_SESSIONS_LIMIT` | ❌ | `10` | Количество результатов списка/поиска: целое 1–20; неверное значение даёт 10 с предупреждением |
 | `MAX_SESSIONS_DEFAULT_ALL` | ❌ | `false` | Обычный /sessions показывает все платформы при true; иначе только MAX |
-| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Политика групп: `allowlist` или `open` |
+| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Политика групп: `allowlist`, `closed` или `open` |
 | `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Разрешить webhook без секрета только на loopback в разработке |
 | `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Минимальный интервал между streaming-правками одного сообщения |
 | `MAX_DEDUP_TTL` | ❌ | `300` | TTL дедупликации входящих событий в секундах |
@@ -90,7 +92,7 @@ python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profi
 | `webhook_insecure_dev` | `MAX_WEBHOOK_INSECURE_DEV` | Разрешить webhook без секрета только на loopback в разработке |
 | `allowed_users` | `MAX_ALLOWED_USERS` | Список разрешённых пользователей |
 | `allow_all_users` | `MAX_ALLOW_ALL_USERS` | Явно разрешить всех пользователей |
-| `group_policy` | `MAX_GROUP_POLICY` | Политика групп: `allowlist` или `open` |
+| `group_policy` | `MAX_GROUP_POLICY` | Политика групп: `allowlist`, `closed` или `open` |
 | `group_allow_from` | `MAX_GROUP_ALLOWED_USERS` | Разрешённые пользователи групп |
 | `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Разрешённые группы |
 | `cross_session` | `MAX_CROSS_SESSION` | Включить кроссплатформенные сессии |
@@ -124,8 +126,9 @@ python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profi
 ### Опрос (Long polling, по умолчанию)
 
 ```bash
-# Укажите токен в защищённой конфигурации
+# Укажите токен и явный доступ пользователя в защищённой конфигурации
 MAX_BOT_TOKEN=<токен_бота>
+MAX_ALLOWED_USERS=OWNER_MAX_USER_ID
 ```
 
 Long polling подходит для:
@@ -253,10 +256,11 @@ MAX_ALLOW_ALL_USERS=true
 **Политики групп:**
 
 ```bash
-# Закрытая группа — только разрешённые пользователи
+# Запретить весь групповой ввод
 MAX_GROUP_POLICY=closed
 
-# Список разрешённых для группы
+# Группа по спискам (общий доступ пользователя тоже должен совпасть)
+MAX_GROUP_POLICY=allowlist
 MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
 ```

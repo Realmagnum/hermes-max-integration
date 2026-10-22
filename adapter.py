@@ -2805,9 +2805,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             or ""
         )
         chat_id = str(raw_chat_id)
+        is_dialog = str(recipient.get("chat_type") or "").lower() == "dialog"
+        if chat_id and not is_dialog and not self._group_message_allowed(user_id, chat_id):
+            logger.info("MAX: group callback blocked by group policy")
+            return None
         if chat_id and user_id:
             self._remember_dm(chat_id, user_id)
-        is_dialog = str(recipient.get("chat_type") or "").lower() == "dialog"
         scoped_chat_id = f"user:{user_id}" if is_dialog or not chat_id else f"chat:{chat_id}"
         message_id = str((msg.get("body") or {}).get("mid") or msg.get("mid") or "")
 
@@ -3631,8 +3634,27 @@ def interactive_setup() -> None:
         save_env_value("MAX_ALLOW_ALL_USERS", "false")
         allowed = prompt("Allowed user IDs (comma-separated)",
                          default=get_env_value("MAX_ALLOWED_USERS") or "")
-        if allowed:
-            save_env_value("MAX_ALLOWED_USERS", allowed.replace(" ", ""))
+        save_env_value("MAX_ALLOWED_USERS", allowed.replace(" ", "").strip())
+        if not allowed.strip():
+            print_warning("No allowed user IDs: the bot will reject all incoming users until configured.")
+
+    # Materialize safe defaults for fresh profiles without replacing an
+    # operator's existing group or session policy during reconfiguration.
+    defaults = {
+        "MAX_ALLOWED_USERS": "",
+        "MAX_GROUP_POLICY": "allowlist",
+        "MAX_GROUP_ALLOWED_USERS": "",
+        "MAX_GROUP_ALLOWED_CHATS": "",
+        "MAX_CROSS_SESSION": "false",
+        "MAX_CROSS_SESSION_USERS": "",
+        "MAX_SESSIONS_LIMIT": "10",
+        "MAX_SESSIONS_DEFAULT_ALL": "false",
+    }
+    for name, value in defaults.items():
+        if not get_env_value(name):
+            save_env_value(name, value)
+    print_info("Under group policy allowlist, configured lists must match; two empty lists block groups.")
+    print_info("The button session picker is off by default; enable it and set owner IDs explicitly.")
 
     print()
     print_info("🎤 Voice messages")

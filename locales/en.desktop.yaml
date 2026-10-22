@@ -24,7 +24,7 @@ messaging.fieldCopy.MAX_WEBHOOK_PATH.placeholder: "/max/webhook"
 
 messaging.fieldCopy.MAX_ALLOWED_USERS.label: "Allowed Max User IDs"
 messaging.fieldCopy.MAX_ALLOWED_USERS.help: "Recommended. Comma-separated user IDs allowed to interact with the bot."
-messaging.fieldCopy.MAX_ALLOWED_USERS.placeholder: "user:123,user:456"
+messaging.fieldCopy.MAX_ALLOWED_USERS.placeholder: "123,456"
 
 messaging.fieldCopy.MAX_ALLOW_ALL_USERS.label: "Allow All Max Users"
 messaging.fieldCopy.MAX_ALLOW_ALL_USERS.help: "If true, any Max user can message the bot without allowlist gating."
@@ -32,7 +32,7 @@ messaging.fieldCopy.MAX_ALLOW_ALL_USERS.placeholder: "false"
 
 messaging.fieldCopy.MAX_HOME_CHANNEL.label: "Max Home Channel"
 messaging.fieldCopy.MAX_HOME_CHANNEL.help: "Default delivery target for cron tasks and notifications (e.g. user:123 or chat:456)."
-messaging.fieldCopy.MAX_HOME_CHANNEL.placeholder: "user:95825064"
+messaging.fieldCopy.MAX_HOME_CHANNEL.placeholder: "user:123"
 
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.label: "Tables as Images"
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.help: "Render markdown tables as PNG images via Pillow/Playwright (true/false)."
@@ -53,3 +53,19 @@ messaging.fieldCopy.MAX_SESSIONS_DEFAULT_ALL.help: "Show all platforms for /sess
 
 messaging.fieldCopy.MAX_CROSS_SESSION_USERS.label: "Session picker owners"
 messaging.fieldCopy.MAX_CROSS_SESSION_USERS.help: "Comma-separated owner MAX IDs. With an open bot, explicit owners are mandatory; other users retain Core commands."
+
+messaging.fieldCopy.MAX_GROUP_POLICY.label: "Group policy"
+messaging.fieldCopy.MAX_GROUP_POLICY.help: "allowlist (default), closed or open. Global user access still applies; two empty group lists deny access."
+messaging.fieldCopy.MAX_GROUP_POLICY.placeholder: "allowlist"
+
+messaging.fieldCopy.MAX_GROUP_ALLOWED_USERS.label: "Allowed group user IDs"
+messaging.fieldCopy.MAX_GROUP_ALLOWED_USERS.help: "Numeric user IDs, comma-separated. All configured user and chat lists must match."
+messaging.fieldCopy.MAX_GROUP_ALLOWED_USERS.placeholder: "123,456"
+
+messaging.fieldCopy.MAX_GROUP_ALLOWED_CHATS.label: "Allowed group chat IDs"
+messaging.fieldCopy.MAX_GROUP_ALLOWED_CHATS.help: "Numeric chat IDs, comma-separated, without chat: prefix. All configured lists must match."
+messaging.fieldCopy.MAX_GROUP_ALLOWED_CHATS.placeholder: "777,888"
+
+messaging.fieldCopy.MAX_WEBHOOK_URL.label: "Public webhook URL"
+messaging.fieldCopy.MAX_WEBHOOK_URL.help: "Public HTTPS endpoint. Empty selects long polling; host/port/path alone do not enable webhooks."
+messaging.fieldCopy.MAX_WEBHOOK_URL.placeholder: "https://bot.example.com/max/webhook"

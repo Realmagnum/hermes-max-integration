@@ -228,7 +228,7 @@ class TestCallbackRouting:
             approval_mod, "resolve_gateway_approval", lambda key, choice: 1
         )
 
-        a = make_adapter()
+        a = make_adapter(extra={"group_policy": "open"})
         a._remember_interaction_owner(
             session_key="sess-1",
             chat_id=f"chat:{GROUP_CHAT_ID}",
@@ -284,7 +284,7 @@ class TestCallbackRouting:
     async def test_captured_group_model_callback_uses_group_scope(
         self, make_adapter, max_api
     ):
-        a = make_adapter()
+        a = make_adapter(extra={"group_policy": "open"})
 
         async def on_selected(chat_id, model_id, provider_slug):
             return "ok"

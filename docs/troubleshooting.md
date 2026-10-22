@@ -1,5 +1,7 @@
 # Troubleshooting
 
+See [group access and ID discovery](group-access.md) for trusted/mixed groups and first-install defaults.
+
 ## Session command routing
 
 If `/sessions` shows the old text without buttons, check [owner setup](setup.md). Startup log `MAX: session routing` reports handler, reason, count and default scope; command log `MAX: session command routing` reports only handler and reason. These records contain neither the search query nor IDs. The name `MAX_CROSS_SESSION` is retained for compatibility, but the flag also enables MAX-only button listing.

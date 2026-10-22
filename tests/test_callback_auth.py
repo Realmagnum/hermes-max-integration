@@ -22,7 +22,7 @@ import adapter
 def _make_adapter(allowed_users=None, allow_all=True):
     from gateway.config import PlatformConfig
 
-    extra = {"token": "test-token", "allow_all_users": allow_all}
+    extra = {"token": "test-token", "allow_all_users": allow_all, "group_policy": "open"}
     if allowed_users is not None:
         extra["allowed_users"] = allowed_users
     a = adapter.MaxAdapter(

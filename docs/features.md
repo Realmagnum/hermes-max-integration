@@ -1,5 +1,7 @@
 # Features
 
+See [group access and ID discovery](group-access.md) for trusted/mixed groups and first-install defaults.
+
 ## STT (Voice Transcription)
 
 ### How it works

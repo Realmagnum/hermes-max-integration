@@ -14,7 +14,7 @@ def make_adapter():
     from gateway.config import PlatformConfig
 
     a = adapter.MaxAdapter(PlatformConfig(
-        enabled=True, token="test-token", extra={"token": "test-token", "allow_all_users": True},
+        enabled=True, token="test-token", extra={"token": "test-token", "allow_all_users": True, "group_policy": "open"},
     ))
     a._http_client = AsyncMock()
     response = MagicMock(status_code=200)

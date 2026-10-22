@@ -1,8 +1,10 @@
 # Setup
 
+See [group access and ID discovery](group-access.md) for trusted/mixed groups and first-install defaults.
+
 Minimum supported Core: **>=0.21.4**. Minimum supported Python: **>=3.12** (verified on Python 3.12 with minimum Core 0.21.4 and Python 3.14 with current Core; Python 3.11 is not supported). The exact released fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` uses Python 3.12 because that release requires Python >=3.11,<3.14. Later baseline/current fixtures use Python 3.14. The isolated minimum-Core candidate passed its full suite and dependency compatibility checks on 2026-10-13; the dated results and limits are recorded in [catalog acceptance evidence](specs/20261013-catalog-review-137501.md).
 
-The current suite collects **848 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
+The current suite collects **891 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
 
 MAX agent replies containing only MEDIA markers receive the first filename through the public Core output hook before delivery. Direct attachment sends also use a filename, or `File` when unavailable; authored captions are preserved. See [caption contracts](specs/20261013-media-caption.md). Direct `hermes send` and cron paths without that hook still need text, for example `report.pdf MEDIA:/path/report.pdf`.
 
@@ -47,7 +49,7 @@ Expect `handler=plugin`, `reason=owner_picker_ready`, `dispatch_matches_policy=t
 | `MAX_CROSS_SESSION_USERS` | ❌ | — | Owners allowed to use cross-platform sessions |
 | `MAX_SESSIONS_LIMIT` | ❌ | `10` | List/search count: integer 1–20; invalid values use 10 with a warning |
 | `MAX_SESSIONS_DEFAULT_ALL` | ❌ | `false` | Plain /sessions lists all platforms when true; otherwise MAX only |
-| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `allowlist` or `open` |
+| `MAX_GROUP_POLICY` | ❌ | `allowlist` | Group policy: `allowlist`, `closed` or `open` |
 | `MAX_WEBHOOK_INSECURE_DEV` | ❌ | `false` | Allow a secretless webhook only on loopback for development |
 | `MAX_EDIT_THROTTLE` | ❌ | `0.2` | Minimum interval between streaming edits of one message |
 | `MAX_DEDUP_TTL` | ❌ | `300` | Incoming-event deduplication TTL in seconds |
@@ -90,7 +92,7 @@ YAML keys are promoted to adapter `extra`; environment values take precedence.
 | `webhook_insecure_dev` | `MAX_WEBHOOK_INSECURE_DEV` | Allow secretless webhook only on loopback for development |
 | `allowed_users` | `MAX_ALLOWED_USERS` | User allowlist |
 | `allow_all_users` | `MAX_ALLOW_ALL_USERS` | Explicitly allow all users |
-| `group_policy` | `MAX_GROUP_POLICY` | Group policy: `allowlist` or `open` |
+| `group_policy` | `MAX_GROUP_POLICY` | Group policy: `allowlist`, `closed` or `open` |
 | `group_allow_from` | `MAX_GROUP_ALLOWED_USERS` | Allowed group users |
 | `group_allow_chats` | `MAX_GROUP_ALLOWED_CHATS` | Allowed groups |
 | `cross_session` | `MAX_CROSS_SESSION` | Enable cross-platform sessions |
@@ -124,8 +126,9 @@ Selection happens in `connect()` with one line: `self._use_webhook = bool(self._
 ### Long polling (default)
 
 ```bash
-# Just set the token
+# Set the token and explicit user access
 MAX_BOT_TOKEN=your_token
+MAX_ALLOWED_USERS=OWNER_MAX_USER_ID
 ```
 
 Long polling is ideal for:
@@ -255,10 +258,11 @@ MAX_ALLOW_ALL_USERS=true
 **Group policies:**
 
 ```bash
-# Closed group — only allowed users
+# Disable all group input
 MAX_GROUP_POLICY=closed
 
-# Whitelist for group
+# Allowlisted group (global user access must also match)
+MAX_GROUP_POLICY=allowlist
 MAX_GROUP_ALLOWED_USERS=123456789
 MAX_GROUP_ALLOWED_CHATS=-1001234567890
 ```

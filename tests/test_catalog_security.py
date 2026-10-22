@@ -53,10 +53,13 @@ async def test_start_events_do_not_bypass_closed_access(update_type):
                                  "user": {"user_id": 42}}) is None
 
 
+@pytest.mark.parametrize("initial", [{}, {"MAX_ALLOWED_USERS": "42,99", "MAX_GROUP_POLICY": "closed",
+    "MAX_GROUP_ALLOWED_CHATS": "777", "MAX_GROUP_ALLOWED_USERS": "42", "MAX_CROSS_SESSION": "true",
+    "MAX_CROSS_SESSION_USERS": "42", "MAX_SESSIONS_LIMIT": "7", "MAX_SESSIONS_DEFAULT_ALL": "true"}])
 @pytest.mark.parametrize("allow_all", [False, True])
-def test_setup_defaults_closed_and_preserves_allowlist(monkeypatch, allow_all):
+def test_setup_defaults_closed_and_preserves_allowlist(monkeypatch, allow_all, initial):
     from hermes_cli import setup
-    saved = {"MAX_ALLOWED_USERS": "42,99"}
+    saved = dict(initial)
     questions = []
     def prompt_yes_no(question, default):
         questions.append((question, default))
@@ -72,7 +75,12 @@ def test_setup_defaults_closed_and_preserves_allowlist(monkeypatch, allow_all):
     adapter.interactive_setup()
     assert ("Allow all Max users to talk to the bot?", False) in questions
     assert saved["MAX_ALLOW_ALL_USERS"] == str(allow_all).lower()
-    assert saved["MAX_ALLOWED_USERS"] == ("" if allow_all else "42,99")
+    assert saved["MAX_ALLOWED_USERS"] == ("" if allow_all else initial.get("MAX_ALLOWED_USERS", ""))
+    defaults = {"MAX_GROUP_POLICY": "allowlist", "MAX_GROUP_ALLOWED_USERS": "", "MAX_GROUP_ALLOWED_CHATS": "",
+                "MAX_CROSS_SESSION": "false", "MAX_CROSS_SESSION_USERS": "", "MAX_SESSIONS_LIMIT": "10",
+                "MAX_SESSIONS_DEFAULT_ALL": "false"}
+    for name, default in defaults.items():
+        assert saved[name] == initial.get(name, default)
 
 
 def install_scope(monkeypatch, mapping, failure=None):

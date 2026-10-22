@@ -333,3 +333,98 @@ class TestOrRegression:
         a = make_adapter()
         assert a._group_message_allowed("42", "777") is False
         assert a._group_message_allowed("99", "888") is False
+
+
+# GRP-001/002: the group gate applies before every callback dispatcher.
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix,handler", [
+    ("exec", "_handle_exec_callback"),
+    ("sc", "_handle_slash_confirm_callback"),
+    ("clarify", "_handle_clarify_callback"),
+    ("model", "_handle_model_callback"),
+    ("session", "_handle_session_callback"),
+])
+@pytest.mark.parametrize("extra,allowed", [
+    ({"group_policy": "closed"}, False),
+    ({"group_policy": "allowlist"}, False),
+    ({"group_policy": "allowlist", "group_allow_from": [USER_ID], "group_allow_chats": [OTHER_CHAT_ID]}, False),
+    ({"group_policy": "allowlist", "group_allow_from": [OTHER_USER_ID], "group_allow_chats": [GROUP_CHAT_ID]}, False),
+    ({"group_policy": "allowlist", "group_allow_from": [USER_ID], "group_allow_chats": [GROUP_CHAT_ID]}, True),
+    ({"group_policy": "open"}, True),
+    ({"group_policy": "open", "allow_all_users": False, "allowed_users": [OTHER_USER_ID]}, False),
+])
+async def test_group_callback_policy_before_dispatch(prefix, handler, extra, allowed):
+    from unittest.mock import AsyncMock, Mock
+    a = make_adapter(**extra)
+    dispatch = AsyncMock(return_value=None)
+    setattr(a, handler, dispatch)
+    a._remember_dm = Mock()
+    payload = {"callback": {"user": {"user_id": int(USER_ID)}, "payload": f"{prefix}:probe:cancel"},
+               "message": {"recipient": {"chat_id": int(GROUP_CHAT_ID), "chat_type": "chat"}, "body": {"mid": "mid"}}}
+    await a._on_callback(payload)
+    assert dispatch.await_count == int(allowed)
+    if not allowed:
+        a._remember_dm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_group_callback_denial_keeps_pending_until_policy_allows_owner():
+    from unittest.mock import AsyncMock
+
+    from gateway.platforms.base import SendResult
+    a = make_adapter(group_policy="closed", cross_session=True, cross_session_users=[USER_ID])
+    a.delete_message = AsyncMock(return_value=SendResult(success=True))
+    a.send = AsyncMock()
+    record = a._register_interaction("session", "group-probe", owner_user_id=USER_ID,
+                                     chat_id=GROUP_CHAT_SCOPED, message_id="mid", ttl=100)
+    record["rows"] = [{"id": "synthetic-session", "source": "max"}]
+    payload = {"callback": {"payload": "session:group-probe:cancel", "user": {"user_id": int(USER_ID)}},
+               "message": {"recipient": {"chat_id": int(GROUP_CHAT_ID), "chat_type": "chat"}, "body": {"mid": "mid"}}}
+    await a._on_callback(payload)
+    a.delete_message.assert_not_awaited()
+    a.send.assert_not_awaited()
+    a._group_policy = "open"
+    await a._on_callback(payload)
+    a.delete_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fallback", ["recipient", "chat", "chat_id"])
+async def test_callback_group_chat_id_fallback_is_gated(fallback):
+    from unittest.mock import AsyncMock
+    a = make_adapter(group_policy="closed")
+    a._handle_model_callback = AsyncMock()
+    payload = {"callback": {"payload": "model:probe:cancel", "user": {"user_id": int(USER_ID)}}}
+    if fallback == "recipient":
+        payload["message"] = {"recipient": {"chat_id": int(GROUP_CHAT_ID)}}
+    elif fallback == "chat":
+        payload["chat"] = {"chat_id": int(GROUP_CHAT_ID)}
+    else:
+        payload["chat_id"] = int(GROUP_CHAT_ID)
+    await a._on_callback(payload)
+    a._handle_model_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dialog_callback_service_chat_id_ignores_group_policy():
+    from unittest.mock import AsyncMock
+    a = make_adapter(group_policy="closed")
+    a._handle_model_callback = AsyncMock()
+    await a._on_callback({"callback": {"payload": "model:probe:cancel", "user": {"user_id": int(USER_ID)}},
+                          "message": {"recipient": {"chat_type": "dialog", "chat_id": int(GROUP_CHAT_ID)}}})
+    a._handle_model_callback.assert_awaited_once()
+    assert a._handle_model_callback.call_args.args[3] == f"user:{USER_ID}"
+
+
+def test_fresh_adapter_access_and_session_defaults(monkeypatch):
+    for name in ("MAX_CROSS_SESSION", "MAX_CROSS_SESSION_USERS", "MAX_SESSIONS_LIMIT", "MAX_SESSIONS_DEFAULT_ALL"):
+        monkeypatch.delenv(name, raising=False)
+    a = make_adapter(allow_all_users=False)
+    assert not a._allow_all_users
+    assert not a._allowed_users_set
+    assert a._group_policy == "allowlist"
+    assert not a._group_message_allowed(USER_ID, GROUP_CHAT_ID)
+    status = a.session_routing_status(USER_ID)
+    assert status["reason"] == "feature_disabled"
+    assert status["limit"] == 10
+    assert status["default_scope"] == "max"

@@ -391,7 +391,7 @@ class TestModelPickerIsolation:
 
     def _make_adapter(self):
         from gateway.config import PlatformConfig
-        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token", "allowed_users": ["42", "99"]})
+        cfg = PlatformConfig(enabled=True, token="test-token", extra={"token": "test-token", "allowed_users": ["42", "99"], "group_policy": "open"})
         a = adapter.MaxAdapter(cfg)
         a._http_client = AsyncMock()
         mock_resp = MagicMock()

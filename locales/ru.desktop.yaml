@@ -24,7 +24,7 @@ messaging.fieldCopy.MAX_WEBHOOK_PATH.placeholder: "/max/webhook"
 
 messaging.fieldCopy.MAX_ALLOWED_USERS.label: "Разрешённые ID пользователей MAX"
 messaging.fieldCopy.MAX_ALLOWED_USERS.help: "Рекомендуется. ID пользователей через запятую, которым разрешён доступ к боту."
-messaging.fieldCopy.MAX_ALLOWED_USERS.placeholder: "user:123,user:456"
+messaging.fieldCopy.MAX_ALLOWED_USERS.placeholder: "123,456"
 
 messaging.fieldCopy.MAX_ALLOW_ALL_USERS.label: "Разрешить всех пользователей MAX"
 messaging.fieldCopy.MAX_ALLOW_ALL_USERS.help: "Если включено (true), писать боту может любой пользователь без проверки списка."
@@ -32,7 +32,7 @@ messaging.fieldCopy.MAX_ALLOW_ALL_USERS.placeholder: "false"
 
 messaging.fieldCopy.MAX_HOME_CHANNEL.label: "Домашний канал MAX"
 messaging.fieldCopy.MAX_HOME_CHANNEL.help: "Целевой канал или пользователь по умолчанию для cron и системных уведомлений (например, user:123 или chat:456)."
-messaging.fieldCopy.MAX_HOME_CHANNEL.placeholder: "user:95825064"
+messaging.fieldCopy.MAX_HOME_CHANNEL.placeholder: "user:123"
 
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.label: "Таблицы как изображения"
 messaging.fieldCopy.MAX_TABLE_AS_IMAGE.help: "Рендерить Markdown-таблицы в виде картинок через Pillow/Playwright (true/false)."
@@ -53,3 +53,19 @@ messaging.fieldCopy.MAX_SESSIONS_DEFAULT_ALL.help: "Показывать все 
 
 messaging.fieldCopy.MAX_CROSS_SESSION_USERS.label: "Владельцы списка сессий"
 messaging.fieldCopy.MAX_CROSS_SESSION_USERS.help: "MAX ID владельцев через запятую. Для открытого бота обязательны явные владельцы; остальные пользователи сохраняют команды Core."
+
+messaging.fieldCopy.MAX_GROUP_POLICY.label: "Политика групп"
+messaging.fieldCopy.MAX_GROUP_POLICY.help: "allowlist (по умолчанию), closed или open. Общий доступ пользователей также проверяется; два пустых групповых списка запрещают доступ."
+messaging.fieldCopy.MAX_GROUP_POLICY.placeholder: "allowlist"
+
+messaging.fieldCopy.MAX_GROUP_ALLOWED_USERS.label: "Разрешённые пользователи групп"
+messaging.fieldCopy.MAX_GROUP_ALLOWED_USERS.help: "Числовые ID пользователей через запятую. Все заполненные списки пользователей и чатов должны совпасть."
+messaging.fieldCopy.MAX_GROUP_ALLOWED_USERS.placeholder: "123,456"
+
+messaging.fieldCopy.MAX_GROUP_ALLOWED_CHATS.label: "Разрешённые группы"
+messaging.fieldCopy.MAX_GROUP_ALLOWED_CHATS.help: "Числовые ID чатов через запятую, без префикса chat:. Все заполненные списки должны совпасть."
+messaging.fieldCopy.MAX_GROUP_ALLOWED_CHATS.placeholder: "777,888"
+
+messaging.fieldCopy.MAX_WEBHOOK_URL.label: "Публичный URL webhook"
+messaging.fieldCopy.MAX_WEBHOOK_URL.help: "Публичный HTTPS endpoint. Пустое значение выбирает long polling; host/port/path сами по себе не включают webhook."
+messaging.fieldCopy.MAX_WEBHOOK_URL.placeholder: "https://bot.example.com/max/webhook"
