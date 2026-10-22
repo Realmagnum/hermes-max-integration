@@ -13,6 +13,10 @@
 - [ ] **CAT-02 / MS-011 · P1 — Завершить живую доставку и approvals.** Доставка текста, файлов, выбор модели и вопросы clarify подтверждены в MAX; standalone text+file подтверждён API readback. **Приёмка:** проверить живой выбор подтверждения shell-команд (`_send_exec_approval_prompt`) с реальными вариантами ответа в работающем gateway. Не сохранять реальные credentials/recipients в репозитории.
 - [ ] **CAT-03 / MS-012 · P2 — Решение повторного ревью каталога.** [PR #137501](https://github.com/NousResearch/hermes-agent/pull/137501) отправлен на v2.11.0 с immutable SHA, schema/admission/CI evidence; [ответ ревьюеру](https://github.com/NousResearch/hermes-agent/pull/137501#issuecomment-6156793138) опубликован. Generic Core media issue уже отслеживается в [#121864](https://github.com/NousResearch/hermes-agent/issues/121864). **Приёмка:** обработать новое ревью и получить решение maintainer; публикация и ответ выполнены, принятие каталога ещё не подтверждено.
 
+## Планируемый подпроект: тестовый стенд развертывания MAX
+
+- [ ] **MTS-001–008 — Изолированный симулятор и периодическая проверка чистой установки.** Создать небольшой локальный симулятор MAX API, установить актуальный upstream Hermes Core и плагин штатным CLI в одноразовом окружении, проверить polling/webhook и ключевые сценарии, сохранить отчёт с точными ревизиями без секретов. Изменения реального протокола MAX учитываются только по факту. Контракт: [Micro-Spec](docs/specs/20261020-max-deployment-test-stand_RU.md); исполнение: [план .hermes](.hermes/plans/2026-10-20_172722-max-deployment-test-stand.md). Не реализовано и не поставлено в расписание; изолированный runner ещё не выбран.
+
 ## Недавно закрыто в этом цикле (evidence зафиксировано)
 
 - **CAT-03 / MS-012 (публикация):** релизный каталожный [PR #137501](https://github.com/NousResearch/hermes-agent/pull/137501), 572 schema entries, 12 upstream checks и [ответ ревьюеру](https://github.com/NousResearch/hermes-agent/pull/137501#issuecomment-6156793138); решение ревью ожидает.

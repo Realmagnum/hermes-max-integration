@@ -13,6 +13,10 @@ Execution resumed on 2026-10-13. Completed items (CODE-06, BUILD-02, DOC-10, CAT
 - [ ] **CAT-02 / MS-011 · P1 — Complete live delivery and approvals.** Live text, file delivery, model picker and clarify prompts are confirmed in MAX; standalone text+file has API readback. **Acceptance:** verify live execution approval prompt selection (`_send_exec_approval_prompt`) with real offered choices in the running gateway. Commit no real credentials/recipients.
 - [ ] **CAT-03 / MS-012 · P2 — Repeat catalog review decision.** [PR #137501](https://github.com/NousResearch/hermes-agent/pull/137501) submits immutable v2.11.0 with schema/admission/CI evidence; the [reviewer reply](https://github.com/NousResearch/hermes-agent/pull/137501#issuecomment-6156793138) is published. The generic Core media issue is already tracked in [#121864](https://github.com/NousResearch/hermes-agent/issues/121864). **Acceptance:** address new review and obtain the maintainer decision; submission and response are complete, catalog acceptance is not confirmed.
 
+## Planned subproject: MAX deployment test stand
+
+- [ ] **MTS-001–008 — Isolated simulator and periodic clean-install smoke.** Build a small local MAX API simulator, install current upstream Hermes Core and this plugin through the supported CLI in a disposable environment, run polling/webhook and key behavior checks, and publish revision-pinned redacted results. Protocol changes in real MAX are addressed only when observed. Contract: [Micro-Spec](docs/specs/20261020-max-deployment-test-stand.md); execution: [.hermes plan](.hermes/plans/2026-10-20_172722-max-deployment-test-stand.md). Not implemented or scheduled; isolated runner not yet selected.
+
 ## Recently closed in this cycle (verified evidence recorded)
 
 - **CAT-03 / MS-012 (submission):** released catalog [PR #137501](https://github.com/NousResearch/hermes-agent/pull/137501), 572 schema entries, 12 upstream checks and [reviewer reply](https://github.com/NousResearch/hermes-agent/pull/137501#issuecomment-6156793138); review decision pending.
