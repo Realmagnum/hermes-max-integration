@@ -17,19 +17,25 @@ Cause 1 alone is fixed in core for hosts installing on a single platform, but th
 
 | ID | Trigger / context | Required result | Acceptance | Status |
 |---|---|---|---|---|
-| DEP-001 | `tables` / `stt` extras, `plugin.yaml` | `playwright` and `faster-whisper` carry `sys_platform != 'android'`, matching core's own markers | `tests/test_install_admission_markers.py`; workspace lock on Core `v0.22.5` | Implemented |
-| DEP-002 | Core pins playwright exactly | Plugin declares `playwright>=1.62,<2`: floor is the oldest core pin it supports, ceiling below the next major | `tests/test_install_admission_markers.py`; workspace lock on Core `aad60e1ac67` | Implemented |
+| DEP-001 | `tables` / `stt` extras, `plugin.yaml` | `playwright` and `faster-whisper` carry `sys_platform != 'android'`, matching core's own markers | `tests/test_install_admission_markers.py`; seeded workspace lock on Core `v0.22.5` | Implemented |
+| DEP-002 | Core pins playwright exactly | Plugin declares `playwright>=1.62,<2`: floor is the oldest core pin it supports, ceiling below the next major | `tests/test_install_admission_markers.py`; seeded workspace lock on Core `aad60e1ac67` | Implemented |
 | DEP-003 | `scripts/setup-playwright.py` | Accept and install any version inside the declared range instead of enforcing `1.62.0`; never fight the version the gateway already has | `tests/test_setup_playwright.py` (range cases, install command) | Implemented |
 | DEP-004 | Core bumps playwright beyond the range | CI fails with the offending requirement instead of users hitting an admission refusal | `tests/test_install_admission_markers.py::test_plugin_range_accepts_core_exact_pin` reads the installed core `pyproject.toml` | Implemented |
 
 ## Evidence and limits
 
-Reproduced with the PM-pinned `uv 0.13.5` and CPython 3.14.9 on a generated workspace (core root pyproject + plugin as `plugin-sources/<key>` member, `exclude-newer` dropped, `[tool.uv] workspace.members` set):
+Reproduced with the PM-pinned `uv 0.13.5` and CPython 3.14.9 on a generated workspace that mirrors `pm/workspace.py::_generate_pyproject`: core's root `pyproject.toml` with `exclude-newer` dropped, `[tool.uv] workspace.members` pointing at the plugin copy, and — as `pm/packages.py` does (`seed = project / "uv.lock"`) — core's own committed lock copied in as the seed.
 
-| Workspace | Plugin declarations | Result |
+| Core | Plugin declarations | Result |
 |---|---|---|
-| Core `v0.22.5` environments, un-narrowed (per [issue #1](https://github.com/Realmagnum/hermes-max-integration/issues/1)) | commit `78d9abf` | refused: no solution for the `python_full_version >= '3.14' and sys_platform == 'android'` split |
-| Core `aad60e1ac67`, environments NOT narrowed | commit `78d9abf` | refused: `hermes-agent[google-meet] depends on playwright==1.64.0` vs `hermes-max-integration[tables] depends on playwright==1.62.0`; also fails on building `spacy` sdist in the Android fork |
-| Core `aad60e1ac67`, environments narrowed to installing host (`pm/workspace.py::_solve_only_for`) | this change | lock resolves; admission accepts the member; selected playwright 1.64.0, faster-whisper 1.2.1 |
+| `v0.22.5`, environments un-narrowed | commit `78d9abf` | **refused**, reproducing [issue #1](https://github.com/Realmagnum/hermes-max-integration/issues/1) verbatim: `playwright==1.62.0 has no 'python_full_version >= 3.14'-compatible wheels` in the `sys_platform == 'android'` split |
+| `v0.22.5`, environments un-narrowed | this change | lock resolves, 330 packages, member present |
+| `aad60e1ac67`, environments un-narrowed | commit `78d9abf` | **refused** in the non-Android split: `hermes-agent[google-meet] depends on playwright==1.64.0` vs `hermes-max-integration[tables] depends on playwright==1.62.0` |
+| `aad60e1ac67`, environments un-narrowed | this change | lock resolves, 348 packages, playwright 1.64.0 |
+| `aad60e1ac67`, environments narrowed to the installing host (`pm/workspace.py::_solve_only_for`) | this change | lock resolves, 348 packages, playwright 1.64.0, faster-whisper 1.2.1 |
 
-Not verified here: a live `hermes plugins install` against a published release, Windows/macOS hosts, and the `sdist`/wheel build. The Android marker line is confirmed by declaration contract (the v0.22.5 result above is from the issue reporter — current core already resolves the whole Android fork via its committed lock, so our guard is insurance for older cores). No Android (Termux) install was performed. Core `dependency-audit` advisories are unrelated and stay tracked as BUILD-03.
+The last two rows matter together: the fix does **not** depend on core's workspace-narrowing commit. Both causes are removed at the declaration site, so the plugin admits on released cores that still solve Android (`≤ v0.22.5`, the case in issue #1) and on current core where the only remaining blocker was the pin collision.
+
+A first harness iteration omitted the seed lock and produced a `spacy 2.0.17` sdist build failure. That is an artifact of resolving everything from scratch, not a property of core: with the seed in place (as PM does it) both cores lock cleanly. Recorded here so the failure is not misread as evidence later.
+
+Not verified here: a live `hermes plugins install` against a published release, Windows/macOS hosts, the `sdist`/wheel build, and an actual Android (Termux) install. Core `dependency-audit` advisories are unrelated and stay tracked as BUILD-03.
