@@ -17,19 +17,25 @@ Hermes резолвит core и все включённые плагины ка�
 
 | ID | Триггер / контекст | Требуемый результат | Приёмка | Статус |
 |---|---|---|---|---|
-| DEP-001 | extras `tables` / `stt`, `plugin.yaml` | `playwright` и `faster-whisper` несут `sys_platform != 'android'`, как у core | `tests/test_install_admission_markers.py`; lock воркспейса на Core `v0.22.5` | Реализовано |
-| DEP-002 | Core пинит playwright точно | Плагин объявляет `playwright>=1.62,<2`: нижняя граница — самый старый поддерживаемый pin core, верхняя — ниже следующей мажорной версии | `tests/test_install_admission_markers.py`; lock воркспейса на Core `aad60e1ac67` | Реализовано |
+| DEP-001 | extras `tables` / `stt`, `plugin.yaml` | `playwright` и `faster-whisper` несут `sys_platform != 'android'`, как у core | `tests/test_install_admission_markers.py`; lock воркспейса с seed-локом на Core `v0.22.5` | Реализовано |
+| DEP-002 | Core пинит playwright точно | Плагин объявляет `playwright>=1.62,<2`: нижняя граница — самый старый поддерживаемый pin core, верхняя — ниже следующей мажорной версии | `tests/test_install_admission_markers.py`; lock воркспейса с seed-локом на Core `aad60e1ac67` | Реализовано |
 | DEP-003 | `scripts/setup-playwright.py` | Принимать и ставить любую версию внутри объявленного диапазона вместо принудительного `1.62.0`; не конфликтовать с версией, уже стоящей в шлюзе | `tests/test_setup_playwright.py` (случаи диапазона, команда установки) | Реализовано |
 | DEP-004 | Core поднимает playwright за пределы диапазона | CI падает с указанием проблемного требования вместо отказа admission у пользователей | `tests/test_install_admission_markers.py::test_plugin_range_accepts_core_exact_pin` читает `pyproject.toml` установленного core | Реализовано |
 
 ## Подтверждение и ограничения
 
-Воспроизведено на PM-пине `uv 0.13.5` и CPython 3.14.9 на сгенерированном воркспейсе (root pyproject ядра + плагин как участник `plugin-sources/<key>`, `exclude-newer` удалён, `[tool.uv] workspace.members` задан):
+Воспроизведено на PM-пине `uv 0.13.5` и CPython 3.14.9 на сгенерированном воркспейсе, повторяющем `pm/workspace.py::_generate_pyproject`: root `pyproject.toml` ядра без `exclude-newer`, `[tool.uv] workspace.members` указывает на копию плагина и — как делает `pm/packages.py` (`seed = project / "uv.lock"`) — коммитнутый lock ядра скопирован как seed.
 
-| Воркспейс | Декларации плагина | Результат |
+| Core | Декларации плагина | Результат |
 |---|---|---|
-| Core `v0.22.5`, environments без сужения (согласно [issue #1](https://github.com/Realmagnum/hermes-max-integration/issues/1)) | коммит `78d9abf` | отказ: нет решения для split `python_full_version >= '3.14' and sys_platform == 'android'` |
-| Core `aad60e1ac67`, environments без сужения | коммит `78d9abf` | отказ: `hermes-agent[google-meet] depends on playwright==1.64.0` против `hermes-max-integration[tables] depends on playwright==1.62.0`; также ошибка сборки `spacy` из sdist в Android-форке core |
-| Core `aad60e1ac67`, environments сужены до хоста установки (`pm/workspace.py::_solve_only_for`) | это изменение | lock резолвится; admission принимает участника; выбраны playwright 1.64.0 и faster-whisper 1.2.1 |
+| `v0.22.5`, environments без сужения | коммит `78d9abf` | **отказ**, дословно воспроизводит [issue #1](https://github.com/Realmagnum/hermes-max-integration/issues/1): `playwright==1.62.0 has no 'python_full_version >= 3.14'-compatible wheels` в сплите `sys_platform == 'android'` |
+| `v0.22.5`, environments без сужения | это изменение | lock резолвится, 330 пакетов, участник присутствует |
+| `aad60e1ac67`, environments без сужения | коммит `78d9abf` | **отказ** в non-Android сплите: `hermes-agent[google-meet] depends on playwright==1.64.0` против `hermes-max-integration[tables] depends on playwright==1.62.0` |
+| `aad60e1ac67`, environments без сужения | это изменение | lock резолвится, 348 пакетов, playwright 1.64.0 |
+| `aad60e1ac67`, environments сужены до хоста установки (`pm/workspace.py::_solve_only_for`) | это изменение | lock резолвится, 348 пакетов, playwright 1.64.0, faster-whisper 1.2.1 |
 
-Не проверялось здесь: живой `hermes plugins install` из опубликованного релиза, хосты Windows/macOS, сборка `sdist`/wheel. Строка про Android-маркер подтверждена контрактом деклараций и не воспроизводилась отдельно (результат выше взят из репорта автора issue; текущий core уже решает весь Android-сплит своими зафиксированными версиями, а наш маркер — страховка для старых core). Установка на Android (Termux) не выполнялась. Advisories `dependency-audit` в core к этому изменению не относятся и остаются в BUILD-03.
+Две последние строки важны вместе: фикс **не зависит** от core-коммита с сужением воркспейса. Обе причины устранены в самих декларациях, поэтому плагин допускается и на выпущенных ядрах, которые ещё резолвят Android (`≤ v0.22.5`, случай из issue #1), и на текущем core, где оставался только конфликт пинов.
+
+Первая итерация harness шла без seed-лока и дала ошибку сборки `spacy 2.0.17` из sdist. Это артефакт резолва «с нуля», а не свойство core: с seed-локом (как делает PM) оба ядра лочатся чисто. Зафиксировано здесь, чтобы позже эту ошибку не приняли за evidence.
+
+Не проверялось здесь: живой `hermes plugins install` из опубликованного релиза, хосты Windows/macOS, сборка `sdist`/wheel и реальная установка на Android (Termux). Advisories `dependency-audit` в core к этому изменению не относятся и остаются в BUILD-03.
