@@ -32,9 +32,28 @@ import subprocess
 import sys
 from pathlib import Path
 
-PLAYWRIGHT_VERSION = "1.62.0"
-PLAYWRIGHT_REQ = f"playwright=={PLAYWRIGHT_VERSION}"
+PLAYWRIGHT_MIN = (1, 62)  # floor: the oldest core pin this plugin supports
+PLAYWRIGHT_MAX_MAJOR = 2  # ceiling: next major (core pins an exact 1.x)
+PLAYWRIGHT_REQ = f"playwright>={PLAYWRIGHT_MIN[0]}.{PLAYWRIGHT_MIN[1]},<{PLAYWRIGHT_MAX_MAJOR}"
 BROWSER = "chromium"
+
+
+def version_supported(text: str) -> bool:
+    """True when a reported playwright version satisfies the declared range.
+
+    The plugin no longer pins an exact playwright release: core pins the same
+    distribution exactly (its ``google-meet`` extra), and two exact pins cannot
+    co-install. Any 1.x at or above the floor is accepted, so installing the
+    package never fights the version the gateway already has.
+    """
+    parts = []
+    for chunk in (text or "").strip().split(".")[:3]:
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else -1)
+    if not parts or parts[0] < 0:
+        return False
+    version = tuple(parts + [0] * (3 - len(parts)))
+    return PLAYWRIGHT_MIN + (0,) <= version < (PLAYWRIGHT_MAX_MAJOR,)
 
 
 def chromium_installed(py: str) -> bool:
@@ -59,10 +78,12 @@ def probe(py: str, code: str) -> str:
 
 
 def playwright_installed(py: str) -> bool:
-    """True only for the tested package version in the target interpreter."""
-    return probe(
-        py, "import importlib.metadata; print(importlib.metadata.version('playwright'))"
-    ) == PLAYWRIGHT_VERSION
+    """True when the target interpreter has a playwright inside the declared range."""
+    return version_supported(
+        probe(
+            py, "import importlib.metadata; print(importlib.metadata.version('playwright'))"
+        )
+    )
 
 
 def run(cmd: list[str], quiet: bool = False) -> int:
@@ -120,7 +141,7 @@ def main() -> int:
             return 1
 
     # A package upgrade changes Chromium revision even if an old browser was
-    # present at the initial probe. Re-probe after installing the exact pin.
+    # present at the initial probe. Re-probe after installing the declared range.
     if not chromium_installed(py):
         print("Installing Chromium (~115 MB, one-time) ...")
         if run([py, "-m", "playwright", "install", BROWSER], quiet=args.quiet) != 0:
