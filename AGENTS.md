@@ -33,3 +33,50 @@ Continue authorized implementation without a routine spec-approval round. Keep i
 - Voice transcription belongs to Hermes Core; verify current Core compatibility and configuration before advising users.
 - Confirm versions, defaults, and test counts from source and automated checks; do not trust historical changelog or line-number claims.
 - Run documentation checkers and relevant tests; an unrun check is not a pass.
+
+## Dual-host: GitHub (public) + Gitea rmg7.com (internal backup)
+
+This repository lives on two hosting platforms with **different purposes**:
+
+| Remote | URL | Purpose |
+|---|---|---|
+| `origin` | `https://github.com/Realmagnum/hermes-max-integration.git` | **Source of truth** — public issues, PRs, CI, releases |
+| `gitea` | `ssh://git@gitea.rmg7.com:2222/agent/hermes-max-integration.git` | Internal mirror / backup (Gitea org: `agent`) |
+
+### Push sequence (mandatory order)
+
+Always push to `origin` (GitHub) **first**, then to `gitea`:
+
+```bash
+git push origin main       # triggers GitHub Actions CI
+git push gitea main        # updates internal mirror
+# or single command: git push origin main && git push gitea main
+```
+
+Never push directly to `gitea` alone — the commit must first pass CI on GitHub. The pull-mirror automation (scheduled Gitea sync) was planned but requires manual configuration via Gitea web UI (`Settings → Mirror`); until configured, the above explicit push is the authoritative method.
+
+### Pull-mirror status
+
+Gitea repo `agent/hermes-max-integration` does **not** have automatic pull-mirroring configured. The last manual sync was 2026-10-30 (commit `41be531`). To enable automatic mirroring:
+
+1. Open https://gitea.rmg7.com/agent/hermes-max-integration/settings/mirror
+2. Click **New Mirror**
+3. Original URL: `https://github.com/Realmagnum/hermes-max-integration.git`
+4. Interval: `1h` (or shorter)
+5. Save — Gitea will now auto-sync commits every interval.
+
+Until this is done, verify sync state periodically:
+```bash
+# hi-max clone
+cd /home/magnum/.hermes/cache/scratch/hi-max
+git fetch --all
+echo "GitHub: $(git rev-parse origin/main)"
+echo "Gitea:  $(git rev-parse gitea/main)"
+# They must match.
+```
+
+### SSH key for Gitea
+
+The agent's SSH key is at `~/.ssh/id_gitea`. It authenticates as user `magnum` (admin).
+Use it when connecting to gitea.rmg7.com:2222 via SSH.
+The key is automatically used for host `gitea.rmg7.com` if `.ssh/config` has a `Host gitea.rmg7.com` entry — otherwise specify `-i ~/.ssh/id_gitea` explicitly.
