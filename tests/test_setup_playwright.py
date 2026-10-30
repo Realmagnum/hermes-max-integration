@@ -12,8 +12,20 @@ setup_playwright = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(setup_playwright)
 
 
-@pytest.mark.parametrize("version,expected", [("1.62.0", True), ("1.63.0", False), ("", False)])
-def test_exact_package_pin(monkeypatch, version, expected):
+@pytest.mark.parametrize(
+    "version,expected",
+    [
+        ("1.62.0", True),   # floor
+        ("1.63.0", True),   # core 1.63 pin: inside the range
+        ("1.64.0", True),   # current core pin
+        ("1.99.9", True),   # still below the ceiling
+        ("1.61.9", False),  # below the floor core may pin
+        ("2.0.0", False),   # next major: API may break, never auto-installed
+        ("", False),
+        ("garbage", False),
+    ],
+)
+def test_version_range_check(monkeypatch, version, expected):
     calls = []
     def probe(py, code):
         calls.append((py, code))
@@ -57,7 +69,7 @@ def test_package_upgrade_rechecks_browser_revision(monkeypatch):
     monkeypatch.setattr(setup_playwright, "run", lambda cmd, **kw: commands.append(cmd) or 0)
     assert setup_playwright.main() == 0
     assert commands == [
-        ["target-python", "-m", "pip", "install", "-q", "playwright==1.62.0"],
+        ["target-python", "-m", "pip", "install", "-q", "playwright>=1.62,<2"],
         ["target-python", "-m", "playwright", "install", "chromium"],
     ]
 

@@ -148,8 +148,8 @@ HERMES_PY="$(head -1 "$(command -v hermes)" | sed 's|^#!||')"
 
 # Install what's missing (idempotent):
 "$HERMES_PY" scripts/setup-playwright.py
-# or manually:
-"$HERMES_PY" -m pip install 'playwright==1.62.0'
+# or manually (a range, not an exact pin: core pins playwright itself):
+"$HERMES_PY" -m pip install 'playwright>=1.62,<2'
 "$HERMES_PY" -m playwright install chromium
 
 # Fallback renderer without a browser:

@@ -4,7 +4,7 @@ See [group access and ID discovery](group-access.md) for trusted/mixed groups an
 
 Minimum supported Core: **>=0.21.4**. Minimum supported Python: **>=3.12** (verified on Python 3.12 with minimum Core 0.21.4 and Python 3.14 with current Core; Python 3.11 is not supported). The exact released fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` uses Python 3.12 because that release requires Python >=3.11,<3.14. Later baseline/current fixtures use Python 3.14. The isolated minimum-Core candidate passed its full suite and dependency compatibility checks on 2026-10-13; the dated results and limits are recorded in [catalog acceptance evidence](specs/20261013-catalog-review-137501.md).
 
-The current suite collects **891 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
+The current suite collects **901 tests**; `python scripts/check-doc-claims.py` verifies this count. Collection is not a test pass and does not refresh historical candidate evidence.
 
 MAX agent replies containing only MEDIA markers receive the first filename through the public Core output hook before delivery. Direct attachment sends also use a filename, or `File` when unavailable; authored captions are preserved. See [caption contracts](specs/20261013-media-caption.md). Direct `hermes send` and cron paths without that hook still need text, for example `report.pdf MEDIA:/path/report.pdf`.
 

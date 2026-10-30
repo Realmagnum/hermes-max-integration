@@ -4,6 +4,8 @@ All notable changes to the hermes-max-integration plugin.
 
 ## [Unreleased]
 
+- **Install admission:** `tables` and `stt` now carry core's `sys_platform != 'android'` guard, and `playwright` is declared as a range (`>=1.62,<2`) instead of an exact `1.62.0` pin that collided with core's own `google-meet` pin — the plugin can be enabled again on current core, and a future core bump fails CI instead of the user's install. `scripts/setup-playwright.py` accepts any in-range version. [DEP-001–004](docs/specs/20261030-install-admission-markers.md).
+
 - **Group access:** enforce group policy before every button callback; expose group/webhook fields in Desktop, correct numeric ID examples, persist safe onboarding defaults and document ID discovery, family and mixed groups. [GRP-001–004](docs/specs/20261022-group-access.md).
 
 - **Session diagnostics:** explicit Core/picker reasons, safe logs, read-only post-install dispatch check, owner setting in manifest/Desktop and clarified MAX_CROSS_SESSION wording. User confirmed all live session scenarios on c5e41ac. [SLP-007–008](docs/specs/20261021-session-list-policy.md).

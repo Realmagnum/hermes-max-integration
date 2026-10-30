@@ -16,10 +16,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-stt = ["faster-whisper>=1.0,<2"]
+# Platform-specific extras carry core's own `sys_platform != 'android'` guard.
+# Hermes resolves the plugin workspace universally: an unguarded extra whose
+# packages ship no Android wheels fails the whole `uv lock` split and admission
+# refuses the plugin, even though the extra is never selected. Core guards the
+# same packages this way; keep the markers in sync with core's own pyproject.
+stt = ["faster-whisper>=1.0,<2; sys_platform != 'android'"]
 # Table-as-image: playwright is the primary HTML→PNG renderer; Pillow and
 # wcwidth form its fallback. All are declared in plugin.yaml too.
-tables = ["playwright==1.62.0", "pillow>=12.3,<13", "wcwidth>=0.2,<1"]
+# `playwright` is a RANGE, not an exact pin: core pins the same distribution
+# exactly (google-meet extra), and two different exact pins cannot co-install —
+# the plugin's floor must stay at the oldest core pin it supports (1.62.0) and
+# the ceiling below the next major, so any core pin inside the range resolves.
+tables = [
+    "playwright>=1.62,<2; sys_platform != 'android'",
+    "pillow>=12.3,<13",
+    "wcwidth>=0.2,<1",
+]
 dev = [
     "pytest>=8,<10",
     "pytest-asyncio>=0.24,<2",

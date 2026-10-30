@@ -18,10 +18,15 @@ homepage: https://github.com/Realmagnum/hermes-max-integration
 # by Hermes by design). Table-as-image: playwright is the preferred HTML→PNG
 # renderer, pillow the fallback. Browser binaries need a separate step:
 #   python -m playwright install chromium   (~115 MB, one-time)
+# `sys_platform != 'android'` mirrors core: the plugin workspace is resolved
+# universally, and Android has no playwright wheels — one unguarded entry fails
+# the whole lock and admission refuses the plugin (see docs/specs/
+# 20261030-install-admission-markers.md). The range, not an exact pin, lets any
+# core playwright pin from 1.62 up to the next major resolve alongside it.
 python_dependencies:
   - "aiohttp>=3.14.3,<4"
   - "httpx>=0.28.1,<0.29"
-  - "playwright==1.62.0"
+  - "playwright>=1.62,<2; sys_platform != 'android'"
   - "pillow>=12.3,<13"
   - "wcwidth>=0.2,<1"
 
