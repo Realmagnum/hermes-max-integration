@@ -38,4 +38,28 @@ The last two rows matter together: the fix does **not** depend on core's workspa
 
 A first harness iteration omitted the seed lock and produced a `spacy 2.0.17` sdist build failure. That is an artifact of resolving everything from scratch, not a property of core: with the seed in place (as PM does it) both cores lock cleanly. Recorded here so the failure is not misread as evidence later.
 
-Not verified here: a live `hermes plugins install` against a published release, Windows/macOS hosts, the `sdist`/wheel build, and an actual Android (Termux) install. Core `dependency-audit` advisories are unrelated and stay tracked as BUILD-03.
+## CI admission is real, but the pin collision was invisible to it
+
+The `Plugin admission including dependency installation` step runs `hermes plugins validate "$GITHUB_WORKSPACE" --install-deps`, which resolves the installed core plus the plugin as one workspace — the same path PM takes. On the merged commit it reported, on all three matrices:
+
+```
+Resolved 328 packages in 6.47s
+Added hermes-max-integration v2.11.0
+Validation passed.
+```
+
+That is end-to-end admission evidence for this change, not just a local harness result.
+
+It is also why the collision shipped green. The three pinned core fixtures declare playwright as:
+
+| Fixture | `google-meet` extra | playwright requirement |
+|---|---|---|
+| `d337b736` (minimum) | absent | — |
+| `d0288be5` (baseline) | present | `==1.62.0` |
+| `ca13a78` (current) | present | `==1.62.0` |
+
+The first core commit pinning `1.64.0` is `65a82c53f94`, after all three. So no CI matrix could ever reproduce `playwright==1.64.0` vs `playwright==1.62.0`, and DEP-004's contract test passes trivially against every fixture. The test is not wrong — it fires when `CURRENT_CORE_SHA` is bumped onto a core whose pin falls outside our range — but that bump is a deliberate act, not a watch on upstream.
+
+Consequence, recorded rather than silently accepted: making CI a live gate for this class needs `CURRENT_CORE_SHA` moved to a core at or beyond `65a82c53f94`. Not done here — it moves the fixture hundreds of commits and its fallout across the suite is a separate decision. Until then the range itself is the guarantee: `>=1.62,<2` co-installs with any exact `1.x` pin at or above `1.62`, which covers every pin core has published to date.
+
+Not verified here: a live `hermes plugins install` from a published release, Windows/macOS hosts, the `sdist`/wheel build, and an actual Android (Termux) install. Core `dependency-audit` advisories are unrelated and stay tracked as BUILD-03.
