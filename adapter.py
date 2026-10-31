@@ -56,6 +56,14 @@ try:
 except ImportError:  # pragma: no cover — older Hermes core
     _core_base = None  # type: ignore[assignment]
 
+# Core's send router only forwards media to a plugin's standalone sender when the platform
+# declares a StandaloneSendPolicy. Absent the import (older Core), media keeps the old
+# text-only behaviour instead of breaking adapter registration.
+try:
+    from gateway.platforms.send_targets import StandaloneSendPolicy
+except ImportError:  # pragma: no cover — older Hermes core
+    StandaloneSendPolicy = None  # type: ignore[assignment,misc]
+
 from .credential_support import get_max_secret
 from .media_caption import media_caption, transform_max_media_output
 from .mixins.base import _http_body_snippet, _is_retryable_http_status
@@ -87,6 +95,14 @@ logger = logging.getLogger(__name__)
 
 MAX_API_BASE = "https://platform-api2.max.ru"
 MAX_MESSAGE_LENGTH = 4000
+
+# Standalone (out-of-process) send capabilities declared to Core's `send_message` router:
+# media=True routes file sends through `_standalone_send` instead of the text-only generic
+# path; captionable=True lets a single file plus short text ride as the media caption so the
+# recipient sees one bubble instead of "text message + bare file".
+_STANDALONE_SEND_POLICY = (
+    StandaloneSendPolicy(label="Max", media=True, captionable=True) if StandaloneSendPolicy else None
+)
 # Text budget per chunk: MAX_MESSAGE_LENGTH minus headroom for the "(i/n)\n"
 # numbering prefix that the sender prepends to every chunk of a split message.
 OUTBOUND_CHUNK_MARGIN = 100
@@ -3683,6 +3699,13 @@ def register(ctx) -> None:
         apply_yaml_config_fn=_apply_yaml_config,
         cron_deliver_env_var="MAX_HOME_CHANNEL",
         standalone_sender_fn=_standalone_send,
+        # Core routes `send_message`/`hermes send` media through the plugin's standalone
+        # sender only when the platform opts in with a StandaloneSendPolicy. Without this
+        # declaration Core's generic router rejects media-only sends ("only media
+        # attachments") and silently drops attachments when text is present, so a file
+        # requested from another chat (desktop/telegram) never reaches MAX.
+        # captionable=True lets a single file + short text ride on the media caption.
+        standalone_send=_STANDALONE_SEND_POLICY if StandaloneSendPolicy else None,
         allowed_users_env="MAX_ALLOWED_USERS",
         allow_all_env="MAX_ALLOW_ALL_USERS",
         max_message_length=MAX_MESSAGE_LENGTH,

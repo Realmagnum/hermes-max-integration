@@ -74,12 +74,17 @@ async def _standalone_send(
     thread_id: str | None = None,
     media_files: list[tuple[str, bool]] | None = None,
     force_document: bool = False,
+    caption: str | None = None,
 ) -> dict:
     """Standalone sender contract for send_message/cron delivery.
 
     Supports native file delivery from Core-provided ``media_files`` descriptors:
     uploads each file via the 3-step MAX protocol, and attaches them to the
     outgoing message. Works with or without a running gateway adapter.
+
+    ``caption`` is set by Core when a single file plus short text should ride on the
+    media bubble (``StandaloneSendPolicy.captionable``); the text is then not sent as
+    a separate message, so the recipient sees one message instead of two.
     """
     del thread_id, force_document
 
@@ -142,19 +147,23 @@ async def _standalone_send(
                 _upload_token = ""
 
                 # Step 1: get upload URL
-                # For audio/video: use proper type so /uploads returns a token
-                # For file/image: use type=file for reliability
-                _upload_type = _attach_type if _attach_type in ("audio", "video") else "file"
+                # The upload `type` decides which CDN backend issues the token, and the
+                # attachment `type` in step 3 must match it: a token issued by `type=file`
+                # (fu.oneme.ru) is rejected by MAX as "Invalid photo token" when sent as an
+                # image attachment. So image/audio/video upload with their own type, and
+                # anything else (documents, archives, unknown extensions) goes as `file`.
+                _upload_type = _attach_type if _attach_type in ("audio", "video", "image") else "file"
                 try:
                     resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": _upload_type}, headers=headers)
                     if resp.status_code != 200:
                         logger.warning("MAX: upload URL request failed for %s (status %d)", media_path, resp.status_code)
-                        # Fall back to type=file for audio/video
-                        if _upload_type in ("audio", "video"):
+                        # Fall back to type=file — the token then only works as a file attachment.
+                        if _upload_type != "file":
                             resp = await client.post(f"{MAX_API_BASE}/uploads", params={"type": "file"}, headers=headers)
                             if resp.status_code != 200:
                                 continue
                             _upload_type = "file"
+                            _attach_type = "file"
                         else:
                             continue
                     upload_json = resp.json()
@@ -243,7 +252,7 @@ async def _standalone_send(
                 target_id = parts[1] if len(parts) > 1 else chat_id
                 params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
                 body = {
-                    "text": media_caption(None, media_path),
+                    "text": media_caption(caption, media_path),
                     "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
                 }
                 _sent_ok = False
@@ -277,6 +286,11 @@ async def _standalone_send(
                 if not _sent_ok:
                     continue
                 delivered_media += 1
+                # The caption is the caller's text riding on this message: once it is
+                # delivered the text counts as delivered, otherwise a captionable send
+                # would report text_delivered=False even though the user read the text.
+                if caption and caption.strip():
+                    text_delivered = True
 
             if delivered_media != requested_media:
                 return delivery_error("MAX attachment delivery incomplete")

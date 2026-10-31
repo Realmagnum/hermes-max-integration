@@ -33,7 +33,7 @@ Evidence markers (as in the backlog): **S** — static code/document comparison,
 
 Setup defaults to private access and preserves an existing allowlist unless the operator explicitly selects allow-all. A closed empty allowlist denies incoming events before media downloads or Core dispatch. Tokens and webhook secrets are resolved through the active Hermes secret scope; a missing scoped secret never falls back to another profile's environment credential.
 
-The bundled Russian Trusted Root CA is added only to MAX API and upload clients. Attachment downloads use the normal system trust context and retain hostname allowlisting, public-IP pinning and redirect restrictions. The plugin does not modify Hermes Core source; unsupported media-only routing is a Core capability limitation, not a reason to apply a local patch.
+The bundled Russian Trusted Root CA is added only to MAX API and upload clients. Attachment downloads use the normal system trust context and retain hostname allowlisting, public-IP pinning and redirect restrictions. The plugin does not modify Hermes Core source; media routing is enabled through the public `StandaloneSendPolicy` registration API, not a local Core patch.
 
 | Setting | Default | Risk | Set it to |
 |---|---|---|---|
