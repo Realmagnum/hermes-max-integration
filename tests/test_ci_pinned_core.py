@@ -22,8 +22,8 @@ def test_minimum_baseline_and_current_are_independent_exact_source_fixtures():
     assert next(core["sha"] for core in cores if core["label"] == "current") == (
         WORKFLOW["env"]["CURRENT_CORE_SHA"]
     )
-    assert CI.count("fetch --no-tags --depth=1 origin") == 2
-    assert CI.count('test "$(git -C /tmp/hermes-core rev-parse HEAD)" =') == 2
+    assert CI.count("fetch --no-tags --depth=1 origin") == 1
+    assert CI.count('test "$(git -C /tmp/hermes-core rev-parse HEAD)" =') == 1
     assert "git clone --depth 1" not in CI
 
 

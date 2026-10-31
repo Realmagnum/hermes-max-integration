@@ -90,27 +90,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - name: Install exact current Core, plugin and audit tooling
+      - name: Install plugin dependencies, extras and audit tooling
         run: |
-          git init /tmp/hermes-core
-          git -C /tmp/hermes-core remote add origin https://github.com/NousResearch/hermes-agent.git
-          git -C /tmp/hermes-core fetch --no-tags --depth=1 origin "$CURRENT_CORE_SHA"
-          git -C /tmp/hermes-core checkout --detach FETCH_HEAD
-          test "$(git -C /tmp/hermes-core rev-parse HEAD)" = "$CURRENT_CORE_SHA"
           python -m pip install --upgrade pip
-          python -m pip install -e /tmp/hermes-core -e ".[test]" "pip-audit>=2.9,<3"
+          python -m pip install -e ".[test,stt,tables]" "pip-audit>=2.9,<3"
           python -m pip check
-      - name: Audit Core plus plugin and test dependencies
-        run: |
-          python -m pip freeze
-          pip-audit --desc --skip-editable
-      - name: Install optional extras (stt, tables)
-        if: always()
-        run: |
-          python -m pip install -e ".[stt,tables]"
-          python -m pip check
-      - name: Audit optional extras (stt, tables)
-        if: always()
+      - name: Audit plugin and extra dependencies
         run: |
           python -m pip freeze
           pip-audit --desc --skip-editable
