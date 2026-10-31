@@ -60,6 +60,17 @@ for _name, _module in list(sys.modules.items()):
     if _name.startswith(_PREFIX) and _module is not None:
         sys.modules["max." + _name[len(_PREFIX):]] = _module
 
+# When tests import Core gateway modules (e.g. `gateway.run`), Core's bootstrap
+# runs `site.addsitedir()` on the system store venv. On developer hosts where
+# the host runs a different Python version (e.g. Python 3.14 store vs Python 3.12
+# test venv), that puts foreign C-extensions on `sys.path`. Pre-importing PIL
+# here pins the local environment's native extensions in `sys.modules`.
+try:
+    import PIL
+    import PIL.Image  # noqa: F401
+except ImportError:
+    pass
+
 
 @pytest.fixture
 def max_config():

@@ -30,7 +30,7 @@ stt = ["faster-whisper>=1.0,<2; sys_platform != 'android'"]
 # the ceiling below the next major, so any core pin inside the range resolves.
 tables = [
     "playwright>=1.62,<2; sys_platform != 'android'",
-    "pillow>=12.3,<13",
+    "pillow>=12.3,<14",
     "wcwidth>=0.2,<1",
 ]
 dev = [
