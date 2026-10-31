@@ -1,9 +1,12 @@
 """Actual Core send router -> registered MAX sender -> mocked HTTP boundary.
 
-The plugin declares ``StandaloneSendPolicy(media=True, captionable=True)``, so Core's
-public dispatch seam routes media — including media-only requests — to the registered
-MAX standalone sender. These tests pin that contract against the real Core router plus
-the real plugin registration; no Core router/sender function is replaced by a mock.
+On a Core whose ``PlatformEntry`` accepts a standalone send policy the plugin declares
+``StandaloneSendPolicy(media=True, captionable=True)``, so the public dispatch seam
+routes media — including media-only requests — to the registered MAX standalone sender.
+Core 0.21.4 has no such kwargs: there the plugin must still register cleanly and media
+keeps the old text-only behaviour, which ``media_route_supported`` below distinguishes.
+These tests pin both contracts against the real Core router plus the real plugin
+registration; no Core router/sender function is replaced by a mock.
 """
 
 import json
@@ -29,6 +32,12 @@ def registered_max(monkeypatch, tmp_path):
     adapter.register(PluginContext(manifest, manager))
     assert registry.get("max").standalone_sender_fn is adapter._standalone_send
     return registry
+
+
+@pytest.fixture
+def media_route_supported():
+    """Whether this Core can route media to a plugin sender (False on Core 0.21.4)."""
+    return adapter._STANDALONE_POLICY_SUPPORTED
 
 
 @pytest.fixture
@@ -109,7 +118,8 @@ def max_http_boundary(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["public_dispatch", "adapter_dispatch"])
 @pytest.mark.parametrize("mode", ["text", "text_and_file", "media_only"])
-async def test_actual_core_dispatch_contract(registered_max, max_http_boundary, tmp_path, route, mode):
+async def test_actual_core_dispatch_contract(registered_max, max_http_boundary, tmp_path,
+                                            media_route_supported, route, mode):
     from gateway.config import Platform, PlatformConfig
     from tools.send_message_tool import _send_to_platform, _send_via_adapter
 
@@ -122,8 +132,15 @@ async def test_actual_core_dispatch_contract(registered_max, max_http_boundary, 
     dispatcher = _send_to_platform if route == "public_dispatch" else _send_via_adapter
     result = await dispatcher(Platform("max"), pconfig, "user:42", text, media_files=media_files)
 
-    # The declared media policy makes the public router reach the plugin sender for
-    # media-only requests too — no Core edit, no output-hook workaround needed.
+    # On a Core without the standalone-policy kwargs the public seam still rejects
+    # media-only input before transport; the adapter route keeps working there.
+    if route == "public_dispatch" and mode == "media_only" and not media_route_supported:
+        assert "only media attachments" in result["error"]
+        assert not [r for r in requests if r.url.path == "/messages"]
+        return
+
+    # With the declared policy the public router reaches the plugin sender for media-only
+    # requests too — no Core edit, no output-hook workaround needed.
     assert result["success"] is True
     messages = [json.loads(request.content) for request in requests if request.url.path == "/messages"]
     if media_files:
@@ -146,7 +163,8 @@ async def test_actual_core_dispatch_contract(registered_max, max_http_boundary, 
 
 
 @pytest.mark.asyncio
-async def test_image_upload_type_matches_attachment_type(registered_max, max_http_boundary, tmp_path):
+async def test_image_upload_type_matches_attachment_type(registered_max, max_http_boundary, tmp_path,
+                                                         media_route_supported):
     """Regression: a `type=file` token sent as an image attachment is rejected by MAX.
 
     MAX answers ``{"code": "proto.payload", "message": "Invalid photo token provided"}``
@@ -155,6 +173,9 @@ async def test_image_upload_type_matches_attachment_type(registered_max, max_htt
     """
     from gateway.config import Platform, PlatformConfig
     from tools.send_message_tool import _send_to_platform
+
+    if not media_route_supported:
+        pytest.skip("this Core cannot route media-only requests to a plugin sender")
 
     requests, uploads, _failure = max_http_boundary
     image = tmp_path / "chart.png"
@@ -175,9 +196,13 @@ async def test_image_upload_type_matches_attachment_type(registered_max, max_htt
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_kind", ["missing", "upload", "cdn", "send", "partial"])
-async def test_actual_core_router_reports_incomplete_delivery(registered_max, max_http_boundary, tmp_path, failure_kind):
+async def test_actual_core_router_reports_incomplete_delivery(registered_max, max_http_boundary, tmp_path,
+                                                              media_route_supported, failure_kind):
     from gateway.config import Platform, PlatformConfig
     from tools.send_message_tool import _send_to_platform
+
+    if not media_route_supported:
+        pytest.skip("captionable text+media delivery is a standalone-policy contract")
 
     requests, _uploads, failure = max_http_boundary
     media = tmp_path / "delivery-file.txt"
@@ -216,6 +241,51 @@ async def test_actual_core_router_reports_incomplete_delivery(registered_max, ma
         if failure_kind != "send":
             # nothing reached the message endpoint (only the upload handshake may have)
             assert not [r for r in requests if r.url.path == "/messages"]
+
+
+# ── Capability probe: registration must survive a Core without the policy API ──
+# Core 0.21.4 ships neither `send_targets.StandaloneSendPolicy` nor a
+# `standalone_send` field on `PlatformEntry`. Passing the keyword there raises
+# TypeError inside `register()` and takes the whole platform down, so the adapter
+# probes both and omits the keyword. CI pins that Core; these tests pin the probe.
+
+def test_probe_is_false_when_entry_lacks_the_field(monkeypatch):
+    """A Core with the policy class but an entry that cannot store it must read as unsupported."""
+    from dataclasses import dataclass
+
+    from gateway import platform_registry as registry_module
+
+    @dataclass
+    class EntryWithoutPolicy:
+        name: str = ""
+        label: str = ""
+
+    monkeypatch.setattr(registry_module, "PlatformEntry", EntryWithoutPolicy, raising=False)
+    assert adapter._core_accepts_standalone_policy() is False
+
+
+def test_probe_is_false_when_policy_module_is_absent(monkeypatch):
+    """Core 0.21.4 has no `gateway.platforms.send_targets` at all."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "gateway.platforms.send_targets", None)
+    assert adapter._core_accepts_standalone_policy() is False
+
+
+def test_reload_without_policy_api_omits_register_keyword(monkeypatch):
+    """Reloading the adapter against a policy-less Core leaves the keyword out entirely."""
+    import importlib
+    import sys
+
+    monkeypatch.setitem(sys.modules, "gateway.platforms.send_targets", None)
+    reloaded = importlib.reload(adapter)
+    try:
+        assert reloaded._STANDALONE_POLICY_SUPPORTED is False
+        assert reloaded._PLATFORM_ENTRY_EXTRA == {}
+        assert reloaded.StandaloneSendPolicy is None
+    finally:
+        monkeypatch.undo()
+        importlib.reload(adapter)  # restore the real module state for the other tests
 
 
 @pytest.mark.asyncio

@@ -57,11 +57,34 @@ except ImportError:  # pragma: no cover — older Hermes core
     _core_base = None  # type: ignore[assignment]
 
 # Core's send router only forwards media to a plugin's standalone sender when the platform
-# declares a StandaloneSendPolicy. Absent the import (older Core), media keeps the old
-# text-only behaviour instead of breaking adapter registration.
-try:
+# declares a StandaloneSendPolicy on `register_platform`. Two things vary by Core version:
+# the policy class may not exist, and `PlatformEntry` may not accept the `standalone_send`
+# keyword at all (Core 0.21.4 has neither). Probe BOTH, because importing the class
+# successfully says nothing about the registration entry accepting it — asserting otherwise
+# raises TypeError inside `register()` and takes the whole plugin down on minimum Core.
+def _core_accepts_standalone_policy() -> bool:
+    """True only when this Core can store a StandaloneSendPolicy on a platform entry."""
+    try:
+        from gateway.platform_registry import PlatformEntry
+        from gateway.platforms.send_targets import StandaloneSendPolicy  # noqa: F401
+    except ImportError:  # pragma: no cover — older Hermes core
+        return False
+    fields = getattr(PlatformEntry, "__dataclass_fields__", None)
+    if isinstance(fields, dict):
+        return "standalone_send" in fields
+    try:  # not a dataclass: fall back to the constructor signature
+        import inspect
+
+        return "standalone_send" in inspect.signature(PlatformEntry).parameters
+    except (TypeError, ValueError):  # pragma: no cover — unreadable signature
+        return False
+
+
+_STANDALONE_POLICY_SUPPORTED = _core_accepts_standalone_policy()
+
+if _STANDALONE_POLICY_SUPPORTED:
     from gateway.platforms.send_targets import StandaloneSendPolicy
-except ImportError:  # pragma: no cover — older Hermes core
+else:  # pragma: no cover — older Hermes core
     StandaloneSendPolicy = None  # type: ignore[assignment,misc]
 
 from .credential_support import get_max_secret
@@ -102,6 +125,12 @@ MAX_MESSAGE_LENGTH = 4000
 # recipient sees one bubble instead of "text message + bare file".
 _STANDALONE_SEND_POLICY = (
     StandaloneSendPolicy(label="Max", media=True, captionable=True) if StandaloneSendPolicy else None
+)
+# Only pass `standalone_send` when this Core's PlatformEntry accepts it: on Core 0.21.4 the
+# keyword does not exist and passing it raises TypeError, so the whole registration (and with
+# it the platform) would fail. Media then keeps the old text-only behaviour there.
+_PLATFORM_ENTRY_EXTRA = (
+    {"standalone_send": _STANDALONE_SEND_POLICY} if _STANDALONE_POLICY_SUPPORTED else {}
 )
 # Text budget per chunk: MAX_MESSAGE_LENGTH minus headroom for the "(i/n)\n"
 # numbering prefix that the sender prepends to every chunk of a split message.
@@ -3705,7 +3734,8 @@ def register(ctx) -> None:
         # attachments") and silently drops attachments when text is present, so a file
         # requested from another chat (desktop/telegram) never reaches MAX.
         # captionable=True lets a single file + short text ride on the media caption.
-        standalone_send=_STANDALONE_SEND_POLICY if StandaloneSendPolicy else None,
+        # Omitted entirely on a Core whose PlatformEntry has no `standalone_send` kwarg.
+        **_PLATFORM_ENTRY_EXTRA,
         allowed_users_env="MAX_ALLOWED_USERS",
         allow_all_env="MAX_ALLOW_ALL_USERS",
         max_message_length=MAX_MESSAGE_LENGTH,
