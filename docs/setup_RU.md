@@ -4,7 +4,7 @@
 
 Минимальный поддерживаемый Core: **>=0.21.4**. Минимальный поддерживаемый Python: **>=3.12** (проверено на Python 3.12 с minimum Core 0.21.4 и Python 3.14 с current Core; Python 3.11 не поддерживается). Точный релизный fixture `d337b736aa1e8ebecfab043842d13e4a2d2f48a3` использует Python 3.12: этот релиз требует Python >=3.11,<3.14. Более поздние baseline/current исходники используют Python 3.14. Изолированный кандидат с минимальным Core прошёл свою полную тестовую suite и проверку совместимости зависимостей 2026-10-13; датированные результаты и ограничения сохранены в [evidence приёмки каталога](specs/20261013-catalog-review-137501_RU.md).
 
-Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **905 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
+Версия плагина определяется в `plugin.yaml`. Текущая suite собирает **917 тестов**; `python scripts/check-doc-claims.py` проверяет это число. Collection не означает прохождение тестов и не обновляет историческое evidence кандидатов.
 
 Ответы агента MAX только с MEDIA markers получают первое имя файла через публичный output hook Core до доставки. Прямая отправка вложений также использует имя файла либо `File`, если имя недоступно; авторские подписи сохраняются. См. [контракты подписей](specs/20261013-media-caption_RU.md). Прямой `hermes send` и пути cron без этого hook по-прежнему требуют текста, например `report.pdf MEDIA:/path/report.pdf`.
 
@@ -64,6 +64,8 @@ python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profi
 | `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | ❌ | `10` | Лимит числа вложений одного update |
 | `MAX_INBOUND_MEDIA_TIMEOUT` | ❌ | `30` | Таймаут загрузки входящего медиа в секундах |
 | `MAX_INBOUND_MEDIA_CONCURRENCY` | ❌ | `4` | Параллелизм загрузки входящего медиа |
+| `MAX_MEDIA_READY_ATTEMPTS` | ❌ | `8` | Outbound attachment readiness attempts (1–12); HTTP 400 attachment.not.ready only |
+| `MAX_MEDIA_READY_TIMEOUT` | ❌ | `90` | Readiness budget including POST time, seconds (0.1–300), after upload |
 
 ## Внутренние константы
 
@@ -111,6 +113,10 @@ python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profi
 | `inbound_media_max_attachments` | `MAX_INBOUND_MEDIA_MAX_ATTACHMENTS` | Лимит числа вложений одного update |
 | `inbound_media_timeout` | `MAX_INBOUND_MEDIA_TIMEOUT` | Таймаут загрузки входящего медиа |
 | `inbound_media_concurrency` | `MAX_INBOUND_MEDIA_CONCURRENCY` | Параллелизм загрузки входящего медиа |
+
+`platforms.max.media_ready_attempts` and `platforms.max.media_ready_timeout`
+map to the corresponding `MAX_MEDIA_READY_*` variables above. Environment takes
+precedence. Invalid or below-minimum values use defaults; above-maximum values are capped.
 
 ## Режимы подключения
 

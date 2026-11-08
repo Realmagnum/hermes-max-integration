@@ -233,7 +233,13 @@ curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
 
 While the CDN is still processing the file, `POST /messages` may return
 `{"code": "attachment.not.ready", "message": "..."}` — the adapter retries the
-send (2/4/6 s delays).
+send only after HTTP 400 with this exact code, keeping the same uploaded token
+and payload. Defaults: 8 attempts, waits 2/4/8/16/16/16/16 s, at most 90 s
+including message POST time. Other errors, malformed responses, timeouts and
+cancellation do not trigger a resend or re-upload. Final logs contain HTTP status
+and a safe code category, never response bodies or signed URLs. Configure
+`platforms.max.media_ready_attempts` (1–12) and `media_ready_timeout` (0.1–300 s).
+The standalone sender has a separate retry policy and is unchanged.
 
 ### SSRF Protection
 

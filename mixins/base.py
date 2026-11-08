@@ -36,6 +36,8 @@ class MaxBaseMixin(BasePlatformAdapter):
     """
 
     _http_client: httpx.AsyncClient | None
+    _media_ready_attempts: int
+    _media_ready_timeout: float
     _token: str
     _message_queue: asyncio.Queue[MessageEvent]
     _running: bool
