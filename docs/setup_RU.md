@@ -104,6 +104,8 @@ python scripts/check-session-routing.py --user-id OWNER_MAX_USER_ID --load-profi
 | `home_channel` | `MAX_HOME_CHANNEL` | Получатель cron/send_message |
 | `table_as_image` | `MAX_TABLE_AS_IMAGE` | Рендерить Markdown-таблицы в PNG |
 | `edit_throttle` | `MAX_EDIT_THROTTLE` | Минимальный интервал streaming-правок |
+| `media_ready_attempts` | `MAX_MEDIA_READY_ATTEMPTS` | Число попыток при неготовом вложении (по умолчанию 8, максимум 12) |
+| `media_ready_timeout` | `MAX_MEDIA_READY_TIMEOUT` | Общий бюджет ожидания вложения в секундах (по умолчанию 90, максимум 300) |
 | `dedup_ttl` | `MAX_DEDUP_TTL` | TTL дедупликации входящих событий |
 | `overload_policy` | `MAX_OVERLOAD_POLICY` | Поведение очереди при перегрузке |
 | `download_allowed_hosts` | `MAX_DOWNLOAD_ALLOWED_HOSTS` | Строгий список разрешённых оператором download-хостов |

@@ -104,6 +104,8 @@ YAML keys are promoted to adapter `extra`; environment values take precedence.
 | `home_channel` | `MAX_HOME_CHANNEL` | cron/send_message target |
 | `table_as_image` | `MAX_TABLE_AS_IMAGE` | Render markdown tables as PNG |
 | `edit_throttle` | `MAX_EDIT_THROTTLE` | Minimum streaming-edit interval |
+| `media_ready_attempts` | `MAX_MEDIA_READY_ATTEMPTS` | Maximum attachment-not-ready send attempts (default 8, cap 12) |
+| `media_ready_timeout` | `MAX_MEDIA_READY_TIMEOUT` | Overall attachment-readiness budget in seconds (default 90, cap 300) |
 | `dedup_ttl` | `MAX_DEDUP_TTL` | Incoming-event deduplication TTL |
 | `overload_policy` | `MAX_OVERLOAD_POLICY` | Queue behavior under overload |
 | `download_allowed_hosts` | `MAX_DOWNLOAD_ALLOWED_HOSTS` | Strict operator download-host allowlist |
