@@ -231,9 +231,7 @@ curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
   }'
 ```
 
-While the CDN is still processing the file, `POST /messages` may return
-`{"code": "attachment.not.ready", "message": "..."}` — the adapter retries the
-send (2/4/6 s delays).
+Пока CDN обрабатывает файл, `POST /messages` может вернуть HTTP 400 с кодом `attachment.not.ready`. Адаптер повторяет отправку только при таком ответе, используя тот же токен загруженного файла и то же тело запроса. По умолчанию доступно до 8 попыток с паузами 2/4/8/16/16/16/16 секунд. Общий лимит в 90 секунд включает время запросов POST. При других ошибках, некорректных ответах, таймауте или отмене отправка и загрузка файла не повторяются. Для ошибок с HTTP-ответом в журнал попадают статус и категория ошибки. Тела ответов и подписанные URL в журнал не попадают. Лимиты задаются параметрами `platforms.max.media_ready_attempts` (1–12) и `platforms.max.media_ready_timeout` (0,1–300 секунд). При отправке через отдельный обработчик `standalone_sender_fn` действуют его собственные правила повторов.
 
 ### SSRF Protection
 

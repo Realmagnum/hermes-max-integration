@@ -158,9 +158,9 @@ class MediaUploadMixin(MaxBaseMixin):
     ) -> SendResult:
         """Upload file then send as attachment.
 
-        Retries up to 3 times with exponential backoff (2/4/6s) when MAX
-        returns ``attachment.not.ready`` — the CDN needs time to scan
-        and validate the uploaded file before it can be attached.
+        Upload once, then retry only an explicit HTTP 400 attachment.not.ready.
+        Keep the first 2/4s waits, then cap backoff at 16s, within a total
+        readiness budget (including POST time). Ambiguous sends are never retried.
         """
         if not self._http_client:
             return SendResult(success=False, error="Not connected")
@@ -199,14 +199,24 @@ class MediaUploadMixin(MaxBaseMixin):
         if reply_to:
             body["link"] = {"type": "REPLY", "mid": reply_to}
 
-        max_retries = 3
-        for attempt in range(max_retries):
+        max_attempts = self._media_ready_attempts
+        deadline = asyncio.get_running_loop().time() + self._media_ready_timeout
+        for attempt in range(max_attempts):
             try:
-                if attempt > 0:
-                    delay = 2.0 * (2 ** (attempt - 1))  # 2s, 4s, 6s
+                remaining = deadline - asyncio.get_running_loop().time()
+                delay = min(2.0 * (2 ** (attempt - 1)), 16.0) if attempt else 0
+                if remaining <= delay:
+                    break
+                if delay:
                     await asyncio.sleep(delay)
-
-                resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                # A timeout may mean MAX accepted the POST: do not resend it.
+                resp = await asyncio.wait_for(
+                    self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body),
+                    timeout=remaining,
+                )
                 resp.raise_for_status()
                 d = resp.json()
                 rec = d.get("message", {}).get("recipient", {})
@@ -217,22 +227,26 @@ class MediaUploadMixin(MaxBaseMixin):
                 mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
                 return SendResult(success=True, message_id=mid, raw_response=d)
             except httpx.HTTPStatusError as e:
-                if e.response.status_code == 400:
-                    try:
-                        err_body = e.response.json()
-                        code = err_body.get("code", "")
-                        if code == "attachment.not.ready" and attempt + 1 < max_retries:
-                            logger.info("MAX: upload not ready (attempt %d/%d), retrying…", attempt + 1, max_retries)
-                            continue
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                logger.error("MAX: _upload_send failed: %s", e)
-                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
-            except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                logger.error("MAX: _upload_send failed: %s", e)
-                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=True)
+                code = "unavailable"
+                try:
+                    err_body = e.response.json()
+                    raw_code = err_body.get("code") if isinstance(err_body, dict) else None
+                    # Never log arbitrary response text, URLs, tokens or API messages.
+                    code = "attachment.not.ready" if raw_code == "attachment.not.ready" else "other"
+                except (ValueError, TypeError):
+                    code = "invalid-json"
+                if (e.response.status_code == 400 and code == "attachment.not.ready"
+                        and attempt + 1 < max_attempts):
+                    logger.info("MAX: upload not ready (attempt %d/%d), retrying…", attempt + 1, max_attempts)
+                    continue
+                logger.error("MAX: _upload_send failed: status=%d code=%s attempts=%d", e.response.status_code, code, attempt + 1)
+                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
+            except Exception as e:  # noqa: BLE001 — ambiguous send must not be repeated
+                logger.error("MAX: _upload_send failed: error_type=%s attempts=%d", type(e).__name__, attempt + 1)
+                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
 
-        return SendResult(success=False, error="Upload-send failed: attachment still not ready after retries", retryable=True)
+        logger.error("MAX: _upload_send failed: code=attachment.not.ready readiness budget exhausted")
+        return SendResult(success=False, error="Upload-send failed: attachment readiness budget exhausted", retryable=False)
 
     async def _upload(self, file_path: str, media_type: str) -> str | None:
         """Two-step upload: get upload URL -> POST file (multipart) -> return token."""

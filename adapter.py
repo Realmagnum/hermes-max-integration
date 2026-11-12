@@ -868,6 +868,18 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         )
         self._edit_states: dict[str, _StreamEditState] = {}
 
+        # Outbound CDN readiness: upload once; only explicit not-ready sends repeat.
+        self._media_ready_attempts = _coerce_int(
+            os.getenv("MAX_MEDIA_READY_ATTEMPTS") or extra.get("media_ready_attempts"),
+            8, minimum=1, maximum=12,
+        )
+        self._media_ready_timeout = _coerce_float(
+            os.getenv("MAX_MEDIA_READY_TIMEOUT") or extra.get("media_ready_timeout"),
+            90.0, minimum=0.1, maximum=300.0,
+        )
+        if not 0.1 <= self._media_ready_timeout <= 300.0:  # NaN is not a valid budget.
+            self._media_ready_timeout = 90.0
+
         # Media download security and limits (SEC-02, SEC-03, SEC-07).
         # An operator-supplied allowlist is deliberately strict.  Without one,
         # arbitrary public HTTPS origins are admitted only after DNS validation
@@ -1633,16 +1645,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             if command == '/sessions':
                 await self._handle_cross_sessions(text, scoped_chat_id, user_id)
                 return None
-            elif command == '/resume':
-                if '--all' not in text and '--cross-room' not in text:
-                    parts = text.split(maxsplit=1)
-                    if len(parts) == 1:
-                        # /resume with no args → picker using configured scope
-                        await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
-                        return None
-                    else:
-                        # /resume <target> → rewrite with --all for core
-                        text = f"/resume --all {parts[1].strip()}"
+            elif command == '/resume' and '--all' not in text and '--cross-room' not in text:
+                parts = text.split(maxsplit=1)
+                if len(parts) == 1:
+                    # /resume with no args → picker using configured scope
+                    await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
+                    return None
+                else:
+                    # /resume <target> → rewrite with --all for core
+                    text = f"/resume --all {parts[1].strip()}"
 
         if not text and not media_urls:
             return None

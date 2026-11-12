@@ -34,6 +34,11 @@ def _make_httpx_response(status=200, json_data=None):
 class TestUploadSendRetry:
     """_upload_send retries on attachment.not.ready."""
 
+    @pytest.fixture(autouse=True)
+    def no_real_backoff(self, monkeypatch):
+        from max.mixins import media_upload
+        monkeypatch.setattr(media_upload.asyncio, "sleep", AsyncMock())
+
     def _make_adapter(self):
         return _mock_adapter()
 
