@@ -368,6 +368,31 @@ def _safe_url_for_log(url: str) -> str:
     return url
 
 
+def _collect_audio_transcriptions(obj: Any, depth: int = 0) -> list[str]:
+    """Collect MAX-provided transcriptions of voice/audio attachments.
+
+    MAX attaches its own speech-to-text result to audio attachments in the
+    ``transcription`` field (present in Bot API schema .0.33; the openclaw-max
+    adapter reads it as optional). Preferring it skips the audio download and
+    the local STT pass entirely; the download+STT pipeline stays as the
+    fallback for attachments without a transcription.
+    """
+    found: list[str] = []
+    if depth > 8:
+        return found
+    if isinstance(obj, dict):
+        atype = str(obj.get("type", "")).lower()
+        value = obj.get("transcription")
+        if atype in ("audio", "voice") and isinstance(value, str) and value.strip():
+            found.append(value.strip())
+        for v in obj.values():
+            found.extend(_collect_audio_transcriptions(v, depth + 1))
+    elif isinstance(obj, list):
+        for item in obj:
+            found.extend(_collect_audio_transcriptions(item, depth + 1))
+    return found
+
+
 def _find_audio_url_direct(obj: Any, depth: int = 0) -> str | None:
     """Recursively search for an audio/voice download URL in a MAX update.
 
@@ -1532,6 +1557,14 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
 
         text = (body.get("text") or message.get("text") or "").strip()
 
+        # Prefer MAX's own transcription of voice/audio attachments: it is
+        # surfaced as text below and the audio download is skipped in
+        # _extract_inbound_media, so local STT never runs for these.
+        _max_transcripts = _collect_audio_transcriptions(update)
+        if _max_transcripts:
+            _joined = " / ".join(_max_transcripts)
+            text = (text + f"\n[Voice]: {_joined}").strip() if text else f"[Voice]: {_joined}"
+
         chat = update.get("chat", {}) or {}
         chat_id_str = str(
             recipient.get("chat_id")
@@ -1612,6 +1645,12 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             for att in attachments:
                 atype = att.get("type", "")
                 payload_att = att.get("payload", {})
+                if atype in ("audio", "voice"):
+                    # MAX transcription already surfaced as text upstream;
+                    # skip downloading and running local STT for it.
+                    _tr = att.get("transcription")
+                    if isinstance(_tr, str) and _tr.strip():
+                        continue
                 if atype == "image":
                     url = payload_att.get("url", "")
                     text = (text + f"\n[Image: {url}]").strip() if text else f"[Image: {url}]"
@@ -1740,6 +1779,13 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             kind = self._attachment_kind(attachment)
             if kind not in {"audio", "voice", "image", "document"}:
                 continue
+            if kind in ("audio", "voice"):
+                # Transcription already surfaced as text by
+                # _collect_audio_transcriptions in _on_message_created —
+                # skip the download so local STT is not run needlessly.
+                _tr = attachment.get("transcription")
+                if isinstance(_tr, str) and _tr.strip():
+                    continue
             media_ref = self._find_first_url(attachment) or f"object:{id(attachment)}"
             if media_ref in seen_media_refs:
                 continue
