@@ -1645,16 +1645,15 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             if command == '/sessions':
                 await self._handle_cross_sessions(text, scoped_chat_id, user_id)
                 return None
-            elif command == '/resume':
-                if '--all' not in text and '--cross-room' not in text:
-                    parts = text.split(maxsplit=1)
-                    if len(parts) == 1:
-                        # /resume with no args → picker using configured scope
-                        await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
-                        return None
-                    else:
-                        # /resume <target> → rewrite with --all for core
-                        text = f"/resume --all {parts[1].strip()}"
+            elif command == '/resume' and '--all' not in text and '--cross-room' not in text:
+                parts = text.split(maxsplit=1)
+                if len(parts) == 1:
+                    # /resume with no args → picker using configured scope
+                    await self._handle_cross_sessions('/sessions', scoped_chat_id, user_id)
+                    return None
+                else:
+                    # /resume <target> → rewrite with --all for core
+                    text = f"/resume --all {parts[1].strip()}"
 
         if not text and not media_urls:
             return None
