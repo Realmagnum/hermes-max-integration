@@ -90,12 +90,16 @@ def validate(args):
     fields(args, {"text", "attachments", "format", "notify", "link"}, {"attachments"})
     if len(json.dumps(args, ensure_ascii=False).encode()) > 65536:
         raise ValueError("Attachment request exceeds 64 KiB")
+    args = json.loads(json.dumps(args))
+    for key in ("text", "format", "link"):
+        if args.get(key, False) is None:
+            args.pop(key)
     if "text" in args:
         string(args["text"], 4000, 0)
     if "format" in args and args["format"] not in {"markdown", "html"}:
         raise ValueError("Unknown text format")
-    if "notify" in args and args["notify"] is not True:
-        raise ValueError("notify=false unsupported: current target may be a channel")
+    if "notify" in args and type(args["notify"]) is not bool:
+        raise ValueError("notify must be boolean")
     if "link" in args:
         fields(args["link"], {"type", "mid"}, {"type", "mid"})
         if args["link"]["type"] not in {"reply", "forward"}:
@@ -127,6 +131,13 @@ def validate(args):
             continue
         fields(a, {"type", "payload"}, {"type", "payload"})
         p = a["payload"]
+        if isinstance(p, dict):
+            nullable = {"image": {"url", "token", "photos"},
+                        "share": {"url", "token"},
+                        "contact": {"name", "contact_id", "vcf_info"}}.get(kind, set())
+            for key in nullable:
+                if p.get(key, False) is None:
+                    p.pop(key)
         if kind == "inline_keyboard":
             keyboard(p)
         elif kind == "contact":
@@ -195,6 +206,16 @@ async def send_attachments(args, **kwargs):
         instance = MaxAdapter(PlatformConfig(enabled=True, token=token, extra={}))
         async with httpx.AsyncClient(headers={"Authorization": token}, timeout=30, verify=get_max_ssl_context(), follow_redirects=False) as client:
             instance._http_client = client
+            if body.get("notify") is False:
+                # user: is an API recipient contract, not an inferred chat sign.
+                from .mixins.base import _message_recipient_params
+                recipient = _message_recipient_params(target)
+                if "chat_id" in recipient:
+                    response = await client.get(f"https://platform-api2.max.ru/chats/{recipient['chat_id']}")
+                    response.raise_for_status()
+                    metadata = response.json()
+                    if metadata.get("type") not in {"chat", "group", "dialog", "dm"}:
+                        raise ValueError("notify=false requires confirmed DM/group; channel or unknown target refused")
             for i, item in enumerate(body["attachments"]):
                 if "path" in item:
                     uploaded = await instance._upload(item["path"], item["type"])
@@ -214,9 +235,9 @@ SCHEMA = {
     "name": "max_send_attachments",
     "description": "Send validated MAX Bot API attachments ONLY to the current MAX conversation. Types: image/video/audio/file (payload token or local absolute path; image also URL/photos), sticker, contact, inline_keyboard, location, share. No arbitrary destination/API. See plugin docs attachments.md for field variants and combinations. Never automatically resend an uncertain failure.",
     "parameters": {"type": "object", "additionalProperties": False, "required": ["attachments"],
-                   "properties": {"text": {"type": "string", "maxLength": 4000},
+                   "properties": {"text": {"type": ["string", "null"], "maxLength": 4000},
                                   "attachments": {"type": "array", "minItems": 1, "maxItems": 12, "items": {"type": "object", "additionalProperties": False, "required": ["type"], "properties": {"type": {"type": "string", "enum": sorted(TYPES)}, "payload": {"type": "object", "description": "token for media/share; URL alternatively for image/share/sticker; code for sticker; name plus contact_id or vcf_info for contact; buttons: array of button rows for inline_keyboard."}, "path": {"type": "string", "description": "Absolute local media path instead of payload; file safety enforced."}, "latitude": {"type": "number", "minimum": -90, "maximum": 90}, "longitude": {"type": "number", "minimum": -180, "maximum": 180}}}},
-                                  "format": {"type": "string", "enum": ["markdown", "html"]},
-                                  "notify": {"type": "boolean", "enum": [True]},
-                                  "link": {"type": "object"}}},
+                                  "format": {"type": ["string", "null"], "enum": ["markdown", "html", None]},
+                                  "notify": {"type": "boolean"},
+                                  "link": {"type": ["object", "null"]}}},
 }
