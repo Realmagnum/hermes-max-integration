@@ -216,6 +216,8 @@ not a binary `PUT`. The CDN response for `image`/`file`:
 
 ### Step 3: Send a message with the attachment
 
+В adapter sends локальных image/file/audio/video и standalone text/media `chat:<id>` использует `chat_id`, `user:<id>` — `user_id` (явный namespace имеет приоритет), отрицательный ID без префикса — `chat_id`. Положительный ID без префикса по умолчанию использует `user_id`; адаптер сначала преобразует известный DM chat ID через DM user mapping. Standalone senders не имеют DM mapping. Это соглашения плагина, а не синтаксис MAX API с двоеточием.
+
 ```bash
 curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
   -H "Authorization: {access_token}" \

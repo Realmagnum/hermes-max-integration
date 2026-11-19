@@ -3723,6 +3723,9 @@ def interactive_setup() -> None:
 
 def register(ctx) -> None:
     """Plugin entry point — called by the Hermes plugin system."""
+    from .host_bridge import registration_options, setup_cli
+    if hasattr(ctx, "register_cli_command"):
+        ctx.register_cli_command(name="max", help="MAX explicit host operations", setup_fn=setup_cli)
     skill_path = Path(__file__).parent / "skills" / "max-gateway" / "SKILL.md"
 
     ctx.register_platform(
@@ -3747,6 +3750,7 @@ def register(ctx) -> None:
         # captionable=True lets a single file + short text ride on the media caption.
         # Omitted entirely on a Core whose PlatformEntry has no `standalone_send` kwarg.
         **_PLATFORM_ENTRY_EXTRA,
+        **registration_options(),
         allowed_users_env="MAX_ALLOWED_USERS",
         allow_all_env="MAX_ALLOW_ALL_USERS",
         max_message_length=MAX_MESSAGE_LENGTH,
@@ -3764,10 +3768,16 @@ def register(ctx) -> None:
             "tool or Telegram sender is not needed. For a file-only reply, return just the MEDIA line; "
             "the plugin adds the filename (or File) as its caption. Use only an existing file you are allowed "
             "to send; if file creation/access fails, explain the failure instead of inventing a path or claiming delivery. "
+            "For typed attachments (sticker/contact/keyboard/location/share or media tokens), use the "
+            "max_send_attachments tool, restricted to this current MAX conversation; never invent tokens "
+            "or automatically repeat an uncertain send. "
             "Voice messages are automatically transcribed — the transcription appears in the message text. "
             "Keep responses clear and well-structured."
         ),
     )
+
+    from .attachment_tool import SCHEMA, send_attachments
+    ctx.register_tool(name="max_send_attachments", toolset="max", schema=SCHEMA, handler=send_attachments, is_async=True)
 
     ctx.register_hook("transform_llm_output", transform_max_media_output)
 

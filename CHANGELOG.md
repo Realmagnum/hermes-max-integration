@@ -4,6 +4,8 @@ All notable changes to the hermes-max-integration plugin.
 
 ## [Unreleased]
 
+- **Media recipients:** route bare negative IDs through `chat_id` in local image/file/audio/video sends and standalone text/media sends; preserve explicit `user:` / `chat:` targets and resolve known bare DM chat IDs in the adapter. Upload/readiness/security policies are unchanged. [MR-001–004](docs/specs/20261119-media-recipient-routing.md).
+
 - **httpx range expansion:** expand `httpx` upper bound to `<1` (from `<0.29`) in `pyproject.toml` and `plugin.yaml` to prevent lock/admission collisions when Hermes Core upgrades to future 0.x releases.
 - **Dependency audit scope:** scope CI's `dependency-audit` job strictly to the plugin's own dependencies and optional extras (`[test,stt,tables]`). The plugin is decoupled from upstream Core runtime advisories (`pyjwt`, `certifi`, and `browser-harness` pinning `pillow==12.3.0`); plugin-level dependencies audit completely clean.
 - **Pillow range bump:** allow `pillow<14` (raised from `<13`) in extra `tables` and `plugin.yaml` so systems with Pillow 13.0+ (closing CVE-2026-112400 and related advisories) resolve cleanly; all 16 table-rendering and cache-invalidation tests verified against Pillow 13.0.0.

@@ -16,6 +16,7 @@ except (ImportError, ValueError):
     from ssl_support import get_max_ssl_context
 from ..credential_support import get_max_secret
 from ..media_caption import media_caption
+from .base import _message_recipient_params
 from .media_upload import _ALLOWED_UPLOAD_HOSTS
 
 logger = logging.getLogger(__name__)
@@ -38,11 +39,7 @@ async def _send_max_message(pconfig: PlatformConfig, chat_id: str, message: str)
     if not token:
         return SendResult(success=False, error="MAX_BOT_TOKEN not configured")
 
-    parts = chat_id.split(":", 1)
-    target_type = parts[0] if len(parts) > 1 else "user"
-    target_id = parts[1] if len(parts) > 1 else chat_id
-
-    params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+    params = _message_recipient_params(chat_id)
     body = {"text": message[:MAX_MESSAGE_LENGTH], "format": "markdown"}
     headers = {"Authorization": token, "Content-Type": "application/json"}
 
@@ -113,10 +110,7 @@ async def _standalone_send(
         async with httpx.AsyncClient(timeout=httpx.Timeout(120.0), verify=get_max_ssl_context()) as client:
             # 1. Send text message first
             if message and message.strip():
-                parts = chat_id.split(":", 1)
-                target_type = parts[0] if len(parts) > 1 else "user"
-                target_id = parts[1] if len(parts) > 1 else chat_id
-                params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+                params = _message_recipient_params(chat_id)
                 body = {"text": message[:MAX_MESSAGE_LENGTH], "format": "markdown"}
                 resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
                 resp.raise_for_status()
@@ -247,10 +241,7 @@ async def _standalone_send(
                 await asyncio.sleep(UPLOAD_DELAY)
 
                 # Step 3: send message with attachment (with retry for attachment.not.ready)
-                parts = chat_id.split(":", 1)
-                target_type = parts[0] if len(parts) > 1 else "user"
-                target_id = parts[1] if len(parts) > 1 else chat_id
-                params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+                params = _message_recipient_params(chat_id)
                 body = {
                     "text": media_caption(caption, media_path),
                     "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
