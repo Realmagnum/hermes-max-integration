@@ -23,6 +23,36 @@ IO_CAPACITY = 4
 _IO_SLOTS = threading.BoundedSemaphore(IO_CAPACITY)
 
 
+def _start_owned(target, name):
+    """Exactly one owner releases the acquired slot, including failed starts."""
+    semaphore = _IO_SLOTS
+    if not semaphore.acquire(blocking=False):
+        raise OSError("Upload disk capacity exhausted (pending I/O)")
+    lock = threading.Lock()
+    state = ["parent"]
+    def run():
+        with lock:
+            if state[0] != "parent":
+                return  # Launch failed before this thread claimed ownership.
+            state[0] = "worker"
+        try:
+            target()
+        finally:
+            with lock:
+                state[0] = "released"
+                semaphore.release()
+    try:
+        thread = threading.Thread(target=run, name=name, daemon=True)
+        thread.start()
+        return thread
+    except Exception as exc:
+        with lock:
+            if state[0] == "parent":
+                state[0] = "released"
+                semaphore.release()
+        raise OSError("Unable to start upload I/O worker") from exc
+
+
 def upload_timeout(size: int) -> float:
     return min(UPLOAD_TIMEOUT, max(120, 60 + size / 500_000))
 
@@ -63,8 +93,6 @@ def _settle(loop, future, value=None, error=None):
 
 
 async def async_check_upload(path: str, kind: str):
-    if not _IO_SLOTS.acquire(blocking=False):
-        raise OSError("Upload disk capacity exhausted (pending I/O); retry only after recovery")
     loop = asyncio.get_running_loop()
     future = loop.create_future()
     def run():
@@ -72,9 +100,7 @@ async def async_check_upload(path: str, kind: str):
             _settle(loop, future, check_upload(path, kind))
         except Exception as exc:  # noqa: BLE001 — deliver original bounded-admission failure
             _settle(loop, future, error=exc)
-        finally:
-            _IO_SLOTS.release()
-    threading.Thread(target=run, name="max-upload-admission", daemon=True).start()
+    _start_owned(run, "max-upload-admission")
     return await asyncio.wait_for(future, IO_WAIT)
 
 
@@ -86,14 +112,12 @@ class _FileWorker:
     that FD, no executor shutdown wait, no detached tasks or unbounded reaper.
     """
     def __init__(self, path, admitted):
-        if not _IO_SLOTS.acquire(blocking=False):
-            raise OSError("Upload disk capacity exhausted (pending I/O)")
+
         self.path, self.admitted = path, admitted
         self.stop = threading.Event()
         self.commands = queue.Queue(maxsize=1)
         self.loop = asyncio.get_running_loop()
-        self.thread = threading.Thread(target=self._run, name="max-upload-file", daemon=True)
-        self.thread.start()
+        self.thread = _start_owned(self._run, "max-upload-file")
 
     def _run(self):
         fd = None
@@ -123,11 +147,8 @@ class _FileWorker:
                     _settle(self.loop, future, error=exc)
                     break
         finally:
-            try:
-                if fd is not None:
-                    os.close(fd)
-            finally:
-                _IO_SLOTS.release()
+            if fd is not None:
+                os.close(fd)
 
     async def read(self, count, deadline):
         future = self.loop.create_future()
