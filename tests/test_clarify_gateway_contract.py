@@ -4,10 +4,10 @@ import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from tools import clarify_gateway as core
 from tools.clarify_tool import clarify_tool
 
 import adapter
+from tools import clarify_gateway as core
 
 
 def make_adapter():
