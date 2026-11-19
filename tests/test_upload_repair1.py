@@ -20,11 +20,16 @@ async def test_checked_identity_replacement_is_rejected(tmp_path, replacement):
     path = tmp_path / 'owned.bin'
     path.write_bytes(b'a')
     admitted = stream.check_upload(str(path), 'file')
-    path.unlink()
+    # Retain the old inode: unlink+create may immediately reuse its number on Linux,
+    # which is an in-place-identity case, not the inode replacement tested here.
+    original = tmp_path / 'original-kept.bin'
+    path.rename(original)
     if replacement == 'fifo':
         os.mkfifo(path)
     else:
         path.write_bytes(b'b')
+        replacement_info = path.stat()
+        assert (replacement_info.st_dev, replacement_info.st_ino) != admitted.identity[:2]
     writer = Writer()
     task = asyncio.create_task(stream.FilePayload(str(path), admitted).write(writer))
     try:

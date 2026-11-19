@@ -1,4 +1,6 @@
-"""Real current Core host media router; never substitute absent policy with skips."""
+"""Real Core media routing, including the explicit legacy no-policy refusal."""
+
+import importlib.util
 
 import pytest
 from gateway.config import Platform, PlatformConfig
@@ -9,13 +11,15 @@ import adapter
 @pytest.mark.asyncio
 @pytest.mark.parametrize('suffix', ['.pdf', '.mp3'])
 async def test_policy_capable_core_routes_standalone_media(max_api, monkeypatch, tmp_path, suffix):
-    # This test is explicitly run on current Core, not the legacy ca13 export.
+    # The host router moved in newer Core; exercise the real implementation on both.
     import aiohttp
     from gateway import platform_registry as registry_module
-    from gateway.outbound.send import _send_to_platform
     from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
     from max.mixins import standalone
-    assert adapter._STANDALONE_POLICY_SUPPORTED, 'required StandaloneSendPolicy absent'
+    if importlib.util.find_spec('gateway.outbound') is not None:
+        from gateway.outbound.send import _send_to_platform
+    else:
+        from tools.send_message_tool import _send_to_platform
     registry = registry_module.PlatformRegistry()
     monkeypatch.setattr(registry_module, 'platform_registry', registry)
     adapter.register(PluginContext(PluginManifest(name='max-platform', source='user', kind='platform'), PluginManager()))
@@ -52,6 +56,13 @@ async def test_policy_capable_core_routes_standalone_media(max_api, monkeypatch,
     media = tmp_path / ('fixture' + suffix)
     media.write_bytes(b'ID3-fixture')
     result = await _send_to_platform(Platform('max'), PlatformConfig(enabled=True, token='fixture'), '-42', '', media_files=[(str(media), False)])
+    if not adapter._STANDALONE_POLICY_SUPPORTED:
+        # Old Core cannot dispatch media-only to plugins. Assert that real refusal,
+        # not a skip or a fabricated successful route; the direct sender tests remain.
+        assert 'only media attachments' in result['error']
+        assert not max_api.calls('POST', '/uploads')
+        assert not max_api.calls('POST', '/messages')
+        return
     assert result['success'] and result['media_delivered']
     message = max_api.calls('POST', '/messages')[0]
     assert max_api.params(message) == {'chat_id': '-42'}
