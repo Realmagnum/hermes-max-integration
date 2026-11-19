@@ -1,84 +1,174 @@
-"""Bounded, single-attempt CDN multipart upload shared by both senders."""
+"""Bounded multipart I/O: pinned regular FD and capped late-worker ownership."""
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import queue
 import stat
+import threading
 from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
 
-# Docs say MB/GB without byte convention. Decimal is conservative under either.
 UPLOAD_LIMITS = {"image": 50_000_000, "video": 250_000_000,
                  "audio": 256_000_000, "file": 4_000_000_000}
 CHUNK_SIZE = 64 * 1024
-UPLOAD_TIMEOUT = 3600  # finite wall clock, including stalled/slow uploads
+UPLOAD_TIMEOUT = 3600
 RESPONSE_LIMIT = 64 * 1024
+IO_WAIT = 10.0
+# Includes admission, blocked open/read/close, and live upload workers. No queue/reaper.
+IO_CAPACITY = 4
+_IO_SLOTS = threading.BoundedSemaphore(IO_CAPACITY)
 
 
 def upload_timeout(size: int) -> float:
-    """Shared budget: 60s overhead + 0.5 MB/s, bounded at 120..3600s."""
     return min(UPLOAD_TIMEOUT, max(120, 60 + size / 500_000))
 
 
-def check_upload(path: str, kind: str) -> int:
+class UploadSize(int):
+    """An int for compatibility, carrying the exact admitted filesystem identity."""
+    identity: tuple[int, int, int]
+    def __new__(cls, info):
+        value = super().__new__(cls, info.st_size)
+        value.identity = (info.st_dev, info.st_ino, info.st_size)
+        return value
+
+
+def check_upload(path: str, kind: str) -> UploadSize:
     limit = UPLOAD_LIMITS.get(kind)
     if limit is None:
         raise ValueError("Unsupported upload type")
-    info = os.stat(path)
+    # Reject a final-component symlink rather than silently resolve another target.
+    info = os.lstat(path)
     if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
         raise ValueError(f"Invalid file size for {kind}; maximum {limit} bytes")
     if len(Path(path).name) > 200:
         raise ValueError("Filename exceeds 200 characters")
-    return info.st_size
+    return UploadSize(info)
 
 
-async def _disk_call(fn, *args):
-    # A cancelled executor future still runs. Wait before closing its descriptor.
-    task = asyncio.create_task(asyncio.to_thread(fn, *args))
+def _settle(loop, future, value=None, error=None):
+    def deliver():
+        if not future.done():
+            if error is not None:
+                future.set_exception(error)
+            else:
+                future.set_result(value)
     try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+        loop.call_soon_threadsafe(deliver)
+    except RuntimeError:
+        pass  # Loop closed: worker still owns cleanup and releases its own slot.
+
+
+async def async_check_upload(path: str, kind: str):
+    if not _IO_SLOTS.acquire(blocking=False):
+        raise OSError("Upload disk capacity exhausted (pending I/O); retry only after recovery")
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    def run():
+        try:
+            _settle(loop, future, check_upload(path, kind))
+        except Exception as exc:  # noqa: BLE001 — deliver original bounded-admission failure
+            _settle(loop, future, error=exc)
+        finally:
+            _IO_SLOTS.release()
+    threading.Thread(target=run, name="max-upload-admission", daemon=True).start()
+    return await asyncio.wait_for(future, IO_WAIT)
+
+
+class _FileWorker:
+    """Sole owner of its FD, including after caller timeout/cancellation.
+
+    A stuck kernel call cannot be killed safely. It occupies one of four global
+    slots until it returns, then closes its own FD. No other thread closes/reuses
+    that FD, no executor shutdown wait, no detached tasks or unbounded reaper.
+    """
+    def __init__(self, path, admitted):
+        if not _IO_SLOTS.acquire(blocking=False):
+            raise OSError("Upload disk capacity exhausted (pending I/O)")
+        self.path, self.admitted = path, admitted
+        self.stop = threading.Event()
+        self.commands = queue.Queue(maxsize=1)
+        self.loop = asyncio.get_running_loop()
+        self.thread = threading.Thread(target=self._run, name="max-upload-file", daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        fd = None
+        sent = 0
+        try:
+            while not self.stop.is_set():
+                try:
+                    count, future = self.commands.get(timeout=.05)
+                except queue.Empty:
+                    continue
+                try:
+                    if fd is None:
+                        flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+                        fd = os.open(self.path, flags)
+                        info = os.fstat(fd)
+                        actual = (info.st_dev, info.st_ino, info.st_size)
+                        if not stat.S_ISREG(info.st_mode) or actual != self.admitted.identity:
+                            raise ValueError("Upload file identity/type changed before open")
+                    if self.stop.is_set():
+                        break
+                    chunk = os.read(fd, count)
+                    sent += len(chunk)
+                    _settle(self.loop, future, chunk)
+                    if not chunk or sent >= self.admitted:
+                        break
+                except Exception as exc:  # noqa: BLE001 — worker owns FD even on failure
+                    _settle(self.loop, future, error=exc)
+                    break
+        finally:
+            try:
+                if fd is not None:
+                    os.close(fd)
+            finally:
+                _IO_SLOTS.release()
+
+    async def read(self, count, deadline):
+        future = self.loop.create_future()
+        self.commands.put_nowait((count, future))
+        remaining = min(IO_WAIT, deadline - self.loop.time())
+        if remaining <= 0:
+            raise TimeoutError("Upload disk deadline exhausted")
+        return await asyncio.wait_for(future, remaining)
 
 
 class FilePayload(aiohttp.payload.Payload):
-    """No read-all, prefetch or replay; at most one 64 KiB read in flight."""
     def __init__(self, path: str, size: int):
         super().__init__(path, content_type="application/octet-stream")
-        self._size = size
+        if not isinstance(size, UploadSize):
+            raise TypeError("Upload requires identity-bearing admission")
+        self._size, self.admitted = int(size), size
 
     def decode(self, encoding="utf-8", errors="strict"):
         raise TypeError("File payload cannot be buffered")
 
     async def write(self, writer):
-        opening = asyncio.create_task(asyncio.to_thread(open, self._value, "rb"))
+        worker = _FileWorker(self._value, self.admitted)
+        deadline = asyncio.get_running_loop().time() + upload_timeout(self._size)
         try:
-            file = await asyncio.shield(opening)
-        except asyncio.CancelledError:
-            file = await opening
-            await _disk_call(file.close)
-            raise
-        try:
-            if await _disk_call(lambda: os.fstat(file.fileno()).st_size) != self._size:
-                raise ValueError("File changed before upload")
             remaining = self._size
             while remaining:
-                chunk = await _disk_call(file.read, min(CHUNK_SIZE, remaining))
+                chunk = await worker.read(min(CHUNK_SIZE, remaining), deadline)
                 if not chunk:
                     raise ValueError("File truncated during upload")
                 remaining -= len(chunk)
-                await writer.write(chunk)
+                remaining_time = deadline - asyncio.get_running_loop().time()
+                if remaining_time <= 0:
+                    raise TimeoutError("Upload deadline exhausted")
+                await asyncio.wait_for(writer.write(chunk), remaining_time)
         finally:
-            await _disk_call(file.close)
+            # Never await an uninterruptible syscall or close underneath it.
+            worker.stop.set()
 
 
-async def post_file(session, url: str, path: str, kind: str):
-    """Return (HTTP status, bounded JSON object). Never retries or follows redirects."""
-    size = await asyncio.to_thread(check_upload, path, kind)
+async def post_file(session, url: str, path: str, kind: str, *, admitted=None):
+    size = admitted if admitted is not None else await async_check_upload(path, kind)
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.username or parsed.password or parsed.fragment:
         raise ValueError("Unsafe upload URL")

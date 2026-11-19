@@ -20,18 +20,11 @@ async def test_upload_streams_without_read_bytes(mode, cdn_status, tmp_path, mon
     from max.mixins import upload_stream
     reads = []
     main_thread = threading.get_ident()
-    real_open = open
-    class TrackedFile:
-        def __init__(self, value):
-            self.value = value
-        def read(self, n=-1):
-            reads.append((n, threading.get_ident()))
-            return self.value.read(n)
-        def fileno(self):
-            return self.value.fileno()
-        def close(self):
-            return self.value.close()
-    monkeypatch.setattr(upload_stream, "open", lambda *a: TrackedFile(real_open(*a)), raising=False)
+    real_read = upload_stream.os.read
+    def tracked_read(fd, n):
+        reads.append((n, threading.get_ident()))
+        return real_read(fd, n)
+    monkeypatch.setattr(upload_stream.os, "read", tracked_read)
     path = tmp_path / "large.pdf"
     # Finite sparse file above the old global 50 MiB ceiling.
     with path.open("wb") as f:

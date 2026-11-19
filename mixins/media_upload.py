@@ -13,7 +13,7 @@ import httpx
 from gateway.platforms.base import SendResult
 
 from .base import MaxBaseMixin, _message_recipient_params
-from .upload_stream import check_upload, post_file, upload_timeout
+from .upload_stream import async_check_upload, post_file, upload_timeout
 
 try:
     from ..media_caption import media_caption
@@ -252,7 +252,7 @@ class MediaUploadMixin(MaxBaseMixin):
         import aiohttp as _aiohttp
 
         try:
-            file_size = await asyncio.to_thread(check_upload, file_path, media_type)
+            file_size = await async_check_upload(file_path, media_type)
         except (OSError, ValueError):
             return None
 
@@ -290,7 +290,7 @@ class MediaUploadMixin(MaxBaseMixin):
             # Step 2: upload file to the URL (use aiohttp for multipart)
             connector = _aiohttp.TCPConnector(ssl=get_max_ssl_context())
             async with _aiohttp.ClientSession(connector=connector, timeout=_aiohttp.ClientTimeout(total=upload_timeout(file_size), sock_connect=30, sock_read=120)) as session:
-                status, upload_data = await post_file(session, upload_url, file_path, media_type)
+                status, upload_data = await post_file(session, upload_url, file_path, media_type, admitted=file_size)
                 if status != 200:
                     logger.warning("MAX: CDN upload failed: status=%d type=%s", status, media_type)
                     return None

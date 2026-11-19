@@ -17,7 +17,7 @@ from ..credential_support import get_max_secret
 from ..media_caption import media_caption
 from .base import _message_recipient_params
 from .media_upload import _ALLOWED_UPLOAD_HOSTS
-from .upload_stream import check_upload, post_file, upload_timeout
+from .upload_stream import async_check_upload, post_file, upload_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,7 @@ async def _standalone_send(
                 _ext = os.path.splitext(media_path)[1].lower()
                 _attach_type = _ATTACH_TYPES.get(_ext, "file")
                 try:
-                    file_size = await asyncio.to_thread(check_upload, media_path, _attach_type)
+                    file_size = await async_check_upload(media_path, _attach_type)
                 except (OSError, ValueError):
                     continue
                 _upload_token = ""
@@ -197,7 +197,7 @@ async def _standalone_send(
                     import aiohttp as _aiohttp
                     aio_conn = _aiohttp.TCPConnector(ssl=get_max_ssl_context())
                     async with _aiohttp.ClientSession(connector=aio_conn, timeout=_aiohttp.ClientTimeout(total=upload_timeout(file_size), sock_connect=30, sock_read=120)) as aio_session:
-                        status, upload_data = await post_file(aio_session, upload_url, media_path, _upload_type)
+                        status, upload_data = await post_file(aio_session, upload_url, media_path, _upload_type, admitted=file_size)
                         if status != 200:
                             continue
                         file_token = _upload_token
