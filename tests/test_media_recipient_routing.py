@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from gateway.config import PlatformConfig
-from max.mixins import standalone
+from max.mixins import media_readiness, standalone
 
 
 @pytest.mark.asyncio
@@ -80,7 +80,7 @@ async def test_standalone_media_recipient(max_api, monkeypatch, tmp_path, target
 
     monkeypatch.setattr(standalone, "_standalone_get_token", lambda _: "dummy-token")
     monkeypatch.setattr(standalone.httpx, "AsyncClient", lambda **_: max_api.client())
-    monkeypatch.setattr(standalone.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(media_readiness.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(aiohttp, "TCPConnector", MagicMock())
     session = MagicMock()
     session.__aenter__.return_value = session
