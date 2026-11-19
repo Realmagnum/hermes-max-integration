@@ -3723,6 +3723,9 @@ def interactive_setup() -> None:
 
 def register(ctx) -> None:
     """Plugin entry point — called by the Hermes plugin system."""
+    from .host_bridge import registration_options, setup_cli
+    if hasattr(ctx, "register_cli_command"):
+        ctx.register_cli_command(name="max", help="MAX explicit host operations", setup_fn=setup_cli)
     skill_path = Path(__file__).parent / "skills" / "max-gateway" / "SKILL.md"
 
     ctx.register_platform(
@@ -3747,6 +3750,7 @@ def register(ctx) -> None:
         # captionable=True lets a single file + short text ride on the media caption.
         # Omitted entirely on a Core whose PlatformEntry has no `standalone_send` kwarg.
         **_PLATFORM_ENTRY_EXTRA,
+        **registration_options(),
         allowed_users_env="MAX_ALLOWED_USERS",
         allow_all_env="MAX_ALLOW_ALL_USERS",
         max_message_length=MAX_MESSAGE_LENGTH,

@@ -192,6 +192,19 @@ async def send_attachments(args, **kwargs):
         token = get_max_secret("MAX_BOT_TOKEN")
         if not token:
             raise ValueError("MAX credentials unavailable")
+        return await send_to_resolved(body, target, token)
+    except (ValueError, TypeError, OSError) as exc:
+        return json.dumps({"error": str(exc), "retryable": False})
+    except Exception as exc:  # noqa: BLE001 — context/credential failures fail closed
+        return json.dumps({"error": f"Attachment send failed ({type(exc).__name__})", "retryable": False})
+
+
+async def send_to_resolved(body, target, token):
+    """Plugin-local sender; host callback supplies the already-authorized recipient."""
+    try:
+        body = validate(body)
+        if not isinstance(target, str) or not re.fullmatch(r"(?:(?:chat|user):)?-?[0-9]{1,20}", target):
+            raise ValueError("Invalid resolved MAX recipient")
         # Lazy import prevents a registration import cycle. No connection/polling.
         from .adapter import MaxAdapter
 
