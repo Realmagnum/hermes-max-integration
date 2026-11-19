@@ -187,10 +187,6 @@ class MediaUploadMixin(MaxBaseMixin):
         if not token:
             return SendResult(success=False, error="Upload failed")
 
-        params = _message_recipient_params(chat_id)
-        if ":" not in chat_id and "user_id" in params:
-            params["user_id"] = self._dm_user_ids.get(chat_id, params["user_id"])
-
         body: dict[str, Any] = {
             "text": media_caption(caption, file_path),
             "attachments": [{"type": mtype, "payload": {"token": token}}],
@@ -198,6 +194,13 @@ class MediaUploadMixin(MaxBaseMixin):
         if reply_to:
             body["link"] = {"type": "REPLY", "mid": reply_to}
 
+        return await self._send_attachment_body(chat_id, body)
+
+    async def _send_attachment_body(self, chat_id: str, body: dict[str, Any]) -> SendResult:
+        """Send a validated attachment body; ambiguous effects are not repeated."""
+        params = _message_recipient_params(chat_id)
+        if ":" not in chat_id and "user_id" in params:
+            params["user_id"] = self._dm_user_ids.get(chat_id, params["user_id"])
         max_attempts = self._media_ready_attempts
         deadline = asyncio.get_running_loop().time() + self._media_ready_timeout
         for attempt in range(max_attempts):

@@ -3764,10 +3764,16 @@ def register(ctx) -> None:
             "tool or Telegram sender is not needed. For a file-only reply, return just the MEDIA line; "
             "the plugin adds the filename (or File) as its caption. Use only an existing file you are allowed "
             "to send; if file creation/access fails, explain the failure instead of inventing a path or claiming delivery. "
+            "For typed attachments (sticker/contact/keyboard/location/share or media tokens), use the "
+            "max_send_attachments tool, restricted to this current MAX conversation; never invent tokens "
+            "or automatically repeat an uncertain send. "
             "Voice messages are automatically transcribed — the transcription appears in the message text. "
             "Keep responses clear and well-structured."
         ),
     )
+
+    from .attachment_tool import SCHEMA, send_attachments
+    ctx.register_tool(name="max_send_attachments", toolset="max", schema=SCHEMA, handler=send_attachments, is_async=True)
 
     ctx.register_hook("transform_llm_output", transform_max_media_output)
 
