@@ -10,6 +10,17 @@ import adapter
 from tools import clarify_gateway as core
 
 
+def attempt_text_for_session(session_key, response):
+    """Use actual legacy API or current session lookup followed by ID-bound API."""
+    if hasattr(core, "attempt_text_response_for_session"):
+        return core.attempt_text_response_for_session(session_key, response)
+    entry = core.get_pending_for_session(session_key, include_choice_prompts=True)
+    if entry is None:
+        return core.TEXT_NO_PENDING
+    assert entry.session_key == session_key
+    return core.attempt_text_response(entry.clarify_id, response)
+
+
 def make_adapter():
     from gateway.config import PlatformConfig
 
@@ -78,8 +89,8 @@ async def test_other_arms_core_text_interception_and_replay_does_not_resolve():
     assert core.get_pending_for_session("session-a").awaiting_text
     await a._on_callback(callback("0"))
     assert core.get_pending_for_session("session-a").response is None
-    assert core.attempt_text_response_for_session("session-b", "custom") == core.TEXT_NO_PENDING
-    assert core.attempt_text_response_for_session("session-a", "custom") == core.TEXT_RESOLVED
+    assert attempt_text_for_session("session-b", "custom") == core.TEXT_NO_PENDING
+    assert attempt_text_for_session("session-a", "custom") == core.TEXT_RESOLVED
     assert core.wait_for_response("q-a", 0.01) == "custom"
 
 
@@ -109,7 +120,7 @@ async def test_open_ended_uses_core_text_queue_and_tool_result():
                          metadata={"user_id": "42"})
     assert "q-a" not in a._clarify_state
     assert core.get_pending_for_session("session-a").awaiting_text
-    assert core.attempt_text_response_for_session("session-a", "at home") == core.TEXT_RESOLVED
+    assert attempt_text_for_session("session-a", "at home") == core.TEXT_RESOLVED
     assert core.wait_for_response("q-a", 0.01) == "at home"
     if "question" in inspect.signature(clarify_tool).parameters:
         # Released minimum/baseline Core accepts one question and a string result.
