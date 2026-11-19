@@ -15,8 +15,8 @@ except (ImportError, ValueError):
 from ..credential_support import get_max_secret
 from ..media_caption import media_caption
 from .base import _message_recipient_params
-from .media_upload import _ALLOWED_UPLOAD_HOSTS
 from .media_readiness import readiness_settings, send_ready_attachment
+from .media_upload import _ALLOWED_UPLOAD_HOSTS
 from .upload_stream import async_check_upload, post_file, upload_timeout
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Native, Core-free upload probe. Synthetic data and loopback HTTP only; no skips."""
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ from aiohttp import web
 
 # Import the real package/module (including its relative Windows helper), not a copy.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mixins import upload_stream as stream  # noqa: E402
+from mixins import upload_stream as stream
 
 
 class Writer:
@@ -122,7 +121,7 @@ async def multipart(source, content, status):
 async def startup(source, admitted):
     for fault in ("constructor", "start"):
         class BrokenThread:
-            def __init__(self, **kwargs):
+            def __init__(self, *, fault=fault, **kwargs):
                 if fault == "constructor":
                     raise RuntimeError("synthetic constructor failure")
 
@@ -211,8 +210,10 @@ async def native_specials(root, admitted):
         # A real junction is a non-symlink directory reparse point. No privilege
         # bypass or Linux Win32 emulation; fixture creation failure fails CI.
         junction = root / "junction"
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(root)],
-                       check=True, capture_output=True, timeout=10)
+        await asyncio.to_thread(
+            subprocess.run, ["cmd", "/c", "mklink", "/J", str(junction), str(root)],
+            check=True, capture_output=True, timeout=10,
+        )
         try:
             assert os.lstat(junction).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
             await rejected(junction, admitted)
