@@ -86,6 +86,7 @@ async def test_standalone_media_recipient(max_api, monkeypatch, tmp_path, target
     session.__aenter__.return_value = session
     response = MagicMock(status=200)
     response.json = AsyncMock(return_value={"token": "dummy-token"})
+    response.content.read = AsyncMock(side_effect=[b'{"token":"dummy-token"}', b''])
     session.post.return_value.__aenter__.return_value = response
     monkeypatch.setattr(aiohttp, "ClientSession", lambda **_: session)
     max_api.route("POST", "/uploads", json_body={"url": "https://upload.max.ru/dummy",
