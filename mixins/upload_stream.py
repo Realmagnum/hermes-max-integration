@@ -104,6 +104,15 @@ async def async_check_upload(path: str, kind: str):
     return await asyncio.wait_for(future, IO_WAIT)
 
 
+def _open_file(path):
+    """Platform no-follow open; identity is checked on this exact FD by the worker."""
+    if os.name == "nt":
+        from ._windows_file import open_regular
+        return open_regular(path)
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+    return os.open(path, flags)
+
+
 class _FileWorker:
     """Sole owner of its FD, including after caller timeout/cancellation.
 
@@ -130,8 +139,7 @@ class _FileWorker:
                     continue
                 try:
                     if fd is None:
-                        flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
-                        fd = os.open(self.path, flags)
+                        fd = _open_file(self.path)
                         info = os.fstat(fd)
                         actual = (info.st_dev, info.st_ino, info.st_size)
                         if not stat.S_ISREG(info.st_mode) or actual != self.admitted.identity:

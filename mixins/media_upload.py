@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
 from gateway.platforms.base import SendResult
 
 from .base import MaxBaseMixin, _message_recipient_params
+from .media_readiness import send_ready_attachment
 from .upload_stream import async_check_upload, post_file, upload_timeout
 
 try:
@@ -201,54 +201,21 @@ class MediaUploadMixin(MaxBaseMixin):
         params = _message_recipient_params(chat_id)
         if ":" not in chat_id and "user_id" in params:
             params["user_id"] = self._dm_user_ids.get(chat_id, params["user_id"])
-        max_attempts = self._media_ready_attempts
-        deadline = asyncio.get_running_loop().time() + self._media_ready_timeout
-        for attempt in range(max_attempts):
+        result = await send_ready_attachment(
+            self._http_client, f"{MAX_API_BASE}/messages", params, body,
+            self._media_ready_attempts, self._media_ready_timeout,
+        )
+        if result.success:
             try:
-                remaining = deadline - asyncio.get_running_loop().time()
-                delay = min(2.0 * (2 ** (attempt - 1)), 16.0) if attempt else 0
-                if remaining <= delay:
-                    break
-                if delay:
-                    await asyncio.sleep(delay)
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-                # A timeout may mean MAX accepted the POST: do not resend it.
-                resp = await asyncio.wait_for(
-                    self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body),
-                    timeout=remaining,
-                )
-                resp.raise_for_status()
-                d = resp.json()
-                rec = d.get("message", {}).get("recipient", {})
+                rec = result.raw_response.get("message", {}).get("recipient", {})
                 resp_cid = rec.get("chat_id")
                 resp_uid = rec.get("user_id") or params.get("user_id")
                 if resp_cid and resp_uid:
                     self._remember_dm(resp_cid, resp_uid)
-                mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
-                return SendResult(success=True, message_id=mid, raw_response=d)
-            except httpx.HTTPStatusError as e:
-                code = "unavailable"
-                try:
-                    err_body = e.response.json()
-                    raw_code = err_body.get("code") if isinstance(err_body, dict) else None
-                    # Never log arbitrary response text, URLs, tokens or API messages.
-                    code = "attachment.not.ready" if raw_code == "attachment.not.ready" else "other"
-                except (ValueError, TypeError):
-                    code = "invalid-json"
-                if (e.response.status_code == 400 and code == "attachment.not.ready"
-                        and attempt + 1 < max_attempts):
-                    logger.info("MAX: upload not ready (attempt %d/%d), retrying…", attempt + 1, max_attempts)
-                    continue
-                logger.error("MAX: _upload_send failed: status=%d code=%s attempts=%d", e.response.status_code, code, attempt + 1)
+            except Exception as exc:  # noqa: BLE001 — post-send parsing must never replay
+                logger.error("MAX: attachment response failed: error_type=%s", type(exc).__name__)
                 return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
-            except Exception as e:  # noqa: BLE001 — ambiguous send must not be repeated
-                logger.error("MAX: _upload_send failed: error_type=%s attempts=%d", type(e).__name__, attempt + 1)
-                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
-
-        logger.error("MAX: _upload_send failed: code=attachment.not.ready readiness budget exhausted")
-        return SendResult(success=False, error="Upload-send failed: attachment readiness budget exhausted", retryable=False)
+        return result
 
     async def _upload(self, file_path: str, media_type: str) -> str | None:
         """Two-step upload: get upload URL -> POST file (multipart) -> return token."""

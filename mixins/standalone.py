@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from urllib.parse import urlparse
@@ -17,6 +16,7 @@ from ..credential_support import get_max_secret
 from ..media_caption import media_caption
 from .base import _message_recipient_params
 from .media_upload import _ALLOWED_UPLOAD_HOSTS
+from .media_readiness import readiness_settings, send_ready_attachment
 from .upload_stream import async_check_upload, post_file, upload_timeout
 
 logger = logging.getLogger(__name__)
@@ -215,45 +215,20 @@ async def _standalone_send(
                     logger.warning("MAX: CDN upload error: error_type=%s", type(e).__name__)
                     continue
 
-                # Wait for MAX to process the file
-                await asyncio.sleep(UPLOAD_DELAY)
-
-                # Step 3: send message with attachment (with retry for attachment.not.ready)
+                # Upload once; share the adapter's bounded definite-rejection policy.
                 params = _message_recipient_params(chat_id)
                 body = {
                     "text": media_caption(caption, media_path),
                     "attachments": [{"type": _attach_type, "payload": {"token": file_token}}],
                 }
-                _sent_ok = False
-                for _retry in range(3):
-                    try:
-                        resp = await client.post(f"{MAX_API_BASE}/messages", params=params, json=body, headers=headers)
-                        if resp.status_code in (200, 201):
-                            data = resp.json()
-                            if data.get("ok", True) is not False:
-                                last_message_id = str(
-                                    data.get("message", {}).get("body", {}).get("mid", "")
-                                    or data.get("message", {}).get("message_id", "")
-                                    or ""
-                                )
-                                _sent_ok = True
-                                break
-                        elif resp.status_code == 400:
-                            err_body = resp.json()
-                            if err_body.get("code") == "attachment.not.ready":
-                                logger.info("MAX: attachment not ready for %s, retrying...", media_path)
-                                await asyncio.sleep(5.0)
-                                continue
-                            logger.warning("MAX: message rejected for %s: %s", media_path, err_body)
-                            break
-                        else:
-                            logger.warning("MAX: send failed for %s (status %d)", media_path, resp.status_code)
-                            break
-                    except Exception as _exc:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                        logger.warning("MAX: send exception for %s: %s", media_path, _exc)
-                        break
-                if not _sent_ok:
+                attempts, timeout = readiness_settings(getattr(pconfig, "extra", {}) or {})
+                result = await send_ready_attachment(
+                    client, f"{MAX_API_BASE}/messages", params, body,
+                    attempts, timeout, headers=headers,
+                )
+                if not result.success:
                     continue
+                last_message_id = result.message_id
                 delivered_media += 1
                 # The caption is the caller's text riding on this message: once it is
                 # delivered the text counts as delivered, otherwise a captionable send

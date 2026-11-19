@@ -50,6 +50,7 @@ from gateway.platforms.base import (
     cache_document_from_bytes,
     cache_image_from_bytes,
 )
+from .mixins.media_readiness import readiness_settings
 
 try:
     from gateway.platforms import base as _core_base
@@ -869,16 +870,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         self._edit_states: dict[str, _StreamEditState] = {}
 
         # Outbound CDN readiness: upload once; only explicit not-ready sends repeat.
-        self._media_ready_attempts = _coerce_int(
-            os.getenv("MAX_MEDIA_READY_ATTEMPTS") or extra.get("media_ready_attempts"),
-            8, minimum=1, maximum=12,
-        )
-        self._media_ready_timeout = _coerce_float(
-            os.getenv("MAX_MEDIA_READY_TIMEOUT") or extra.get("media_ready_timeout"),
-            90.0, minimum=0.1, maximum=300.0,
-        )
-        if not 0.1 <= self._media_ready_timeout <= 300.0:  # NaN is not a valid budget.
-            self._media_ready_timeout = 90.0
+        self._media_ready_attempts, self._media_ready_timeout = readiness_settings(extra)
 
         # Media download security and limits (SEC-02, SEC-03, SEC-07).
         # An operator-supplied allowlist is deliberately strict.  Without one,

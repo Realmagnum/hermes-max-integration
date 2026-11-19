@@ -59,7 +59,8 @@ async def test_exhausted_safe_final_code(monkeypatch, caplog):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("response", [(400, {"code": "bad", "message": "signed-secret"}),
     (400, b"not JSON signed-secret"), (400, []), (503, {"code": "attachment.not.ready"}),
-    httpx.ReadTimeout("signed-secret"), (200, b"invalid JSON")])
+    httpx.ReadTimeout("signed-secret"), (200, b"invalid JSON"),
+    (200, {"message": {"recipient": ["invalid-recipient"]}})])
 async def test_no_retry_other_or_ambiguous(monkeypatch, caplog, response):
     _, result, requests, sleep = await run_case([response], monkeypatch)
     assert not result.success and not result.retryable
