@@ -16,8 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = Path(os.environ.get('MAX_COMPLETION_CORE', str(Path(importlib.util.find_spec('hermes_cli').origin).parent.parent)))
 PYTHON = os.environ.get('MAX_COMPLETION_PYTHON', sys.executable)
 
+@pytest.fixture(scope='module')
+def fixture_home(tmp_path_factory):
+    return tmp_path_factory.mktemp('full-host-home')
+
+
 @pytest.fixture
-def host(tmp_path):
+def host(tmp_path, fixture_home):
     calls = []
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -36,9 +41,12 @@ def host(tmp_path):
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    home = tmp_path / 'home'
-    (home / 'plugins').mkdir(parents=True)
-    (home / 'plugins/max-platform').symlink_to(ROOT, target_is_directory=True)
+    # One genuine boot-maintained home, like ordinary repeated CLI use. Each
+    # request still has its own process, HTTP server, event log and wire calls.
+    home = fixture_home
+    (home / 'plugins').mkdir(parents=True, exist_ok=True)
+    if not (home / 'plugins/max-platform').exists():
+        (home / 'plugins/max-platform').symlink_to(ROOT, target_is_directory=True)
     (home / 'config.yaml').write_text('plugins:\n  enabled: [max-platform]\ngateway:\n  platforms:\n    max:\n      enabled: true\n      token: synthetic-fixture-not-live\n')
     env = os.environ.copy()
     env.update(HOME=str(home), HERMES_HOME=str(home), HERMES_DISABLE_LAZY_INSTALLS='1', PYTHONDONTWRITEBYTECODE='1', MAX_BOT_TOKEN='synthetic-fixture-not-live', MAX_COMPLETION_HTTP=f'http://127.0.0.1:{server.server_port}', MAX_COMPLETION_EVENTS=str(tmp_path / 'events.jsonl'), PYTHONPATH=os.pathsep.join([str(ROOT / 'tests/fixtures/completion_site'), str(CORE)]))

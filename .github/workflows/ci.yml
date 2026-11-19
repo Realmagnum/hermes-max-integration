@@ -54,7 +54,7 @@ jobs:
           python -m pip check
       - name: Lint, tests and documentation contracts
         run: |
-          ruff check adapter.py credential_support.py mixins/ scripts/ tests/
+          ruff check adapter.py credential_support.py attachment_tool.py host_bridge.py tools.py __init__.py mixins/ scripts/ tests/
           python -m pytest -v --tb=short
           python scripts/check-doc-claims.py
           python scripts/check-config-reference.py
@@ -81,7 +81,7 @@ jobs:
       - name: Install scanner
         run: python -m pip install "bandit>=1.8,<2"
       - name: SAST scan of production modules
-        run: bandit -r adapter.py credential_support.py mixins/ scripts/ -f txt -lll
+        run: bandit -r adapter.py credential_support.py attachment_tool.py host_bridge.py tools.py __init__.py mixins/ scripts/ -f txt -lll
 
   dependency-audit:
     runs-on: ubuntu-latest
