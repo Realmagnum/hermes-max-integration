@@ -10,6 +10,8 @@ registration; no Core router/sender function is replaced by a mock.
 """
 
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -76,6 +78,8 @@ def max_http_boundary(monkeypatch):
             # The image CDN answers with {"photos": {id: {"token": ...}}}, every other
             # upload type with a flat {"token": ...}. The plugin must read the matching one.
             self._photos = photos
+            body = {"photos": {"1": {"token": "fixture-photo-token"}}} if photos else {"token": "fixture-upload-token"}
+            self.content = SimpleNamespace(read=AsyncMock(side_effect=[json.dumps(body).encode(), b""]))
 
         async def __aenter__(self):
             return self
@@ -102,7 +106,8 @@ def max_http_boundary(monkeypatch):
             await self.connector.close()
             return False
 
-        def post(self, url, data):
+        def post(self, url, data, **kwargs):
+            assert kwargs == {"allow_redirects": False}
             uploads.append((url, data))
             response = UploadResponse(photos="uploadImage" in str(url))
             if failure.get("cdn"):
@@ -146,7 +151,7 @@ async def test_actual_core_dispatch_contract(registered_max, max_http_boundary, 
     if media_files:
         assert len(uploads) == 1
         assert uploads[0][0] == "https://iu.oneme.ru/upload"
-        assert uploads[0][1]._fields[0][2] == b"actual router payload"
+        assert uploads[0][1]._fields[0][2]._value == str(media)
         assert messages[-1]["attachments"] == [{"type": "file", "payload": {"token": "fixture-upload-token"}}]
         assert result["media_delivered"] is True
         assert "warnings" not in result

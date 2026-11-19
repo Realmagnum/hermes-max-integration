@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -18,6 +17,7 @@ from ..credential_support import get_max_secret
 from ..media_caption import media_caption
 from .base import _message_recipient_params
 from .media_upload import _ALLOWED_UPLOAD_HOSTS
+from .upload_stream import check_upload, post_file, upload_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,10 @@ async def _standalone_send(
                 }
                 _ext = os.path.splitext(media_path)[1].lower()
                 _attach_type = _ATTACH_TYPES.get(_ext, "file")
+                try:
+                    file_size = await asyncio.to_thread(check_upload, media_path, _attach_type)
+                except (OSError, ValueError):
+                    continue
                 _upload_token = ""
 
                 # Step 1: get upload URL
@@ -174,7 +178,7 @@ async def _standalone_send(
                     logger.warning("MAX: upload URL parse failed for %s: %s", media_path, e)
                     continue
 
-                logger.info("MAX: upload url obtained for %s: %s", media_path, upload_url[:80])
+                logger.info("MAX: upload url obtained")
 
                 # SSRF protection: only upload to known MAX/CDN domains
                 parsed_upload = urlparse(upload_url)
@@ -185,56 +189,30 @@ async def _standalone_send(
                     or parsed_upload.hostname.endswith(".okcdn.ru")
                     or parsed_upload.hostname.endswith(".cdn-max.ru")
                 ):
-                    logger.warning("MAX: upload URL rejected (SSRF): %s", upload_url[:80])
+                    logger.warning("MAX: upload URL rejected (SSRF)")
                     continue
 
                 # Step 2: upload file as multipart
                 try:
                     import aiohttp as _aiohttp
                     aio_conn = _aiohttp.TCPConnector(ssl=get_max_ssl_context())
-                    async with _aiohttp.ClientSession(connector=aio_conn, timeout=_aiohttp.ClientTimeout(total=120)) as aio_session:
-                        # Read file bytes off the event loop (ASYNC230).
-                        file_bytes = await asyncio.to_thread(Path(media_path).read_bytes)
-                        form = _aiohttp.FormData()
-                        form.add_field("data", file_bytes, filename=os.path.basename(media_path))
-                        async with aio_session.post(upload_url, data=form) as r:
-                                if r.status != 200:
-                                    try:
-                                        err_body = await r.text()
-                                        logger.warning("MAX: CDN upload failed for %s (status %d): %s", media_path, r.status, err_body[:200])
-                                    except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                                        logger.warning("MAX: CDN upload failed for %s (status %d)", media_path, r.status)
-                                    # For audio/video with token from /uploads: even if CDN fails, we might still try
-                                    if _upload_type in ("audio", "video") and _upload_token:
-                                        logger.info("MAX: CDN failed but using token from /uploads anyway for %s", media_path)
-                                        file_token = _upload_token
-                                    else:
-                                        continue
-                                else:
-                                    # For audio/video: use token from /uploads (CDN just returns <retval>1</retval>)
-                                    if _upload_type in ("audio", "video") and _upload_token:
-                                        file_token = _upload_token
-                                    else:
-                                        # For file/image: parse CDN JSON response for token
-                                        try:
-                                            upload_data = await r.json()
-                                        except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                                            logger.warning("MAX: CDN returned non-JSON for %s", media_path)
-                                            continue
-                                        file_token = upload_data.get("token")
-                                        if not file_token:
-                                            # type=image returns: {"photos": {"id": {"token": "..."}}}
-                                            photos = upload_data.get("photos", {})
-                                            if isinstance(photos, dict):
-                                                for _pdata in photos.values():
-                                                    if isinstance(_pdata, dict) and _pdata.get("token"):
-                                                        file_token = _pdata["token"]
-                                                        break
-                                        if not file_token:
-                                            logger.warning("MAX: CDN response missing token for %s", media_path)
-                                            continue
+                    async with _aiohttp.ClientSession(connector=aio_conn, timeout=_aiohttp.ClientTimeout(total=upload_timeout(file_size), sock_connect=30, sock_read=120)) as aio_session:
+                        status, upload_data = await post_file(aio_session, upload_url, media_path, _upload_type)
+                        if status != 200:
+                            continue
+                        file_token = _upload_token
+                        if not file_token:
+                            file_token = upload_data.get("token")
+                            photos = upload_data.get("photos", {})
+                            if not file_token and isinstance(photos, dict):
+                                for photo in photos.values():
+                                    if isinstance(photo, dict) and photo.get("token"):
+                                        file_token = photo["token"]
+                                        break
+                        if not isinstance(file_token, str) or not file_token:
+                            continue
                 except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-                    logger.warning("MAX: CDN upload error for %s: %s", media_path, e)
+                    logger.warning("MAX: CDN upload error: error_type=%s", type(e).__name__)
                     continue
 
                 # Wait for MAX to process the file

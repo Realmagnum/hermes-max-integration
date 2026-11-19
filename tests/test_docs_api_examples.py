@@ -82,6 +82,16 @@ def _adapter(handler):
 class _StubUploadResponse:
     status = 200
 
+    def __init__(self):
+        self.content = self
+        self._read = False
+
+    async def read(self, n):
+        if self._read:
+            return b""
+        self._read = True
+        return b'{"token":"cdn_token_abc123"}'
+
     async def __aenter__(self):
         return self
 
@@ -105,7 +115,8 @@ class _StubUploadSession:
     async def __aexit__(self, *exc):
         return False
 
-    def post(self, url, data=None):
+    def post(self, url, data=None, **kwargs):
+        assert kwargs == {"allow_redirects": False}
         return _StubUploadResponse()
 
 
