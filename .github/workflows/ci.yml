@@ -79,6 +79,10 @@ jobs:
           python scripts/check-ru-en-parity.py
           python scripts/check_docs_links.py
       - name: Plugin admission including dependency installation
+        # The SDK discovers plugin-local tools.py by package-qualified name.
+        # Minimum Core's probe uses python -c without -P: running in the plugin
+        # root would shadow Core's tools package with that SDK entry point.
+        working-directory: ${{ runner.temp }}
         shell: bash
         run: |
           hermes plugins validate "$GITHUB_WORKSPACE" --install-deps 2>&1 | tee /tmp/plugin-admission.log
