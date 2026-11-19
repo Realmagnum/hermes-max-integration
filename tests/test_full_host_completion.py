@@ -48,7 +48,11 @@ def host(tmp_path, fixture_home):
     if not (home / 'plugins/max-platform').exists():
         (home / 'plugins/max-platform').symlink_to(ROOT, target_is_directory=True)
     (home / 'config.yaml').write_text('plugins:\n  enabled: [max-platform]\ngateway:\n  platforms:\n    max:\n      enabled: true\n      token: synthetic-fixture-not-live\n')
-    env = os.environ.copy()
+    # Start a genuinely isolated synthetic identity, not the invoking agent's
+    # HERMES_SESSION_ID/provider credentials/activation or proxy environment.
+    env = {key: os.environ[key] for key in ('PATH', 'LANG', 'LC_ALL', 'TZ') if key in os.environ}
+    (home / 'scratch').mkdir(exist_ok=True)
+    env['TMPDIR'] = str(home / 'scratch')
     env.update(HOME=str(home), HERMES_HOME=str(home), HERMES_DISABLE_LAZY_INSTALLS='1', PYTHONDONTWRITEBYTECODE='1', MAX_BOT_TOKEN='synthetic-fixture-not-live', MAX_COMPLETION_HTTP=f'http://127.0.0.1:{server.server_port}', MAX_COMPLETION_EVENTS=str(tmp_path / 'events.jsonl'), PYTHONPATH=os.pathsep.join([str(ROOT / 'tests/fixtures/completion_site'), str(CORE)]))
     def run(args, origin='api'):
         env['MAX_COMPLETION_ORIGIN'] = origin
