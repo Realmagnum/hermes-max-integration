@@ -24,8 +24,10 @@ LIMIT = 65536
 
 
 def hermes_command(args):
-    from hermes_cli.chat_launch import hermes_command as command
-    return command(args)
+    # Use the installed interpreter's public module CLI. Unlike an installation
+    # shell launcher this retains the caller's admitted venv and profile home;
+    # it also exists on minimum Core, before chat_launch was introduced.
+    return [sys.executable, '-m', 'hermes_cli.main', *args]
 
 
 def run_host(command, env):
