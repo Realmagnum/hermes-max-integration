@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import httpx
 from gateway.platforms.base import SendResult
 
-from .base import MaxBaseMixin
+from .base import MaxBaseMixin, _message_recipient_params
 
 try:
     from ..media_caption import media_caption
@@ -187,10 +187,9 @@ class MediaUploadMixin(MaxBaseMixin):
         if not token:
             return SendResult(success=False, error="Upload failed")
 
-        parts = chat_id.split(":", 1)
-        target_type = parts[0] if len(parts) > 1 else "user"
-        target_id = parts[1] if len(parts) > 1 else chat_id
-        params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+        params = _message_recipient_params(chat_id)
+        if ":" not in chat_id and "user_id" in params:
+            params["user_id"] = self._dm_user_ids.get(chat_id, params["user_id"])
 
         body: dict[str, Any] = {
             "text": media_caption(caption, file_path),

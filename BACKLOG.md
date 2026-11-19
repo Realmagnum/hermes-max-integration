@@ -6,6 +6,8 @@ Reviewed 2026-10-13 against implementation `71fb947`. Completed work is removed 
 
 ## Acceptance still outstanding
 
+- [ ] **Media recipient follow-up (outside MR-001–004):** URL-image, location and button methods still have their older explicit-prefix-only routing. Audit those entry points separately with production-path tests before extending bare-negative inference; this local-media fix does not claim coverage there. See [media recipient scope](docs/specs/20261119-media-recipient-routing.md).
+
 Execution resumed on 2026-10-13. Completed items (CODE-06, BUILD-02, DOC-10, CAT-01, INT-01) were verified and moved to [changelog](CHANGELOG.md) and [Micro-Specs](docs/specs/). Follow-up acceptance and catalog review remaining after v2.11.0 publication:
 
 - [ ] **BUILD-01 / DOC-08 · P1 — Final directory-plugin admission and remote-source install.** Minimum-Core clean install and wheel build pass; earlier source admission succeeded. **Acceptance:** validate the final immutable candidate with `hermes plugins validate <plugin-path> --install-deps`; reject both dependency-failure fallback messages; confirm directory assets/runtime import and record remote repository/SHA. A Python wheel is not the complete Hermes directory bundle. GitHub/Gitea equivalence is unverified.

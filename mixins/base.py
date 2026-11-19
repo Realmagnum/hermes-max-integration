@@ -29,6 +29,19 @@ def _http_body_snippet(resp: Any, limit: int = 200) -> str:
     return f": {text[:limit]}" if text else ""
 
 
+def _message_recipient_params(target: str) -> dict[str, str]:
+    """Resolve message recipients; explicit namespaces take precedence over sign."""
+    parts = target.split(":", 1)
+    if len(parts) > 1:
+        namespace, target_id = parts
+        return {"chat_id" if namespace == "chat" else "user_id": target_id}
+    try:
+        is_chat = int(target) < 0
+    except (ValueError, TypeError):
+        is_chat = False
+    return {"chat_id" if is_chat else "user_id": target}
+
+
 class MaxBaseMixin(BasePlatformAdapter):
     """
     Base mixin for MAX Platform Adapter.
