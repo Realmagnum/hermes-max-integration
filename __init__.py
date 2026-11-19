@@ -1,7 +1,10 @@
-"""Hermes MAX Platform Plugin — MAX messenger adapter (voice transcription via Hermes core STT)."""
-try:
-    from .adapter import register
-except ImportError:
-    from adapter import register  # noqa: F401
+"""Hermes MAX plugin: keep eager tool discovery independent of adapter imports."""
+
+
+def register(ctx):
+    from .adapter import register as register_adapter
+
+    return register_adapter(ctx)
+
 
 __all__ = ["register"]
