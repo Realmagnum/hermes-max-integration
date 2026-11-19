@@ -146,6 +146,17 @@ async def test_host_typed_and_ordinary_media_real_cdn(typed, kind, suffix, monke
             assert exc.value.code == 0, capsys.readouterr()
         else:
             result = await asyncio.to_thread(subprocess.run, [sys.executable, str(harness), 'send', '--to', 'max:-42', f'MEDIA:{path}', '--json'], env=os.environ.copy(), capture_output=True, timeout=30)
+            if not adapter._STANDALONE_POLICY_SUPPORTED:
+                # Older real Core rejects ordinary plugin media before transport.
+                # Assert that contract, not a synthetic success or a skipped case.
+                assert result.returncode == 1, result.stderr + result.stdout
+                failure = json.loads(result.stdout)
+                assert 'only media attachments' in failure['error']
+                events = [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+                assert not [event for event in events if 'http' in event]
+                assert received == 0
+                assert not list((home / 'cache').glob('max-typed-v1-*'))
+                return
             assert result.returncode == 0, result.stderr + result.stdout
         events = [json.loads(x) for x in log.read_text().splitlines()]
         message, = [x for x in events if x.get('path') == '/messages']
