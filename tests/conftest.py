@@ -30,6 +30,11 @@ import pytest
 # Load `__init__.py` under a fixed private namespace instead, then alias the
 # resulting `adapter` submodule to the top-level name the tests expect.
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+# The documented plugin tools.py is not Core's top-level tools package.
+# Prefer the actual installed Core root before path-based test imports.
+import hermes_cli
+
+sys.path.insert(0, str(Path(hermes_cli.__file__).resolve().parent.parent))
 _NAMESPACE = "hermes_max_plugin_under_test"
 
 if _NAMESPACE not in sys.modules:
