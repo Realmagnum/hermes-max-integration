@@ -35,6 +35,9 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 import hermes_cli
 
 sys.path.insert(0, str(Path(hermes_cli.__file__).resolve().parent.parent))
+# Pytest later prepends the plugin checkout again; pin the actual Core package
+# before that so its registry cannot resolve to the plugin's tools.py.
+importlib.import_module("tools.registry")
 _NAMESPACE = "hermes_max_plugin_under_test"
 
 if _NAMESPACE not in sys.modules:
