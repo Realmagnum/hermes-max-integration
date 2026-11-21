@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 
 import httpx
 from gateway.platforms.base import SendResult
 
-logger = logging.getLogger(__name__)
+from .media_diagnostics import media_begin, media_event, media_wait
 
 
 def readiness_settings(extra):
@@ -42,21 +41,29 @@ async def send_ready_attachment(client, url, params, body, attempts, timeout, *,
             if remaining <= delay:
                 break
             if delay:
-                await asyncio.sleep(delay)
+                wait_started = asyncio.get_running_loop().time()
+                try:
+                    await asyncio.sleep(delay)
+                finally:
+                    media_wait(asyncio.get_running_loop().time() - wait_started)
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 break
             kwargs = {"params": params, "json": body}
             if headers is not None:
                 kwargs["headers"] = headers
+            media_begin("readiness")
             resp = await asyncio.wait_for(client.post(url, **kwargs), timeout=remaining)
+            media_event("readiness", "response", status=getattr(resp, "status_code", None), attempt=attempt + 1)
             resp.raise_for_status()
             data = resp.json()
             if data.get("ok", True) is False:
+                media_event("readiness", "rejected", status=getattr(resp, "status_code", None), attempt=attempt + 1)
                 return SendResult(success=False, error="MAX rejected attachment", retryable=False)
             message = data.get("message", {})
             mid = str((message.get("body", {}) or {}).get("mid", "")
                       or message.get("message_id", "") or "")
+            media_event("readiness", "success", status=getattr(resp, "status_code", None), attempt=attempt + 1, mid=mid)
             return SendResult(success=True, message_id=mid, raw_response=data)
         except httpx.HTTPStatusError as exc:
             code = "unavailable"
@@ -66,16 +73,15 @@ async def send_ready_attachment(client, url, params, body, attempts, timeout, *,
                 code = "attachment.not.ready" if raw_code == "attachment.not.ready" else "other"
             except (ValueError, TypeError):
                 code = "invalid-json"
+            media_event("readiness", "not_ready" if exc.response.status_code == 400 and code == "attachment.not.ready" else "error",
+                        status=exc.response.status_code, attempt=attempt + 1)
             if (exc.response.status_code == 400 and code == "attachment.not.ready"
                     and attempt + 1 < attempts):
-                logger.info("MAX: upload not ready (attempt %d/%d), retrying…", attempt + 1, attempts)
                 continue
-            logger.error("MAX: _upload_send failed: status=%d code=%s attempts=%d",
-                         exc.response.status_code, code, attempt + 1)
             return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
-        except Exception as exc:  # noqa: BLE001 — ambiguous send must not be repeated
-            logger.error("MAX: _upload_send failed: error_type=%s attempts=%d",
-                         type(exc).__name__, attempt + 1)
+        except Exception:  # noqa: BLE001 — ambiguous send must not be repeated
+            media_event("readiness", "error", attempt=attempt + 1)
             return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
-    logger.error("MAX: _upload_send failed: code=attachment.not.ready readiness budget exhausted")
+    media_event("readiness", "budget_exhausted")
+
     return SendResult(success=False, error="Upload-send failed: attachment readiness budget exhausted", retryable=False)

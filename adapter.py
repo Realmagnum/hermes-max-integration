@@ -51,6 +51,12 @@ from gateway.platforms.base import (
     cache_image_from_bytes,
 )
 
+from .mixins.media_diagnostics import (
+    batch_operation,
+    media_begin,
+    media_event,
+    trace_remote_image,
+)
 from .mixins.media_readiness import readiness_settings
 
 try:
@@ -2619,6 +2625,7 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             logger.error("MAX: delete_message failed: %s", e)
             return SendResult(success=False, error="Delete failed (see logs)", retryable=True)
 
+    @trace_remote_image
     async def send_image(
         self, chat_id: str, image_url: str,
         caption: str | None = None,
@@ -2637,8 +2644,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
             return SendResult(success=False, error="Not connected")
         try:
             await self.send_action(chat_id, "sending_photo")
-        except Exception as exc:  # noqa: BLE001 — action failure must not block delivery
-            logger.debug("Failed to send photo action: %s", exc)
+        except Exception:  # noqa: BLE001, S110 — cosmetic action failure must not add log noise.
+            pass
         parts = chat_id.split(":", 1)
         target_type = parts[0] if len(parts) > 1 else "user"
         target_id = parts[1] if len(parts) > 1 else chat_id
@@ -2650,7 +2657,9 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         if reply_to:
             body["link"] = {"type": "REPLY", "mid": reply_to}
         try:
+            media_begin("send")
             resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
+            media_event("send", "pending", status=getattr(resp, "status_code", None))
             resp.raise_for_status()
             d = resp.json()
             rec = d.get("message", {}).get("recipient", {})
@@ -2660,8 +2669,8 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
                 self._remember_dm(resp_cid, resp_uid)
             mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
             return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.error("MAX: send_image failed: %s", e)
+        except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            media_event("send", "error")
             return SendResult(success=False, error="Send image failed (see logs)", retryable=True)
 
     async def send_image_file(
@@ -2679,86 +2688,96 @@ class MaxAdapter(MediaUploadMixin, TableRendererMixin, ButtonsMixin, CallbackAut
         metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> SendResult:
-        """Send multiple images in a single message.
-
-        Uploads all images concurrently via ``_upload``, then sends one
-        message with all attachment tokens. Falls back to sequential
-        ``send_image_file`` if any upload fails.
-
-        ``images`` is a list of ``(url_or_path, caption)`` tuples, matching
-        the Hermes core contract (``chat_id`` is already scoped by the caller).
-        """
-        if not self._http_client:
-            return SendResult(success=False, error="Not connected")
-
-        if not images:
-            return SendResult(success=False, error="No images provided")
-
+        """Existing batch upload/send/fallback; local summaries end at delivery."""
+        diagnostics = []  # Fixed fields per input, no events/history/global registry.
+        outcome, diagnostic_mid = "error", ""
         try:
-            await self.send_action(chat_id, "sending_photo")
-        except Exception as exc:  # noqa: BLE001 — action failure must not block delivery
-            logger.debug("Failed to send photo action: %s", exc)
+            if not self._http_client:
+                return SendResult(success=False, error="Not connected")
+            if not images:
+                return SendResult(success=False, error="No images provided")
+            try:
+                await self.send_action(chat_id, "sending_photo")
+            except Exception:  # noqa: BLE001, S110 — cosmetic action failure must not add log noise.
+                pass
 
-        # Upload all images concurrently
-        tokens: list[str] = []
-        captions: list[str] = []
-        for url_or_path, caption in images:
-            # Handle file:// URLs from core (e.g. file:///C:/path or file://C:/path)
-            clean_path = url_or_path
-            if clean_path.startswith("file://"):
-                import urllib.parse
-                clean_path = urllib.parse.unquote(clean_path[7:])
-                if clean_path.startswith("/") and len(clean_path) > 2 and clean_path[2] == ":":
-                    clean_path = clean_path[1:]
-
-            if clean_path.startswith(("http://", "https://")):
-                return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
-            else:
-                tok = await self._upload(clean_path, "image")
-                if tok:
-                    tokens.append(tok)
-                    captions.append(caption or "")
+            tokens: list[str] = []
+            captions: list[str] = []
+            for index, (url_or_path, caption) in enumerate(images):
+                clean_path = url_or_path
+                if clean_path.startswith("file://"):
+                    import urllib.parse
+                    clean_path = urllib.parse.unquote(clean_path[7:])
+                    if clean_path.startswith("/") and len(clean_path) > 2 and clean_path[2] == ":":
+                        clean_path = clean_path[1:]
+                if clean_path.startswith(("http://", "https://")):
+                    return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata, diagnostics=diagnostics)
                 else:
-                    return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
+                    operation = batch_operation(diagnostics, index)
+                    with operation.bind():
+                        tok = await self._upload(clean_path, "image")
+                    operation.emit("prepare", "pending")  # Other inputs' uploads are not this file's CDN time.
+                    if tok:
+                        tokens.append(tok)
+                        captions.append(caption or "")
+                    else:
+                        return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata, diagnostics=diagnostics)
 
-        parts = chat_id.split(":", 1)
-        target_type = parts[0] if len(parts) > 1 else "user"
-        target_id = parts[1] if len(parts) > 1 else chat_id
-        params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
-
-        body: dict[str, Any] = {
-            "text": " ".join(c for c in captions if c).strip() or "📷",
-            "attachments": [{"type": "image", "payload": {"token": t}} for t in tokens],
-        }
-
-        try:
-            resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
-            resp.raise_for_status()
-            d = resp.json()
-            rec = d.get("message", {}).get("recipient", {})
-            resp_cid = rec.get("chat_id")
-            resp_uid = rec.get("user_id") or params.get("user_id")
-            if resp_cid and resp_uid:
-                self._remember_dm(resp_cid, resp_uid)
-            mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
-            return SendResult(success=True, message_id=mid, raw_response=d)
-        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.error("MAX: send_multiple_images failed: %s", e)
-            return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata)
+            parts = chat_id.split(":", 1)
+            target_type = parts[0] if len(parts) > 1 else "user"
+            target_id = parts[1] if len(parts) > 1 else chat_id
+            params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
+            body: dict[str, Any] = {
+                "text": " ".join(c for c in captions if c).strip() or "📷",
+                "attachments": [{"type": "image", "payload": {"token": t}} for t in tokens],
+            }
+            try:
+                for operation in diagnostics:
+                    operation.begin("send")
+                resp = await self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body)
+                for operation in diagnostics:
+                    operation.emit("send", "pending", status=getattr(resp, "status_code", None))
+                resp.raise_for_status()
+                d = resp.json()
+                rec = d.get("message", {}).get("recipient", {})
+                resp_cid = rec.get("chat_id")
+                resp_uid = rec.get("user_id") or params.get("user_id")
+                if resp_cid and resp_uid:
+                    self._remember_dm(resp_cid, resp_uid)
+                mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
+                outcome, diagnostic_mid = "success", mid
+                return SendResult(success=True, message_id=mid, raw_response=d)
+            except Exception:  # noqa: BLE001 — preserve the existing fallback, no new replay policy
+                for operation in diagnostics:
+                    operation.emit("send", "error")
+                return await self._send_multiple_images_fallback(chat_id, images, reply_to=None, metadata=metadata, diagnostics=diagnostics)
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            # Fallback finalizes individual results; finish() ignores duplicates.
+            # Unattempted inputs (e.g. cancellation) have unknown source/artifact.
+            for index in range(len(images)):
+                batch_operation(diagnostics, index).finish(outcome, mid=diagnostic_mid)
 
     async def _send_multiple_images_fallback(
         self, chat_id: str,
         images: list[tuple[str, str]],
         reply_to: str | None = None,
         metadata: dict[str, Any] | None = None,
+        diagnostics: list | None = None,
     ) -> SendResult:
-        """Fallback: send images one by one if batch upload fails."""
+        """Unchanged sequential fallback; reuse the input's initial upload summary."""
+        diagnostics = diagnostics if diagnostics is not None else []
         last_result = SendResult(success=False, error="No images sent")
-        for url_or_path, caption in images:
-            if url_or_path.startswith(("http://", "https://", "file://")):
-                result = await self.send_image(chat_id, url_or_path, caption, reply_to, metadata)
-            else:
-                result = await self.send_image_file(chat_id, url_or_path, caption, reply_to, metadata)
+        for index, (url_or_path, caption) in enumerate(images):
+            operation = batch_operation(diagnostics, index)
+            with operation:
+                if url_or_path.startswith(("http://", "https://", "file://")):
+                    result = await self.send_image(chat_id, url_or_path, caption, reply_to, metadata)
+                else:
+                    result = await self.send_image_file(chat_id, url_or_path, caption, reply_to, metadata)
+                operation.finish("success" if result.success else "error", mid=getattr(result, "message_id", None))
             if result.success:
                 last_result = result
         return last_result

@@ -7,10 +7,15 @@ import os
 import queue
 import stat
 import threading
+from contextvars import copy_context
 from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
+
+# Keep observers in the same module generation as the cached upload caller.
+# Core may replace sys.modules entries while an existing gateway adapter survives.
+from .media_diagnostics import admitted_media, identify_media_source
 
 UPLOAD_LIMITS = {"image": 50_000_000, "video": 250_000_000,
                  "audio": 256_000_000, "file": 4_000_000_000}
@@ -60,9 +65,11 @@ def upload_timeout(size: int) -> float:
 class UploadSize(int):
     """An int for compatibility, carrying the exact admitted filesystem identity."""
     identity: tuple[int, int, int]
+    diagnostic_info: os.stat_result
     def __new__(cls, info):
         value = super().__new__(cls, info.st_size)
         value.identity = (info.st_dev, info.st_ino, info.st_size)
+        value.diagnostic_info = info
         return value
 
 
@@ -94,14 +101,18 @@ def _settle(loop, future, value=None, error=None):
 
 async def async_check_upload(path: str, kind: str):
     loop = asyncio.get_running_loop()
+    context = copy_context()
     future = loop.create_future()
     def run():
         try:
+            identify_media_source(path)
             _settle(loop, future, check_upload(path, kind))
         except Exception as exc:  # noqa: BLE001 — deliver original bounded-admission failure
             _settle(loop, future, error=exc)
-    _start_owned(run, "max-upload-admission")
-    return await asyncio.wait_for(future, IO_WAIT)
+    _start_owned(lambda: context.run(run), "max-upload-admission")
+    size = await asyncio.wait_for(future, IO_WAIT)
+    admitted_media(size.diagnostic_info)
+    return size
 
 
 def _open_file(path):

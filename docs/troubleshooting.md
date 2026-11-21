@@ -22,6 +22,27 @@ Start with read-only checks. Never place bot tokens in shell arguments or publis
 
 `diagnose.sh` reads MAX variables from the caller's environment only; it never loads Hermes `.env`. Run it from a profile-aware environment that supplies `MAX_BOT_TOKEN` and the relevant non-secret MAX settings. A missing token is reported as a failed check. The script withholds log contents and API response bodies and passes the authorization header to curl over stdin, rather than exposing it in process arguments.
 
+## Outbound file correlation
+
+Each outgoing attachment produces **one compact final** `MAX media: {JSON}` at INFO, after success, error or cancellation. There are no start/progress/per-attempt plugin records or logging modes. Existing application handlers own storage/rotation; no plugin log file is created. Core/HTTPX and unrelated plugin logs are unchanged. A hard crash before completion can lose the in-memory summary.
+
+The registered `max_send_attachments` tool owns local/remote media diagnostics through the actual shared send, not just `_upload`. Media in one tool request share `batch_id` (when multiple) and keep their input `attachment_index`; each gets the same actual send outcome/hashed receipt and readiness attempts, with its own source/artifact. The caller uses a silent fixed temporary accumulator under the baseline `MediaOperation.bind()` protocol, then copies only fixed readiness/send fields to its at most12 media owners, preserving each file’s identity/upload state. The temporary never emits a summary. No `media_group` import is required, so an old cached helper and newly loaded caller are compatible. There is no event history/cache or additional I/O/task. A low-level `_upload` without a send owner reports `result=uploaded`, NEVER delivery `success`; its empty mid/zero send attempts are not a receipt.
+
+The fixed fields are `operation_id`, `sender`, final `media_type`, admitted artifact `size`, original `source_id`, artifact `file_fingerprint`, `durations_ms`, `attempts`, actual readiness `wait_ms`, total `elapsed_ms`, `result`, observed `status`, `error_stage`, `error` and hashed `mid`. `durations_ms` and `attempts` have seven fixed stage keys: prepare, normalize, admission, upload_url, cdn, readiness, send. Counters saturate at9999 and times at86400000ms; no event/attempt array is kept. Summary JSON is bounded below2048 bytes by its fixed schema. HTTP200 from upload alone is not delivery: inspect result and send/readiness attempts. `status` is the observed HTTP code in the latest attempt, or null without a response; it may describe upload when send was never reached and is not a delivery receipt. `mid` is SHA256 of the returned ID (UTF-8 with surrogatepass); missing/non-string/over4096-character IDs are omitted from the summary without changing the returned SendResult.
+
+State is O(1) per attachment and independent of retry count. A batch keeps one such accumulator per existing input only until final send/fallback (O(N) for N supplied inputs, not an event history or global registry). Each batch attachment gets its own final result plus shared `batch_id` and zero-based `attachment_index`; successful uploads are not flushed prematurely. Existing fallback/retry/type decisions are unchanged, and a partially successful fallback reports each file's actual outcome even if the existing batch return reports last success. No additional content reads, queues, timers, background tasks or workers are introduced. Preparation failures/unattempted inputs and remote URL images have empty identities/size -1 where no local source/artifact was observed.
+
+`source_id` maps the original lexical input path before audio normalization, off-loop inside the existing normalization/admission worker. It hashes `b"max-source-path-v1\0" + os.fsencode(os.path.normcase(os.path.abspath(original_path)))`; input length and normalized bytes are capped at32768. This is **opaque mapping, not cryptographic anonymity or proof of content/existence**: guessed paths can be tested; symlinks are not resolved; a reused path keeps its ID. On the same platform/CWD, compare a known original even after the generated `.ogg` is removed:
+
+```python
+import hashlib
+import os
+path = input("Original input path: ")
+print(hashlib.sha256(b"max-source-path-v1\0" + os.fsencode(os.path.normcase(os.path.abspath(path)))).hexdigest())
+```
+
+`file_fingerprint` identifies the admitted artifact, not necessarily the original: SHA256 of ASCII `max-file-v1:st_dev:st_ino:st_size:st_mtime_ns` from existing admission lstat, decimal integers/no newline. Compare locally with `os.lstat(artifact_path)` and that formula while the artifact exists and metadata is unchanged. This is not a content checksum: edits/copies/replacement change it; hard links match and inode reuse/in-place changes are not disproved. If the original is absent but its exact lexical path is known, source mapping still works, not content recovery. If both original and path are lost, the log cannot reconstruct them. Raw paths, names, URLs, credentials, speech/captions, bodies and exception text are not retained/logged in the accumulator.
+
 ## diagnose.sh
 
 Automated script for checking MAX functionality.

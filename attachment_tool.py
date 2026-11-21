@@ -8,6 +8,7 @@ import math
 import os
 import re
 import stat
+from contextlib import nullcontext
 from urllib.parse import urlsplit
 
 import httpx
@@ -15,6 +16,7 @@ from gateway.config import PlatformConfig
 from gateway.session_context import get_session_env
 
 from .credential_support import get_max_secret
+from .mixins.media_diagnostics import MediaOperation, identify_media_source
 from .ssl_support import get_max_ssl_context
 
 MEDIA = {"image", "video", "audio", "file"}
@@ -199,21 +201,52 @@ async def send_attachments(args, **kwargs):
         return json.dumps({"error": f"Attachment send failed ({type(exc).__name__})", "retryable": False})
 
 
+def _stat_media_source(path):
+    # Reuse the existing preflight worker; no additional file read/stat/task.
+    identify_media_source(path)
+    return os.stat(path)
+
+
+def _copy_send_diagnostics(shared, operations):
+    """Copy only fixed network fields; keep each input's identity/upload state.
+
+    The silent shared accumulator uses the installed baseline bind protocol and
+    is NEVER finished/logged. No new helper import or shared event history.
+    """
+    shared.emit(shared.active, "pending")  # Settle the last network stage, no log.
+    for operation in operations:
+        for stage in ("readiness", "send"):
+            operation.durations[stage] = shared.durations[stage]
+            operation.attempts[stage] = shared.attempts[stage]
+        operation.wait_ms, operation.status = shared.wait_ms, shared.status
+        operation.error_stage, operation.error = shared.error_stage, shared.error
+        operation.mid = shared.mid  # Already hashed by the common helper.
+        operation.active, operation.previous = shared.active, shared.previous
+
+
 async def send_to_resolved(body, target, token):
-    """Plugin-local sender; host callback supplies the already-authorized recipient."""
+    """Plugin-local sender; owns each media summary through the shared send."""
+    operations = {}
+    outcome, mid = "error", ""
     try:
         body = validate(body)
+        operations = {i: MediaOperation("adapter", item["type"])
+                      for i, item in enumerate(body["attachments"]) if item["type"] in MEDIA}
+        batch_id = next(iter(operations.values())).operation_id if len(operations) > 1 else ""
+        for i, operation in operations.items():
+            operation.batch_id, operation.attachment_index = batch_id, i
         if not isinstance(target, str) or not re.fullmatch(r"(?:(?:chat|user):)?-?[0-9]{1,20}", target):
             raise ValueError("Invalid resolved MAX recipient")
         # Lazy import prevents a registration import cycle. No connection/polling.
         from .adapter import MaxAdapter
 
         # Validate every local file before any upload side effect.
-        for item in body["attachments"]:
+        for i, item in enumerate(body["attachments"]):
             if "path" in item:
                 from agent.file_safety import raise_if_read_blocked
                 raise_if_read_blocked(item["path"])
-                info = await asyncio.to_thread(os.stat, item["path"])
+                with operations[i].bind():
+                    info = await asyncio.to_thread(_stat_media_source, item["path"])
                 if not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
                     raise ValueError("Expected a non-empty regular local file")
         instance = MaxAdapter(PlatformConfig(enabled=True, token=token, extra={}))
@@ -231,17 +264,35 @@ async def send_to_resolved(body, target, token):
                         raise ValueError("notify=false requires confirmed DM/group; channel or unknown target refused")
             for i, item in enumerate(body["attachments"]):
                 if "path" in item:
-                    uploaded = await instance._upload(item["path"], item["type"])
+                    with operations[i].bind():
+                        uploaded = await instance._upload(item["path"], item["type"])
                     if not uploaded:
                         return json.dumps({"error": "Upload failed; message not sent", "retryable": False})
                     body["attachments"][i] = {"type": item["type"], "payload": {"token": uploaded}}
-            result = await instance._send_attachment_body(target, body)
+                    operations[i].begin("prepare")  # Waiting for siblings is not CDN time.
+            shared = MediaOperation("adapter", "file") if operations else None
+            for operation in operations.values():
+                operation.emit("send", "pending")  # Sibling waiting stays prepare time.
+            with shared.bind() if shared is not None else nullcontext():
+                try:
+                    result = await instance._send_attachment_body(target, body)
+                    mid = result.message_id or ""
+                finally:
+                    if shared is not None:
+                        _copy_send_diagnostics(shared, operations.values())
+        outcome = "success" if result.success else "error"
         return json.dumps({"success": result.success, "message_id": result.message_id,
                            "error": result.error, "retryable": False})
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        raise
     except (ValueError, TypeError, OSError) as exc:
         return json.dumps({"error": str(exc), "retryable": False})
     except Exception as exc:  # noqa: BLE001 — no credentials or response text in errors
         return json.dumps({"error": f"Attachment send failed ({type(exc).__name__}); do not resend automatically", "retryable": False})
+    finally:
+        for operation in operations.values():
+            operation.finish(outcome, mid=mid)
 
 
 SCHEMA = {
