@@ -6,6 +6,8 @@
 
 ## Незавершённая приёмка
 
+- [ ] **Получатели вложений — продолжение (вне MR-001–004):** методы URL-image, location и buttons сохраняют прежнюю маршрутизацию только по явному префиксу. Перед расширением обработки отрицательных ID без префикса отдельно проверить эти entry points через production-path tests; исправление локальных вложений не заявляет их покрытия. См. [границы media recipient](docs/specs/20261119-media-recipient-routing_RU.md).
+
 Выполнение возобновлено 2026-10-13. Завершённые задачи (CODE-06, BUILD-02, DOC-10, CAT-01, INT-01) проверены и перенесены в [журнал изменений](CHANGELOG_RU.md) и [микроспеки](docs/specs/). Оставшаяся приёмка и повторное ревью каталога после публикации v2.11.0:
 
 - [ ] **BUILD-01 / DOC-08 · P1 — Финальный admission каталога плагина и установка из удалённого источника.** Чистая установка minimum-Core и сборка wheel проходят; admission прежнего снимка успешен. **Приёмка:** проверить финальный immutable candidate через `hermes plugins validate <plugin-path> --install-deps`, отклонять оба сообщения dependency-failure fallback; подтвердить assets/import и записать remote repository/SHA. Python wheel не является полным каталогом Hermes-плагина. Эквивалентность GitHub/Gitea не проверена.

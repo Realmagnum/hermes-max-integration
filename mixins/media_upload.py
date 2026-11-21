@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import shutil
@@ -10,10 +9,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
 from gateway.platforms.base import SendResult
 
-from .base import MaxBaseMixin
+from .base import MaxBaseMixin, _message_recipient_params
+from .media_diagnostics import (
+    identify_media_source,
+    media_begin,
+    media_event,
+    trace_adapter_send,
+    trace_adapter_upload,
+)
+from .media_readiness import send_ready_attachment
+from .upload_stream import async_check_upload, post_file, upload_timeout
 
 try:
     from ..media_caption import media_caption
@@ -30,7 +37,7 @@ logger = logging.getLogger(__name__)
 # ── Constants ────────────────────────────────────────────────────────────
 
 MAX_API_BASE = "https://platform-api2.max.ru"
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+# Upload admission uses UPLOAD_LIMITS in upload_stream; remote fetch has its own cap.
 UPLOAD_DELAY = 2.0
 
 # Audio containers the Max CDN accepts for type=audio attachments.
@@ -92,7 +99,7 @@ def _transcode_to_opus_ogg(src: str, dst: str) -> bool:
     """Transcode *src* to Ogg/Opus at *dst* using ffmpeg. Returns success."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        logger.warning("MAX: ffmpeg not found — cannot normalize audio %s", src)
+        media_event("normalize", "error")
         return False
     try:
         proc = subprocess.run(
@@ -102,14 +109,11 @@ def _transcode_to_opus_ogg(src: str, dst: str) -> bool:
             check=False,
         )
         if proc.returncode != 0:
-            logger.warning(
-                "MAX: ffmpeg normalize failed for %s: %s",
-                src, proc.stderr.decode("utf-8", "replace")[-300:],
-            )
+            media_event("normalize", "error")
             return False
         return os.path.exists(dst) and os.path.getsize(dst) > 0
-    except Exception as e:  # noqa: BLE001 — normalization must never break delivery
-        logger.warning("MAX: ffmpeg normalize error for %s: %s", src, e)
+    except Exception:  # noqa: BLE001 — normalization must never break delivery
+        media_event("normalize", "error")
         return False
 
 
@@ -132,16 +136,20 @@ def normalize_audio_for_max(path: str) -> str:
     try:
         if not _transcode_to_opus_ogg(path, str(dst)):
             return path
-        logger.info("MAX: normalized audio %s (%s -> %s)", path, container, dst)
         return str(dst)
-    except Exception as e:  # noqa: BLE001 — normalization must never break delivery
-        logger.warning("MAX: audio normalization error for %s: %s", path, e)
+    except Exception:  # noqa: BLE001 — normalization must never break delivery
+        media_event("normalize", "error")
         try:
             if dst.exists():
                 dst.unlink()
         except OSError:
             pass
         return path
+
+
+def _normalize_with_source(path):
+    identify_media_source(path)
+    return normalize_audio_for_max(path)
 
 
 class MediaUploadMixin(MaxBaseMixin):
@@ -152,6 +160,7 @@ class MediaUploadMixin(MaxBaseMixin):
     with retry for CDN processing delays.
     """
 
+    @trace_adapter_send
     async def _upload_send(
         self, chat_id: str, file_path: str, mtype: str,
         caption: str, reply_to: str | None,
@@ -175,22 +184,18 @@ class MediaUploadMixin(MaxBaseMixin):
         action = action_map.get(mtype, "sending_file")
         try:
             await self.send_action(chat_id, action)
-        except Exception as exc:  # noqa: BLE001 — action failure must not block media delivery
-            logger.debug("Failed to send action %s: %s", action, exc)
+        except Exception:  # noqa: BLE001, S110 — cosmetic action failure must not add log noise.
+            pass
 
         # Normalize audio to a Max-accepted container regardless of what the
         # TTS provider emitted (wav/flac/m4a are rejected by the CDN with 415).
         if mtype == "audio":
-            file_path = await asyncio.to_thread(normalize_audio_for_max, file_path)
+            media_begin("normalize")
+            file_path = await asyncio.to_thread(_normalize_with_source, file_path)
 
         token = await self._upload(file_path, mtype)
         if not token:
             return SendResult(success=False, error="Upload failed")
-
-        parts = chat_id.split(":", 1)
-        target_type = parts[0] if len(parts) > 1 else "user"
-        target_id = parts[1] if len(parts) > 1 else chat_id
-        params = {"chat_id": target_id} if target_type == "chat" else {"user_id": target_id}
 
         body: dict[str, Any] = {
             "text": media_caption(caption, file_path),
@@ -199,66 +204,46 @@ class MediaUploadMixin(MaxBaseMixin):
         if reply_to:
             body["link"] = {"type": "REPLY", "mid": reply_to}
 
-        max_attempts = self._media_ready_attempts
-        deadline = asyncio.get_running_loop().time() + self._media_ready_timeout
-        for attempt in range(max_attempts):
+        return await self._send_attachment_body(chat_id, body)
+
+    async def _send_attachment_body(self, chat_id: str, body: dict[str, Any]) -> SendResult:
+        """Send a validated attachment body; ambiguous effects are not repeated."""
+        params = _message_recipient_params(chat_id)
+        if ":" not in chat_id and "user_id" in params:
+            params["user_id"] = self._dm_user_ids.get(chat_id, params["user_id"])
+        result = await send_ready_attachment(
+            self._http_client, f"{MAX_API_BASE}/messages", params, body,
+            self._media_ready_attempts, self._media_ready_timeout,
+        )
+        if result.success:
             try:
-                remaining = deadline - asyncio.get_running_loop().time()
-                delay = min(2.0 * (2 ** (attempt - 1)), 16.0) if attempt else 0
-                if remaining <= delay:
-                    break
-                if delay:
-                    await asyncio.sleep(delay)
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    break
-                # A timeout may mean MAX accepted the POST: do not resend it.
-                resp = await asyncio.wait_for(
-                    self._http_client.post(f"{MAX_API_BASE}/messages", params=params, json=body),
-                    timeout=remaining,
-                )
-                resp.raise_for_status()
-                d = resp.json()
-                rec = d.get("message", {}).get("recipient", {})
+                rec = result.raw_response.get("message", {}).get("recipient", {})
                 resp_cid = rec.get("chat_id")
                 resp_uid = rec.get("user_id") or params.get("user_id")
                 if resp_cid and resp_uid:
                     self._remember_dm(resp_cid, resp_uid)
-                mid = str((d.get("message", {}).get("body", {}) or {}).get("mid", ""))
-                return SendResult(success=True, message_id=mid, raw_response=d)
-            except httpx.HTTPStatusError as e:
-                code = "unavailable"
-                try:
-                    err_body = e.response.json()
-                    raw_code = err_body.get("code") if isinstance(err_body, dict) else None
-                    # Never log arbitrary response text, URLs, tokens or API messages.
-                    code = "attachment.not.ready" if raw_code == "attachment.not.ready" else "other"
-                except (ValueError, TypeError):
-                    code = "invalid-json"
-                if (e.response.status_code == 400 and code == "attachment.not.ready"
-                        and attempt + 1 < max_attempts):
-                    logger.info("MAX: upload not ready (attempt %d/%d), retrying…", attempt + 1, max_attempts)
-                    continue
-                logger.error("MAX: _upload_send failed: status=%d code=%s attempts=%d", e.response.status_code, code, attempt + 1)
+            except Exception:  # noqa: BLE001 — post-send parsing must never replay
+                media_event("send", "error")
                 return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
-            except Exception as e:  # noqa: BLE001 — ambiguous send must not be repeated
-                logger.error("MAX: _upload_send failed: error_type=%s attempts=%d", type(e).__name__, attempt + 1)
-                return SendResult(success=False, error="Upload-send failed (see logs)", retryable=False)
+        return result
 
-        logger.error("MAX: _upload_send failed: code=attachment.not.ready readiness budget exhausted")
-        return SendResult(success=False, error="Upload-send failed: attachment readiness budget exhausted", retryable=False)
-
+    @trace_adapter_upload
     async def _upload(self, file_path: str, media_type: str) -> str | None:
         """Two-step upload: get upload URL -> POST file (multipart) -> return token."""
         import aiohttp as _aiohttp
 
-        fp = Path(file_path)
-        if not fp.exists() or fp.stat().st_size > MAX_FILE_SIZE:
+        media_begin("admission")
+        try:
+            file_size = await async_check_upload(file_path, media_type)
+        except (OSError, ValueError):
             return None
 
+        diagnostic_stage = "upload_url"
         try:
             # Step 1: get upload URL
+            media_begin("upload_url")
             resp = await self._http_client.post(f"{MAX_API_BASE}/uploads", params={"type": media_type})
+            media_event("upload_url", "success" if resp.status_code == 200 else "error", status=resp.status_code, attempt=1)
             if resp.status_code != 200:
                 return None
             data = resp.json()
@@ -281,61 +266,25 @@ class MediaUploadMixin(MaxBaseMixin):
             ):
                 pass  # Safe — within Max infrastructure
             else:
-                logger.warning(
-                    "MAX: upload URL rejected (not in Max domain): %s",
-                    _safe_url_for_log(upload_url),
-                )
+                media_event("upload_url", "rejected")
                 return None
 
             # Step 2: upload file to the URL (use aiohttp for multipart)
+            diagnostic_stage = "cdn"
+            media_begin("cdn")
             connector = _aiohttp.TCPConnector(ssl=get_max_ssl_context())
-            async with _aiohttp.ClientSession(connector=connector, timeout=_aiohttp.ClientTimeout(total=120)) as session:
-                # Read file bytes off the event loop (ASYNC230); 50MB cap
-                # means loading into memory is acceptable here.
-                file_bytes = await asyncio.to_thread(fp.read_bytes)
-                form = _aiohttp.FormData()
-                form.add_field("data", file_bytes, filename=fp.name)
-                async with session.post(upload_url, data=form) as r:
-                        if r.status != 200:
-                            logger.warning(
-                                "MAX: CDN upload failed for %s (status %d, type=%s)",
-                                fp, r.status, media_type,
-                            )
-                            if media_type in ("audio", "video") and upload_token:
-                                logger.info("MAX: audio/video CDN failed but we have token from /uploads, still trying")
-                            else:
-                                return None
-
-                        # For audio/video: token already obtained from /uploads response
-                        if upload_token:
-                            return upload_token
-
-                        # For file/image: parse CDN JSON response for token
-                        try:
-                            upload_data = await r.json()
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            logger.warning(
-                                "MAX: CDN returned non-JSON for %s (type=%s)",
-                                fp, media_type,
-                            )
-                            if media_type in ("audio", "video"):
-                                return await self._upload(str(fp), "file")
-                            return None
-                        token = upload_data.get("token")
-                        if not token and "photos" in upload_data:
-                            photos = upload_data["photos"]
-                            if isinstance(photos, dict):
-                                first = next(iter(photos.values()), {})
-                                token = first.get("token") if isinstance(first, dict) else None
-                        if not token:
-                            logger.warning(
-                                "MAX: CDN response missing token for %s (type=%s)",
-                                fp.name, media_type,
-                            )
-                            if media_type in ("audio", "video"):
-                                return await self._upload(str(fp), "file")
-                            return None
-                        return token
-        except Exception as e:  # noqa: BLE001 — adapter must not crash on transport/API errors
-            logger.error("MAX: upload error: %s", e)
+            async with _aiohttp.ClientSession(connector=connector, timeout=_aiohttp.ClientTimeout(total=upload_timeout(file_size), sock_connect=30, sock_read=120)) as session:
+                status, upload_data = await post_file(session, upload_url, file_path, media_type, admitted=file_size)
+                media_event("cdn", "success" if status == 200 else "error", status=status, attempt=1)
+                if status != 200:
+                    return None
+                if upload_token:
+                    return upload_token
+                token = upload_data.get("token")
+                if not token and isinstance(upload_data.get("photos"), dict):
+                    first = next(iter(upload_data["photos"].values()), {})
+                    token = first.get("token") if isinstance(first, dict) else None
+                return token if isinstance(token, str) and token else None
+        except Exception:  # noqa: BLE001 — adapter must not crash on transport/API errors
+            media_event(diagnostic_stage, "error", attempt=1)
             return None

@@ -9,7 +9,15 @@ These tests pin both contracts against the real Core router plus the real plugin
 registration; no Core router/sender function is replaced by a mock.
 """
 
+import importlib.util
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+if importlib.util.find_spec('gateway.outbound') is not None:
+    from gateway.outbound.send import _send_to_platform, _send_via_adapter
+else:
+    from tools.send_message_tool import _send_to_platform, _send_via_adapter
 
 import httpx
 import pytest
@@ -76,6 +84,8 @@ def max_http_boundary(monkeypatch):
             # The image CDN answers with {"photos": {id: {"token": ...}}}, every other
             # upload type with a flat {"token": ...}. The plugin must read the matching one.
             self._photos = photos
+            body = {"photos": {"1": {"token": "fixture-photo-token"}}} if photos else {"token": "fixture-upload-token"}
+            self.content = SimpleNamespace(read=AsyncMock(side_effect=[json.dumps(body).encode(), b""]))
 
         async def __aenter__(self):
             return self
@@ -102,7 +112,8 @@ def max_http_boundary(monkeypatch):
             await self.connector.close()
             return False
 
-        def post(self, url, data):
+        def post(self, url, data, **kwargs):
+            assert kwargs == {"allow_redirects": False}
             uploads.append((url, data))
             response = UploadResponse(photos="uploadImage" in str(url))
             if failure.get("cdn"):
@@ -121,8 +132,6 @@ def max_http_boundary(monkeypatch):
 async def test_actual_core_dispatch_contract(registered_max, max_http_boundary, tmp_path,
                                             media_route_supported, route, mode):
     from gateway.config import Platform, PlatformConfig
-    from tools.send_message_tool import _send_to_platform, _send_via_adapter
-
     requests, uploads, _failure = max_http_boundary
     media = tmp_path / "router-file.txt"
     media.write_bytes(b"actual router payload")
@@ -146,7 +155,7 @@ async def test_actual_core_dispatch_contract(registered_max, max_http_boundary, 
     if media_files:
         assert len(uploads) == 1
         assert uploads[0][0] == "https://iu.oneme.ru/upload"
-        assert uploads[0][1]._fields[0][2] == b"actual router payload"
+        assert uploads[0][1]._fields[0][2]._value == str(media)
         assert messages[-1]["attachments"] == [{"type": "file", "payload": {"token": "fixture-upload-token"}}]
         assert result["media_delivered"] is True
         assert "warnings" not in result
@@ -172,7 +181,6 @@ async def test_image_upload_type_matches_attachment_type(registered_max, max_htt
     with ``type=image`` and sent as ``{"type": "image"}``.
     """
     from gateway.config import Platform, PlatformConfig
-    from tools.send_message_tool import _send_to_platform
 
     if not media_route_supported:
         pytest.skip("this Core cannot route media-only requests to a plugin sender")
@@ -199,7 +207,6 @@ async def test_image_upload_type_matches_attachment_type(registered_max, max_htt
 async def test_actual_core_router_reports_incomplete_delivery(registered_max, max_http_boundary, tmp_path,
                                                               media_route_supported, failure_kind):
     from gateway.config import Platform, PlatformConfig
-    from tools.send_message_tool import _send_to_platform
 
     if not media_route_supported:
         pytest.skip("captionable text+media delivery is a standalone-policy contract")
@@ -292,7 +299,6 @@ def test_reload_without_policy_api_omits_register_keyword(monkeypatch):
 async def test_transformed_media_only_reaches_public_router(registered_max, max_http_boundary, tmp_path):
     from gateway.config import Platform, PlatformConfig
     from gateway.platforms.base import BasePlatformAdapter
-    from tools.send_message_tool import _send_to_platform
 
     media = tmp_path / "report.pdf"
     media.write_bytes(b"fixture")

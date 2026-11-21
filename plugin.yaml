@@ -3,6 +3,8 @@ label: Max
 kind: platform
 version: 2.11.0
 requires_hermes: ">=0.21.4"
+provides_tools:
+  - max_send_attachments
 provides_hooks:
   - transform_llm_output
 description: >

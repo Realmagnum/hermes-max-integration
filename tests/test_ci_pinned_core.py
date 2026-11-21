@@ -40,8 +40,13 @@ def test_dependencies_must_resolve_without_override_and_pass_admission():
         if step.get("uses", "").startswith("actions/setup-python@")
     ) == "${{ matrix.core.python }}"
     assert all(
-        step["with"]["python-version"] == "3.14"
+        step["with"]["python-version"] == (
+            "3.12" if job_name == "upload-portability" else "3.14"
+        )
         for job_name, job in WORKFLOW["jobs"].items()
         for step in job["steps"]
         if job_name != "test" and step.get("uses", "").startswith("actions/setup-python@")
     )
+    assert set(WORKFLOW["jobs"]["upload-portability"]["strategy"]["matrix"]["os"]) == {
+        "ubuntu-latest", "macos-latest", "windows-latest"
+    }

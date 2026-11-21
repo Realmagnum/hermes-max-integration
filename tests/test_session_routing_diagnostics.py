@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.test_session_list_policy import make_adapter, update
+from .test_session_list_policy import make_adapter, update
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("routing_check", ROOT / "scripts/check-session-routing.py")

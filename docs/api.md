@@ -220,6 +220,8 @@ not a binary `PUT`. The CDN response for `image`/`file`:
 
 ### Step 3: Send a message with the attachment
 
+For local image/file/audio/video adapter sends and standalone text/media sends, `chat:<id>` uses `chat_id`, `user:<id>` uses `user_id` (the explicit namespace wins), and an unprefixed negative ID uses `chat_id`. A bare positive ID defaults to `user_id`; the adapter first resolves a known DM chat ID through its DM user mapping. Standalone senders have no DM mapping. These are plugin target conventions, not MAX API colon syntax.
+
 ```bash
 curl -X POST "https://platform-api2.max.ru/messages?chat_id=95825064" \
   -H "Authorization: {access_token}" \

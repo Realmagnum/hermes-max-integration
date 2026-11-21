@@ -49,17 +49,22 @@ async def test_later_success_same_payload_no_reupload(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_exhausted_safe_final_code(monkeypatch, caplog):
+    caplog.set_level("INFO")
     _, result, requests, sleep = await run_case([READY], monkeypatch)
     assert not result.success and not result.retryable
     assert len(requests) == 8 and sleep.await_count == 7
-    assert "status=400 code=attachment.not.ready attempts=8" in caplog.text
+    rows = [json.loads(r.message.split("MAX media: ", 1)[1]) for r in caplog.records if r.message.startswith("MAX media: ")]
+    assert len(rows) == 1
+    assert rows[0]["status"] == 400 and rows[0]["attempts"]["readiness"] == 8
+    assert rows[0]["error"] == "not_ready" and rows[0]["error_stage"] == "readiness"
     assert "private-upload-token" not in caplog.text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("response", [(400, {"code": "bad", "message": "signed-secret"}),
     (400, b"not JSON signed-secret"), (400, []), (503, {"code": "attachment.not.ready"}),
-    httpx.ReadTimeout("signed-secret"), (200, b"invalid JSON")])
+    httpx.ReadTimeout("signed-secret"), (200, b"invalid JSON"),
+    (200, {"message": {"recipient": ["invalid-recipient"]}})])
 async def test_no_retry_other_or_ambiguous(monkeypatch, caplog, response):
     _, result, requests, sleep = await run_case([response], monkeypatch)
     assert not result.success and not result.retryable
